@@ -23,3 +23,4 @@ import CertiKOS.LockArrayFair
 import CertiKOS.ArrayClientRefine
 import CertiKOS.LinkA
 import CertiKOS.ArrayLinkClient
+import CertiKOS.NoLostUpdate
