@@ -27,3 +27,4 @@ import CertiKOS.NoLostUpdate
 import CertiKOS.FairC
 import CertiKOS.ArrayLive
 import CertiKOS.MCSProtocol
+import CertiKOS.MCSLock
