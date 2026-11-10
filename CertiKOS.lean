@@ -14,3 +14,4 @@ import CertiKOS.TicketLive
 import CertiKOS.Link
 import CertiKOS.LiveLink
 import CertiKOS.SchedFair
+import CertiKOS.CountTN
