@@ -11,9 +11,9 @@ Each row says where the item is in CertiKOS, where it is here, and whether they 
 | # | CertiKOS | Here | Status |
 |---|---|---|---|
 | 1 | **Memory model.** The multiprocessor machine `Mx86` treats shared primitives as sequentially consistent ([PLDI18] §1: "assume strong sequential consistency for shared primitives"). | A global event log; every primitive is one atomic event (`TicketLock.lean`, `prims`). | **Match.** Same assumption. Natively on arm64 this needs acquire/release atomics; see benchmark 1. |
-| 2 | **Lock data.** `typedef struct { volatile uint ticket; volatile uint now; } ticket_lock; ticket_lock L[NUM_LOCK];` ([OSDI16] Fig. 7). | One lock. `ticket`/`now` are replay functions; values are `BitVec 32`. | **Differs.** No lock array or lock index `i` yet. |
-| 3 | **L0 primitives.** `FAI_t`, `get_n`, `inc_n`, plus the no-op `hold` ([PLDI18] Fig. 3); mC2 uses `pull(i)`/`push(i)` for the protected memory ([OSDI16] Fig. 7). | `Prim.faiTicket`, `getNow`, `incNow`, `hold`. | **Match**, except `pull`/`push` (moving shared memory between CPUs) is not modelled. |
-| 4 | **Events and global log.** Each shared-primitive call is an event `i.FAI_t`, … consed onto the log ([PLDI18] §2). | `Event ⟨cpu, kind⟩`, `Log := List Event`, newest first. | **Match.** CertiKOS events also carry the lock index; MCS-lock events carry bound numbers. Neither is here. |
+| 2 | **Lock data.** `typedef struct { volatile uint ticket; volatile uint now; } ticket_lock; ticket_lock L[NUM_LOCK];` ([OSDI16] Fig. 7). | Single lock: `TicketLock.lean`. **Lock array**: `LockArray.lean`. Events carry the lock index; each lock runs the single-lock protocol on its projection (`projL`, `areplay_proj`), with per-lock mutual exclusion (`amutex`). | **Match.** |
+| 3 | **L0 primitives.** `FAI_t`, `get_n`, `inc_n`, plus the no-op `hold` ([PLDI18] Fig. 3); mC2 uses `pull(i)`/`push(i)` for the protected memory ([OSDI16] Fig. 7). | `Prim.faiTicket`, `getNow`, `incNow`, `hold`; indexed versions plus `pull(i)`/`push(i, v)` in `LockArrayCPU.lean` (`aprims`). Ownership: only lock `i`'s holder may pull/push block `i` (`astep`). | **Match.** Blocks are single 32-bit values, not memory regions. |
+| 4 | **Events and global log.** Each shared-primitive call is an event `i.FAI_t`, … consed onto the log ([PLDI18] §2). | `Event ⟨cpu, kind⟩` (one lock); `AEvent ⟨cpu, lock, kind⟩` with `pull`/`push v` (lock array). One global log, newest first. | **Match**, except MCS bound numbers (row 18). |
 | 5 | **Environment context.** Strategies `φ_j` of the other participants plus the scheduler `φ_hs`, each a deterministic partial function of the log. The machine queries `E` before each move ([PLDI18] §2). | `EnvCtx.query : CPU → Log → List Event`, with `noSelf`. `pull` queries before each primitive. | **Match** in substance. CCAL models the scheduler as its own strategy; here it is folded into `query`. |
 | 6 | **Switch points.** "exactly one switch point before each atomic operation" ([OSDI16] §3.5). | Every primitive pulls first. The executable model (`Bench/Sim.lean`) switches CPUs exactly there. | **Match.** |
 | 7 | **`acq` code.** `uint my_t = FAI_t(); while (get_n() != my_t) {}; hold();` ([PLDI18] Fig. 3). | `acquireCode`: `t = FAI_t(); n = get_n(); while (n != t) n = get_n(); hold();` | **Match.** Clight has no calls inside expressions, so the call is hoisted into `n`, as CompCert's SimplExpr does. Same event trace. |
@@ -40,7 +40,7 @@ Each row says where the item is in CertiKOS, where it is here, and whether they 
 
 1. **Contextual refinement links by inlining** (row 16): ClightL still has no C-to-C calls or modules, so `M P` inlines the lock code.
 2. **Multicore linking is partial** (row 17): deriving `EnvFair` is specific to the ticket-lock client; no thread-local layer.
-3. **No lock array, and no `pull`/`push` of protected memory** (rows 2 and 3). That needs block memory in ClightL.
+3. **Lock-array blocks are single values** (rows 2 and 3), not memory regions; the lock array has no concrete fair scheduler, contextual-refinement theorem or multicore linking yet (the single lock has all three).
 4. **No MCS lock** (row 18).
 
 ## Performance (full numbers in `bench/RESULTS.md`; rerun with `python3 bench/run_all.py`)
