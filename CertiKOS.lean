@@ -24,3 +24,5 @@ import CertiKOS.ArrayClientRefine
 import CertiKOS.LinkA
 import CertiKOS.ArrayLinkClient
 import CertiKOS.NoLostUpdate
+import CertiKOS.FairC
+import CertiKOS.ArrayLive
