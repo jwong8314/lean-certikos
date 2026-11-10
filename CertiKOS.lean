@@ -19,3 +19,4 @@ import CertiKOS.ClientRefine
 import CertiKOS.LockArray
 import CertiKOS.LockArrayCPU
 import CertiKOS.LockArrayAtomic
+import CertiKOS.LockArrayFair
