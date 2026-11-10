@@ -310,6 +310,17 @@ theorem client_guar {N : Nat} {c : CPU} (hc : c < NCPU) (hN : N < 2 ^ 32) {l0 : 
   | refl => exact id
   | step hs _ ih => exact fun hI => ih (pinv_step hc hN hR hI hs)
 
+/-- The per-CPU invariant holds along every per-CPU run of the client. -/
+theorem client_pinv {N : Nat} {c : CPU} (hc : c < NCPU) (hN : N < 2 ^ 32) {ε : EnvCtx}
+    (hR : RelyP ε c) {x : Config Prim Log} (hx : Star (prims ε c) ((cThread N).cfg []) x) :
+    PInv N ε c x := by
+  suffices ∀ {a b}, Star (prims ε c) a b → PInv N ε c a → PInv N ε c b from
+    this hx ⟨⟨_, _, rfl⟩, at_pull hR rfl (At.p0 (σ := fun _ => 0) rfl)⟩
+  intro a b hab
+  induction hab with
+  | refl => exact id
+  | step hs _ ih => exact fun hI => ih (pinv_step hc hN hR hI hs)
+
 /-- The client's critical section: after `hold`, before `inc_n` completes. -/
 def InCS (N : Nat) (t : CThread Prim) : Prop :=
   (t.stmt = .skip ∧ t.cont = KA N) ∨ (t.stmt = .seq releaseCode incI ∧ t.cont = KO N) ∨
