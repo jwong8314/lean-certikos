@@ -21,3 +21,5 @@ import CertiKOS.LockArrayCPU
 import CertiKOS.LockArrayAtomic
 import CertiKOS.LockArrayFair
 import CertiKOS.ArrayClientRefine
+import CertiKOS.LinkA
+import CertiKOS.ArrayLinkClient
