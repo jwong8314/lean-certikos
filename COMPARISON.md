@@ -40,7 +40,7 @@ Each row says where the item is in CertiKOS, where it is here, and whether they 
 
 1. **Contextual refinement links by inlining** (row 16): ClightL still has no C-to-C calls or modules, so `M P` inlines the lock code.
 2. **Multicore linking is partial** (row 17): deriving `EnvFair` is specific to the ticket-lock client; no thread-local layer.
-3. **Lock-array blocks are single values** (rows 2 and 3), not memory regions; the lock array has a concrete fair scheduler (`LockArrayFair.lean`) but no contextual-refinement theorem or multicore linking yet (the single lock has both).
+3. **Lock-array blocks are single values** (rows 2 and 3), not memory regions; the lock array has a concrete fair scheduler (`LockArrayFair.lean`) and contextual refinement for every client (`ArrayClientRefine.lean`), but no multicore linking yet.
 4. **No MCS lock** (row 18).
 
 ## Performance (full numbers in `bench/RESULTS.md`; rerun with `python3 bench/run_all.py`)
