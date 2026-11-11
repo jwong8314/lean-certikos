@@ -29,3 +29,5 @@ import CertiKOS.ArrayLive
 import CertiKOS.MCSProtocol
 import CertiKOS.MCSLock
 import CertiKOS.MCSFair
+import CertiKOS.LinkM
+import CertiKOS.MCSLink
