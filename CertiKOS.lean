@@ -34,3 +34,5 @@ import CertiKOS.MCSLink
 import CertiKOS.MCSLive
 import CertiKOS.MCSBound
 import CertiKOS.MCSBoundC
+import CertiKOS.MCSLiveN
+import CertiKOS.MCSBoundMC
