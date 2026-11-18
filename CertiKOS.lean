@@ -43,3 +43,4 @@ import CertiKOS.CallStack
 import CertiKOS.ClientCall
 import CertiKOS.PrintPy
 import CertiKOS.LockRegionCPU
+import CertiKOS.EnvFairGen
