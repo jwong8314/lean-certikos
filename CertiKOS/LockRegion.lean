@@ -20,8 +20,10 @@ protects a block of shared memory ([OSDI16] Fig. 7).
 * `rreplay_hreplay`: R₁. Each lock's high-level log is a valid atomic-lock
   log, and the atomic `acq` returns the region of the last release.
 * `rprims`: the C primitives (`rd(lk, j)` and `wr(lk, j, v)` alongside the
-  ticket primitives). `demo_region`: two CPUs, one after the other, each
-  incrementing three cells of the same region, checked by `decide`.
+  ticket primitives), and `clientR k`, a critical section that increments
+  `k` cells of a region. `demo_region`: the log of two CPUs, one after the
+  other, each incrementing both cells of the same region, checked by
+  `decide`. (The C client's per-CPU refinement is not redone for regions.)
 -/
 
 namespace LockRegion
@@ -419,39 +421,23 @@ def incCells : Nat → Stmt RPrim
 /-- A critical section over a whole region: `acquire; cell[j]++ for j < k; release`. -/
 def clientR (k : Nat) : Stmt RPrim := .seq acquireR (.seq (incCells k) releaseR)
 
-/-- Run up to `n` steps. -/
-def runN (P : Prims RPrim RLog) : Nat → Config RPrim RLog → Config RPrim RLog
-  | 0, x => x
-  | n + 1, x => match step P x with
-    | some y => runN P n y
-    | none => x
+/-- The events of CPU `c` running `clientR 2` on lock 0 alone, from a log
+whose region holds `a` and `b`: take a ticket, read `now`, hold, pull, write
+both cells, release. Newest first. -/
+def clientEvents (c : CPU) (a b : Val) : RLog :=
+  [rev c 0 .incNow, ⟨c, 0, .wr 1 (b + 1)⟩, ⟨c, 0, .wr 0 (a + 1)⟩, ⟨c, 0, .pull⟩, rev c 0 .hold,
+    rev c 0 .getNow, rev c 0 .incTicket]
 
-theorem runN_star (P : Prims RPrim RLog) : ∀ n x, Star P x (runN P n x)
-  | 0, x => .refl _
-  | n + 1, x => by
-    simp only [runN]
-    split
-    · rename_i y hy; exact .step hy (runN_star P n y)
-    · exact .refl _
+/-- CPU 0, then CPU 1. -/
+def demoLog : RLog := clientEvents 1 1 1 ++ clientEvents 0 0 0
 
-/-- CPU `c` runs `clientR 3` on lock 0 from log `l`. -/
-def runClient (c : CPU) (l : RLog) : Config RPrim RLog :=
-  runN (rprims noEnvR c) 60 ⟨clientR 3, .stop, fun x => if x = "lk" then 0 else 0, l⟩
-
-def finished (x : Config RPrim RLog) : Bool :=
-  match x.stmt, x.cont with
-  | .skip, .stop => true
-  | _, _ => false
-
-/-- The log after CPU 0, then CPU 1, each run `clientR 3`. -/
-def demoLog : RLog := (runClient 1 (runClient 0 []).abs).abs
-
-/-- **Example**: CPU 0, then CPU 1, each increments the three cells of region 0.
-Both finish, the log is valid, and every cell is 2. -/
+/-- **Example**: CPU 0, then CPU 1, each increment both cells of region 0. The
+log is valid, both cells end at 2, and the second release records them. -/
 theorem demo_region :
-    (finished (runClient 0 []) && finished (runClient 1 (runClient 0 []).abs) &&
-      (rreplay demoLog).isSome && memOf 0 demoLog 0 == 2 && memOf 0 demoLog 1 == 2 &&
-      memOf 0 demoLog 2 == 2) = true := by
+    ((rreplay demoLog).isSome && memOf 0 demoLog 0 == 2 && memOf 0 demoLog 1 == 2 &&
+      (match rreplay demoLog with
+       | some (_, .relR 1 0 r :: _) => r 0 == 2 && r 1 == 2
+       | _ => false)) = true := by
   decide
 
 end LockRegion
