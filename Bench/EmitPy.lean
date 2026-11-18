@@ -6,7 +6,10 @@ import CertiKOS
 A structural printer from `PyL.Cmd` to Python source, the Python counterpart of
 `EmitC.lean`. What it prints is `ClightToPy.tr TicketPy.impl (clientCode N)`,
 the translation proved equivalent to the C machine in `TicketPy.lean`. The
-printer itself is not verified.
+commands are printed by `CertiKOS/PrintPy.lean`, whose printer is proved
+faithful: parsing its tokens gives back the program, up to the nesting of
+sequences (`emit_faithful` below). Only turning tokens into text
+(`PrintPy.render`) and the script wrapper are unverified.
 
 `with L:` is a single `threading.Lock`. Objects live in a table `OBJ`; object
 `0` is the lock record `lk` with attributes `ticket` and `now`. The reserved
@@ -17,6 +20,22 @@ client and checks that `lk.ticket == lk.now == T*N mod 2**32`.
 -/
 
 open PyL
+
+/-- The translation never produces the run-time marker `inAtomic`. -/
+theorem tr_src : ∀ s : ClightL.Stmt Ticket.Prim, PrintPy.Src (ClightToPy.tr TicketPy.impl s)
+  | .skip => trivial
+  | .assign _ _ => trivial
+  | .seq a b => ⟨tr_src a, tr_src b⟩
+  | .ite _ a b => ⟨tr_src a, tr_src b⟩
+  | .while _ b => tr_src b
+  | .call _ p _ => by cases p <;> simp [ClightToPy.tr, TicketPy.impl, PrintPy.Src]
+
+/-- The printed tokens of a translated program parse back to it. -/
+theorem emit_faithful (s : ClightL.Stmt Ticket.Prim) :
+    PrintPy.parseSeq (PrintPy.sizeC (ClightToPy.tr TicketPy.impl s))
+        (PrintPy.printC (ClightToPy.tr TicketPy.impl s)) =
+      some (PrintPy.norm (ClightToPy.tr TicketPy.impl s), []) :=
+  PrintPy.parse_print _ (tr_src s) _ (Nat.le_refl _)
 
 def pyName (x : Var) : String := if x = "$r" then "_r" else x
 
@@ -60,7 +79,7 @@ def script (N : Nat) : String :=
   "lk = Obj()\nlk.ticket = 0\nlk.now = 0\nOBJ = {0: lk}\nL = threading.Lock()\n\n" ++
   "def client():\n" ++
   "    " ++ " = ".intercalate vars ++ " = 0\n" ++
-  cmdPy "    " body ++ "\n" ++
+  PrintPy.render 1 (PrintPy.printC body) ++ "\n" ++
   "if __name__ == \"__main__\":\n" ++
   "    T = int(sys.argv[1]) if len(sys.argv) > 1 else 4\n" ++
   "    ts = [threading.Thread(target=client) for _ in range(T)]\n" ++
