@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-41 Lean files, about 17,000 lines. No `sorry`. The main theorems depend only on
+47 Lean files, about 20,000 lines. No `sorry`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-18)
@@ -46,29 +46,44 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
     reachable global log is a valid `H_CalLock` log.
 - **Python**: the ClightL → PyL translation, proved equivalent to the C, with
   liveness transferred to the Python side.
-- **Lock arrays protecting regions** (`LockRegion.lean`): each lock protects a
-  block of cells. Per-lock mutual exclusion, R₁, and the data invariant: an
-  acquirer sees exactly the region the last holder released.
-- **C-to-C calls and modules** (`ClightCall.lean`): functions with call frames,
-  modules, and linking. A callee runs in a fresh frame. `acquire(lk)` and
-  `release(lk, v)` called as real functions refine the atomic `acq`/`rel`.
-- **A verified C printer** (`PrintC.lean`): parsing the printed tokens gives
-  back the AST. `Bench/EmitC.lean` uses it.
+- **Lock arrays protecting regions**: each lock protects a block of cells.
+  - `LockRegion.lean`: the protocol, per-lock mutual exclusion, R₁, and the
+    data invariant (an acquirer sees exactly the region the last holder
+    released).
+  - `LockRegionCPU.lean`: the C code per CPU. The client
+    `acquire; cell[j]++ for j < k; release` finishes on a valid log, and the
+    region it releases is the previous holder's with those cells incremented
+    (no lost updates). A fair region scheduler shows this is not vacuous.
+- **C-to-C calls and modules**:
+  - `ClightCall.lean`: functions with call frames, modules, and linking.
+  - `CallStack.lean`: a real call stack, so functions call functions to any
+    depth. `inc(lk)`, which calls `acquire` and `release`, refines the two
+    atomic steps.
+  - `ClientCall.lean`: every ticket-lock client linked with the lock module by
+    real function calls refines the atomic layer.
+- **Verified printers** (`PrintC.lean`, `PrintPy.lean`): parsing the printed
+  tokens gives back the program (for Python, up to the nesting of sequences,
+  which is all Python text can express). Both emitters use them.
+- **Generic environment fairness** (`EnvFairGen.lean`): any client pool whose
+  lock owner takes at most `B` steps before releasing gets `EnvFair` from a
+  `K`-fair scheduler. The ticket client is one instance.
+- **A minimal thread layer** (`ThreadLayer.lean`): threads sharing one CPU,
+  switching only at yield points, are a special case of the multicore machine,
+  so the multicore safety theorems apply to them.
 
 **Not done yet**
 
-- **Calls, rest**: callees are leaf functions (they call primitives, not other
-  functions). Whole-client contextual refinement (`ClientRefine.lean`) still
-  links by inlining. The per-call refinement through real frames
-  (`ClightCall.lean`) is its building block.
-- **Regions, rest**: the region lock array has the protocol, atomic layer and C
-  primitives. The per-CPU C refinement, multicore linking and no-lost-updates
-  proofs exist only for single-value lock arrays.
-- **Multicore linking, rest**: environment fairness is derived for the ticket
-  client only. There is no CPU-local → thread-local layer and no thread-safe
-  CompCertX. These are research-scale.
-- **Printers, rest**: joining tokens into C text is trusted, and the Python
-  printer (`Bench/EmitPy.lean`) is still unverified.
+- **Regions on the multicore machine**: the region proofs are per CPU. Multicore
+  linking, and no lost updates across CPUs, exist only for single-value lock
+  arrays.
+- **Client refinement through calls, for the other locks**: proved for the
+  ticket lock. Lock-array and MCS clients still link by inlining.
+- **Owner bounds for other clients**: the generic fairness theorem has one
+  instance, the ticket client.
+- **Thread layer, rest**: no scheduler data structures (ready and sleep
+  queues, context switch), and no thread liveness.
+- **Thread-safe CompCertX**: not attempted. It needs a verified compiler.
+- **Printers, rest**: turning tokens into text is still trusted.
 - **The rest of mC2**: virtualization and the larger OS modules (scheduler,
   memory management, IPC, VMX). Each is a project of its own.
 

@@ -38,11 +38,12 @@ Each row says where the item is in CertiKOS, where it is here, and whether they 
 
 ## Still different, in order of importance
 
-1. **Calls are leaf-only, and whole-client refinement still inlines** (row 16): `ClightCall.lean` adds functions with call frames and modules, and proves `acquire(lk)` / `release(lk, v)` called as real functions refine the atomic primitives. Callees call only primitives, and `ClientRefine.lean` still links by inlining.
-2. **Multicore linking is partial** (row 17): deriving `EnvFair` is specific to the ticket-lock client; no thread-local layer.
-3. **Lock-array regions only at the protocol and atomic layers** (rows 2 and 3): `LockRegion.lean` lets each lock protect a block of cells (mutual exclusion, R₁, the data invariant, C primitives). The single-value lock array has a concrete fair scheduler (`LockArrayFair.lean`) contextual refinement for every client (`ArrayClientRefine.lean`), and multicore linking for safety (`LinkA.lean`, `ArrayLinkClient.lean`); lost-update freedom (`NoLostUpdate.lean`) and fair termination (`ArrayLive.lean`) on the multicore machine.
+1. **Client refinement through calls covers the ticket lock only** (row 16): `ClightCall.lean` and `CallStack.lean` add functions, modules and a call stack with nested calls, and `ClientCall.lean` proves every ticket-lock client linked by real calls refines the atomic layer. Lock-array and MCS clients still link by inlining.
+2. **Multicore linking is partial** (row 17): `EnvFairGen.lean` derives `EnvFair` for any client pool with an owner bound (one instance: the ticket client). `ThreadLayer.lean` is a minimal thread layer (threads as virtual CPUs, safety only): no scheduler queues, no thread liveness. No thread-safe CompCertX.
+3. **Lock regions are per CPU** (rows 2 and 3): `LockRegion.lean` and `LockRegionCPU.lean` give the protocol, R₁, the C code and a per-CPU no-lost-updates guarantee for locks protecting blocks of cells. On the multicore machine, linking and no lost updates are proved only for single-value lock arrays (`LinkA.lean`, `NoLostUpdate.lean`, `ArrayLive.lean`).
 4. **MCS bounds** (row 18): in the events (`MCSBound.lean`), as a C argument (`MCSBoundC.lean`), per CPU, and on the multicore machine (`MCSBoundMC.lean`). This matches the paper: Kim et al. also fold the node writes into `SWAP_TAIL` (their Fig. 1, lines 5–7), and their `H_CalLock` counter also decrements only on memory events.
-5. **Printers**: the C printer is verified at the token level (`PrintC.lean`: parsing the printed tokens gives back the AST); joining tokens into text and the Python printer are trusted.
+5. **Printers**: both printers are verified at the token level (`PrintC.lean`, `PrintPy.lean`); turning tokens into text is trusted.
+6. **The rest of mC2**: virtualization and the larger OS modules are not started.
 
 ## Performance (full numbers in `bench/RESULTS.md`; rerun with `python3 bench/run_all.py`)
 
