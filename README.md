@@ -46,18 +46,35 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
     reachable global log is a valid `H_CalLock` log.
 - **Python**: the ClightL → PyL translation, proved equivalent to the C, with
   liveness transferred to the Python side.
+- **Lock arrays protecting regions** (`LockRegion.lean`): each lock protects a
+  block of cells. Per-lock mutual exclusion, R₁, and the data invariant: an
+  acquirer sees exactly the region the last holder released.
+- **C-to-C calls and modules** (`ClightCall.lean`): functions with call frames,
+  modules, and linking. A callee runs in a fresh frame. `acquire(lk)` and
+  `release(lk, v)` called as real functions refine the atomic `acq`/`rel`.
+- **A verified C printer** (`PrintC.lean`): parsing the printed tokens gives
+  back the AST. `Bench/EmitC.lean` uses it.
 
 **Not done yet**
 
-- **C-to-C calls and modules**: client refinement links by inlining.
+- **Calls, rest**: callees are leaf functions (they call primitives, not other
+  functions). Whole-client contextual refinement (`ClientRefine.lean`) still
+  links by inlining. The per-call refinement through real frames
+  (`ClightCall.lean`) is its building block.
+- **Regions, rest**: the region lock array has the protocol, atomic layer and C
+  primitives. The per-CPU C refinement, multicore linking and no-lost-updates
+  proofs exist only for single-value lock arrays.
 - **Multicore linking, rest**: environment fairness is derived for the ticket
   client only. There is no CPU-local → thread-local layer and no thread-safe
-  CompCertX.
-- **Lock arrays as memory regions**: each lock protects a single value.
-- **MCS fidelity**: `swap` folds in the two node writes before it, and the
-  bound counts memory events, not all of the holder's events.
-- **The rest of mC2**: virtualization, the larger OS modules, and verified
-  printers (`Bench/EmitC.lean` and `Bench/EmitPy.lean` are trusted).
+  CompCertX. These are research-scale.
+- **Printers, rest**: joining tokens into C text is trusted, and the Python
+  printer (`Bench/EmitPy.lean`) is still unverified.
+- **The rest of mC2**: virtualization and the larger OS modules (scheduler,
+  memory management, IPC, VMX). Each is a project of its own.
+
+MCS note: Kim et al. also fold the node writes into `SWAP_TAIL` (their Fig. 1,
+lines 5–7), and their `H_CalLock` counter also counts only memory events, so
+both match the paper.
 
 ## Where to read more
 

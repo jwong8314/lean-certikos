@@ -38,10 +38,11 @@ Each row says where the item is in CertiKOS, where it is here, and whether they 
 
 ## Still different, in order of importance
 
-1. **Contextual refinement links by inlining** (row 16): ClightL still has no C-to-C calls or modules, so `M P` inlines the lock code.
+1. **Calls are leaf-only, and whole-client refinement still inlines** (row 16): `ClightCall.lean` adds functions with call frames and modules, and proves `acquire(lk)` / `release(lk, v)` called as real functions refine the atomic primitives. Callees call only primitives, and `ClientRefine.lean` still links by inlining.
 2. **Multicore linking is partial** (row 17): deriving `EnvFair` is specific to the ticket-lock client; no thread-local layer.
-3. **Lock-array blocks are single values** (rows 2 and 3), not memory regions; the lock array has a concrete fair scheduler (`LockArrayFair.lean`) contextual refinement for every client (`ArrayClientRefine.lean`), and multicore linking for safety (`LinkA.lean`, `ArrayLinkClient.lean`); lost-update freedom (`NoLostUpdate.lean`) and fair termination (`ArrayLive.lean`) on the multicore machine.
-4. **MCS bounds** (row 18): in the events (`MCSBound.lean`), as a C argument (`MCSBoundC.lean`), per CPU, and on the multicore machine (`MCSBoundMC.lean`). The remaining difference: `swap` folds in the two node writes, and the bound counts memory events, not all of the holder's events.
+3. **Lock-array regions only at the protocol and atomic layers** (rows 2 and 3): `LockRegion.lean` lets each lock protect a block of cells (mutual exclusion, R₁, the data invariant, C primitives). The single-value lock array has a concrete fair scheduler (`LockArrayFair.lean`) contextual refinement for every client (`ArrayClientRefine.lean`), and multicore linking for safety (`LinkA.lean`, `ArrayLinkClient.lean`); lost-update freedom (`NoLostUpdate.lean`) and fair termination (`ArrayLive.lean`) on the multicore machine.
+4. **MCS bounds** (row 18): in the events (`MCSBound.lean`), as a C argument (`MCSBoundC.lean`), per CPU, and on the multicore machine (`MCSBoundMC.lean`). This matches the paper: Kim et al. also fold the node writes into `SWAP_TAIL` (their Fig. 1, lines 5–7), and their `H_CalLock` counter also decrements only on memory events.
+5. **Printers**: the C printer is verified at the token level (`PrintC.lean`: parsing the printed tokens gives back the AST); joining tokens into text and the Python printer are trusted.
 
 ## Performance (full numbers in `bench/RESULTS.md`; rerun with `python3 bench/run_all.py`)
 
