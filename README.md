@@ -81,3 +81,10 @@ builds, so an arm64 Lean is unpacked into `.tools/` (git-ignored):
 ```bash
 PATH="$PWD/.tools/lean-4.35.0-darwin_aarch64/bin:$PATH" lake build
 ```
+
+## License
+
+Non-commercial use only (education, research, evaluation). See
+[LICENSE](LICENSE). The terms are adapted from the Yale University
+Non-Commercial License Agreement that CertiKOS is distributed under.
+This repository contains no CertiKOS source code.
