@@ -3,9 +3,10 @@ import CertiKOS
 /-!
 # Print the verified ClightL ASTs as C
 
-A mechanical printer from `ClightL.Stmt` to C. This is the "trusted compiler"
-route C1 from `SCOPING.md` §4.6: the printer is not verified, but it is a
-direct, structural rendering of the AST, so what runs is the code we proved.
+The statements are printed by `CertiKOS/PrintC.lean`, whose printer is
+proved faithful: parsing its tokens gives back the AST (`PrintC.parse_print`,
+instantiated below as `emit_faithful`). Only joining tokens into text
+(`PrintC.render`) and the function wrapper below are unverified.
 The primitives are printed as calls to `FAI_t`, `get_n`, `inc_n` and `hold`,
 CertiKOS's names; `bench/ours_prims.h` implements them with atomics.
 -/
@@ -14,6 +15,17 @@ open ClightL Ticket
 
 def primName : Prim → String
   | .faiTicket => "FAI_t" | .getNow => "get_n" | .incNow => "inc_n" | .hold => "hold"
+
+def primOfName : String → Option Prim
+  | "FAI_t" => some .faiTicket | "get_n" => some .getNow | "inc_n" => some .incNow | "hold" => some .hold
+  | _ => none
+
+theorem primOfName_name (p : Prim) : primOfName (primName p) = some p := by cases p <;> rfl
+
+/-- The printed tokens of a program parse back to it. -/
+theorem emit_faithful (s : Stmt Prim) :
+    PrintC.parseS primOfName (PrintC.sizeS s) (PrintC.printS primName s) = some (s, []) :=
+  PrintC.parse_print primOfName_name s
 
 def binOpC : BinOp → String
   | .add => "+" | .sub => "-" | .eq => "==" | .ne => "!=" | .ltu => "<"
@@ -55,7 +67,8 @@ def funC (name : String) (s : Stmt Prim) : String :=
   let vs := dedup (stmtVars s)
   let decl := ", ".intercalate (vs.map (· ++ " = 0"))
   let unused := String.join (vs.map (fun v => s!"(void){v}; "))
-  s!"static inline void {name}(void) " ++ "{\n" ++ s!"  uint32_t {decl};\n" ++ stmtC "  " s ++
+  s!"static inline void {name}(void) " ++ "{\n" ++ s!"  uint32_t {decl};\n" ++
+    "  " ++ PrintC.render (PrintC.printS primName s) ++ "\n" ++
     s!"  {unused}\n" ++ "}\n"
 
 def main : IO Unit := do

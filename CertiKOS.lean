@@ -38,3 +38,4 @@ import CertiKOS.MCSLiveN
 import CertiKOS.MCSBoundMC
 import CertiKOS.LockRegion
 import CertiKOS.ClightCall
+import CertiKOS.PrintC
