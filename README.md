@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-47 Lean files, about 20,000 lines. No `sorry`. The main theorems depend only on
+49 Lean files, about 21,000 lines. No `sorry`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-18)
@@ -54,6 +54,11 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
     `acquire; cell[j]++ for j < k; release` finishes on a valid log, and the
     region it releases is the previous holder's with those cells incremented
     (no lost updates). A fair region scheduler shows this is not vacuous.
+  - `RegionLive.lean`: on the multicore machine, every reachable global log
+    is valid, two CPUs touching the region of the same lock are the same CPU,
+    and fair runs end within `K * (T * (27 + 6 * nc) + 1)` steps.
+  - `RegionNoLost.lean`: no lost updates across CPUs. When every CPU has
+    finished, each cell holds exactly the number of CPUs that used its lock.
 - **C-to-C calls and modules**:
   - `ClightCall.lean`: functions with call frames, modules, and linking.
   - `CallStack.lean`: a real call stack, so functions call functions to any
@@ -73,9 +78,9 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 **Not done yet**
 
-- **Regions on the multicore machine**: the region proofs are per CPU. Multicore
-  linking, and no lost updates across CPUs, exist only for single-value lock
-  arrays.
+- **Regions, rest**: the multicore region proofs are for one client shape
+  (increment `nc` cells). There is no client refinement for every region
+  client, and no linking framework (per-CPU guarantees composed) for regions.
 - **Client refinement through calls, for the other locks**: proved for the
   ticket lock. Lock-array and MCS clients still link by inlining.
 - **Owner bounds for other clients**: the generic fairness theorem has one
