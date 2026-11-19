@@ -68,6 +68,7 @@ def trOp : ClightL.BinOp → PyL.Expr → PyL.Expr → PyL.Expr
   | .sub, a, b => .bin .fmod (.bin .sub a b) (.const M)
   | .mul, a, b => .bin .fmod (.bin .mul a b) (.const M)
   | .div, a, b => .bin .fdiv a b
+  | .mod, a, b => .bin .fmod a b
   | .eq, a, b => .bin .eq a b
   | .ne, a, b => .bin .ne a b
   | .ltu, a, b => .bin .lt a b
@@ -114,6 +115,15 @@ theorem trOp_eval (op : ClightL.BinOp) (a b : Val) (ea eb : PyL.Expr) (s : Store
     generalize b.toNat = n
     cases m with
     | zero => simp [Int.fdiv]
+    | succ m => rfl
+  | mod =>
+    simp only [trOp, PyL.Expr.eval, PyL.BinOp.eval, ha, hb, ClightL.BinOp.eval]
+    have h : (a % b).toNat = a.toNat % b.toNat := BitVec.toNat_umod
+    unfold enc; rw [h]
+    generalize a.toNat = m
+    generalize b.toNat = n
+    cases m with
+    | zero => simp [Int.fmod]
     | succ m => rfl
   | eq =>
     simp only [trOp, PyL.Expr.eval, PyL.BinOp.eval, ha, hb, ClightL.BinOp.eval, enc_inj]

@@ -28,7 +28,7 @@ theorem emit_faithful (s : Stmt Prim) :
   PrintC.parse_print primOfName_name s
 
 def binOpC : BinOp → String
-  | .add => "+" | .sub => "-" | .mul => "*" | .div => "/" | .eq => "==" | .ne => "!=" | .ltu => "<"
+  | .add => "+" | .sub => "-" | .mul => "*" | .div => "/" | .mod => "%" | .eq => "==" | .ne => "!=" | .ltu => "<"
 
 def exprC : Expr → String
   | .const v => s!"{v.toNat}u"

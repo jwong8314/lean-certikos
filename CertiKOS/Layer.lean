@@ -125,6 +125,17 @@ theorem Triple.seq {P1 P2 : Locals → D → Prop} {s1 s2 : Stmt APrim} {Q1 Q2 :
   exact ⟨σ2, l2, b2, d2, Runs.seq hr1 hr2, hc2, hM2, hlk2.trans hlk1,
     fun k hk => (hf2 k hk).trans (hf1 k hk), σ1, d1, hq1, hq2⟩
 
+/-- An assignment in front of a primitive: the primitive sees the updated locals. -/
+theorem Triple.assign_pre {P : Locals → D → Prop} {s : Stmt APrim} {Q : Locals → D → Locals → D → Prop}
+    (h : Triple εR c i M F P s Q) (x : Ident) (hx : x ≠ "lk") (e : Expr) :
+    Triple εR c i M F (fun σ d => P (σ.set x (e.eval σ)) d) (.seq (.assign x e) s)
+      (fun σ d σ' d' => Q (σ.set x (e.eval σ)) d σ' d') := by
+  intro σ l b d hlk hcs hM hp
+  obtain ⟨σ', l', b', d', hr, hc', hM', hlk', hf, hq⟩ :=
+    h (σ.set x (e.eval σ)) l b d (by rw [Locals.set_other _ _ (Ne.symm hx)]; exact hlk) hcs hM hp
+  exact ⟨σ', l', b', d', Runs.seq (Runs.assign x e) hr, hc', hM',
+    by rw [hlk', Locals.set_other _ _ (Ne.symm hx)], hf, hq⟩
+
 /-- **Frame: a primitive in a larger state.** `D'` extends `D`: `π` projects,
 `put` writes back. `M2` is what the larger state adds. If `M2` survives every
 change of the region inside the footprint `F` that the primitive's
