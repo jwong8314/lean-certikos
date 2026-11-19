@@ -47,3 +47,4 @@ import CertiKOS.EnvFairGen
 import CertiKOS.ThreadLayer
 import CertiKOS.RegionLive
 import CertiKOS.RegionNoLost
+import CertiKOS.KernPAlloc

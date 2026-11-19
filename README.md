@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-49 Lean files, about 21,000 lines. No `sorry`. The main theorems depend only on
+50 Lean files, about 21,000 lines. No `sorry`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-18)
@@ -76,6 +76,12 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
   switching only at yield points, are a special case of the multicore machine,
   so the multicore safety theorems apply to them.
 
+- **Kernel, first module** (`KernPAlloc.lean`): the physical page allocator.
+  `palloc` (acquire, scan the allocation table, release) refines an abstract
+  allocator, and `pfree` clears an entry. `cs_guarantee` is the generic step
+  that every later kernel object reuses. [KERNEL.md](KERNEL.md) tracks the
+  port module by module.
+
 **Not done yet**
 
 - **Regions, rest**: the multicore region proofs are for one client shape
@@ -89,8 +95,9 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
   queues, context switch), and no thread liveness.
 - **Thread-safe CompCertX**: not attempted. It needs a verified compiler.
 - **Printers, rest**: turning tokens into text is still trusted.
-- **The rest of mC2**: virtualization and the larger OS modules (scheduler,
-  memory management, IPC, VMX). Each is a project of its own.
+- **The rest of the kernel**: only the page allocator is ported. Page tables,
+  threads and queues, the scheduler, IPC, traps and virtualization are not
+  started. See [KERNEL.md](KERNEL.md).
 
 MCS note: Kim et al. also fold the node writes into `SWAP_TAIL` (their Fig. 1,
 lines 5–7), and their `H_CalLock` counter also counts only memory events, so
@@ -98,6 +105,7 @@ both match the paper.
 
 ## Where to read more
 
+- [KERNEL.md](KERNEL.md): the kernel port, module by module.
 - [SCOPING.md](SCOPING.md): the plan, and a table of every file with what it
   proves.
 - [COMPARISON.md](COMPARISON.md): a row-by-row comparison with CertiKOS, and
