@@ -899,4 +899,36 @@ theorem pfree_inv {maxpage kl kh : Nat} {d d' : PData} {i : Nat} (hI : ATInv max
     · rw [if_neg hi] at h; cases h
   · rw [if_neg hin] at h; cases h
 
+/-! ## What `palloc` and `pfree` leave alone -/
+
+/-- `palloc` writes only inside the allocation table. -/
+theorem pallocC_frame {maxpage : Nat} (hmax : 3 * maxpage < 2 ^ 32) (b : Region)
+    (hn : (b (3 * maxpage)).toNat ≤ maxpage) {k : Nat} (hk : 3 * maxpage < k) :
+    (pallocC maxpage b).1 k = b k := by
+  have hpc : pallocC maxpage b = (if scanC b (b (3 * maxpage)).toNat 1 ((b (3 * maxpage)).toNat - 1) =
+      (b (3 * maxpage)).toNat then (b, 0) else
+      (setCell (setCell b (ix (BitVec.ofNat 32 (scanC b (b (3 * maxpage)).toNat 1 ((b (3 * maxpage)).toNat - 1))) 1) 1)
+        (ix (BitVec.ofNat 32 (scanC b (b (3 * maxpage)).toNat 1 ((b (3 * maxpage)).toNat - 1))) 2) 0,
+        BitVec.ofNat 32 (scanC b (b (3 * maxpage)).toNat 1 ((b (3 * maxpage)).toNat - 1)))) := rfl
+  rw [hpc]
+  by_cases hf : scanC b (b (3 * maxpage)).toNat 1 ((b (3 * maxpage)).toNat - 1) = (b (3 * maxpage)).toNat
+  · rw [if_pos hf]
+  · rw [if_neg hf]
+    have hlt : scanC b (b (3 * maxpage)).toNat 1 ((b (3 * maxpage)).toNat - 1) < maxpage := by
+      rcases scanC_bound b (b (3 * maxpage)).toNat ((b (3 * maxpage)).toNat - 1) 1 with h | ⟨h1, h2⟩ <;> omega
+    simp only [ix1 hmax hlt, ix2 hmax hlt, setCell]
+    rw [if_neg (by omega), if_neg (by omega)]
+
+/-- `pfree` writes only inside the allocation table. -/
+theorem pfreeC_frame {maxpage : Nat} (hmax : 3 * maxpage < 2 ^ 32) (b : Region) {i : Nat}
+    (hi : i < maxpage) {k : Nat} (hk : 3 * maxpage < k) : pfreeC b (BitVec.ofNat 32 i) k = b k := by
+  simp only [pfreeC, ix1 hmax hi, setCell]; rw [if_neg (by omega)]
+
+/-- `palloc`'s body assigns only its own temporaries and `r`. -/
+theorem pallocCS_frz (maxpage : Nat) (z : Ident) (h3 : z ≠ "_") (h5 : z ≠ "tnps") (h6 : z ≠ "pi")
+    (h7 : z ≠ "fi") (h8 : z ≠ "isn") (h9 : z ≠ "cur") (h10 : z ≠ "r") :
+    frS z (pallocCS maxpage) = true := by
+  simp [frS, pallocCS, getNpsS, pallocLoop, loopBody, isNormS, atGetS, atSetS, atSetCS, Ne.symm h3,
+    Ne.symm h5, Ne.symm h6, Ne.symm h7, Ne.symm h8, Ne.symm h9, Ne.symm h10]
+
 end MALOp
