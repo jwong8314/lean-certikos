@@ -66,7 +66,7 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | `MContainer` | page-table pool accessors (`set_pt`, `get_PDE`, `set_PDE`, `rmv_PDE`, `set_PDEU`, `get_PTE`, `set_PTE`, `rmv_PTE`, `set_IDPTE`) | **ported**: `MPTIntro.lean`. All eight memory accessors refine their specs (`getPDE_triple`, `setPDE_triple`, `rmvPDE_triple`, `setPDEU_triple`, `getPTE_triple`, `setPTE_triple`, `rmvPTE_triple`, `setIDPTE_triple`). Missing: `set_pt` (loads `CR3`; needs the machine model) |
 | `MPTIntro` | `pt_read`, `pt_read_pde`, `pt_rmv_aux`, `pt_rmv_pde`, `pt_insert_aux`, `pt_insert_pde`, `idpde_init` | **ported**: `MPTOp.lean`. The six operations refine `ptRead_spec` … `ptInsertPDE_spec`, each verified against the accessor's triple. `idpde_init` is in `MPTInit.lean` (`idpde_init_triple`) |
 | `MPTOp` | `pt_alloc_pde`, `pt_free_pde`, `pt_init_comm` | **ported**: `MPTCommon.lean`. `pt_alloc_pde` refines `ptAllocPDE_spec` (through the specs of `container_alloc`, `pt_insert_pde`, and 1024 calls of `rmv_PTE`); `pt_free_pde` refines `ptFreePDE_spec` (through `pt_read_pde`, `pt_rmv_pde`, `pfree`). `pt_init_comm` is in `MPTInit.lean` (`pt_init_comm_triple`) |
-| `MPTCommon` | `pt_insert`, `pt_rmv` with reference counts, `pt_init_kern` | **ported**: `MPTKern.lean`. `pt_insert` refines `ptInsert_spec` (`ptInsert_triple`) and `pt_rmv` refines `ptRmv_spec` (`ptRmv_triple`), both keeping the page's count in the allocation table. Missing: `pt_init_kern` (boot) |
+| `MPTCommon` | `pt_insert`, `pt_rmv` with reference counts, `pt_init_kern` | **ported**: `MPTKern.lean`. `pt_insert` refines `ptInsert_spec` (`ptInsert_triple`) and `pt_rmv` refines `ptRmv_spec` (`ptRmv_triple`), both keeping the page's count in the allocation table. `pt_init_kern` is in `MPTInit.lean` (`pt_init_kern_triple`) |
 | `MPTKern`, `MPTInit` | kernel page table, `pt_init`, paging on (`set_pg`, `set_cr3`) | missing: these are boot, and loading `CR3` needs the machine model |
 | `MPTNew` | `pt_new`, `pt_resv`, `pt_resv2`, `pmap_init` | **ported**: `MPTNew.lean`. `pt_new` refines `pt_new_spec`; `pt_resv` refines `ptResv_spec` (stated over `container_alloc_spec` and `ptInsert_spec`); `ptResv_locked` is `pt_resv` under the lock. Missing: `pt_resv2` (stage 3), `pmap_init` (boot), and the owner-list versions `ptInsert0_spec`, `ptRmv0_spec` |
 | `MShareIntro`, `MShareOp`, `MShare` | shared memory | missing |
@@ -96,8 +96,9 @@ Even for the ported layers:
 - `high_level_invariant`: the parts about the allocation table and the
   containers are proved preserved by the specifications
   (`MContainerInv.lean`). They are not yet carried along the shared log.
-- Boot: `mem_init`, `container_init`, `idpde_init` and `pt_init_comm` are
-  ported with their C code. `pt_init_kern`, `pmap_init` and `pt_init` are not.
+- Boot: `mem_init`, `container_init`, `idpde_init`, `pt_init_comm` and
+  `pt_init_kern` are ported with their C code. `pt_init` and `pmap_init` are
+  not: they need the machine model.
 
 ## How the ports are organised
 
@@ -305,8 +306,15 @@ What differs from the sources:
 - The loop variables are the locals `set_PDE` and `rmv_PDE` take their
   arguments in (`n`, `i`), so there is no separate argument passing.
 
-Still missing for boot: `pt_init_kern`, `pmap_init`, and `pt_init`, which
-turns paging on and needs the machine model.
+- `real_pt` (ported from `CalRealPT.v`) and `pt_init_kern_spec`: process 0
+  is the kernel, and its directory maps the whole address space with the
+  identity table.
+- **`pt_init_kern_triple`: the C code refines `pt_init_kern_spec`**, through
+  `pt_init_comm_triple` and 704 calls of `set_PDE`.
+
+Still missing for boot: `pt_init` (`pt_init_kern(); set_pt(0); set_pg();`)
+and `pmap_init`, which only calls it. They load `CR3` and turn paging on, so
+they wait for the machine model (stage 6).
 
 ### `MContainerInv.lean` and the end of `MALOp.lean`: the invariants
 
@@ -373,11 +381,11 @@ unused by the ports.
   is taken. Nothing yet shows that every release re-establishes them.
 - **No machine model.** `set_pt`, `set_pg`, context switch, traps and
   virtualization are about `CR3`, registers, privilege levels and assembly.
-- **Boot** (stage 2): `mem_init`, `container_init`, `idpde_init` and
-  `pt_init_comm` are ported, code and specification. `pt_init_kern`,
-  `pmap_init` and `pt_init` are not.
+- **Boot** (stage 2): `mem_init`, `container_init`, `idpde_init`,
+  `pt_init_comm` and `pt_init_kern` are ported, code and specification.
+  `pt_init` and `pmap_init` wait for the machine model.
 
 ## Order
 
-See "How the ports are organised" above. Next: the rest of stage 2
-(`pt_init_kern`, `pmap_init`), then stage 3.
+See "How the ports are organised" above. Stage 2 is done except for
+`pt_init` and `pmap_init` (machine model). Next: stage 3, shared memory.

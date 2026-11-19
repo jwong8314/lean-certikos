@@ -616,4 +616,160 @@ theorem pt_init_comm_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpa
 
 end Proofs2
 
+/-! # `pt_init_kern`: the kernel's own page table
+
+Ported from `clib/CalRealPT.v`: `Calculate_pt_kern_at_i`, `Calculate_pt_kern`,
+`real_pt`. Ported from `objects/ObjVMMFun.v`: `pt_init_kern_spec`. Ported from
+`mm/MPTCommonCSource.v`: the C code.
+
+`pt_init_kern_triple`: **the C code refines `pt_init_kern_spec`.**
+
+Process 0 is the kernel. Its directory maps the whole address space with the
+identity table, so the entries in `[256, 960)` that `pt_init_comm` left empty
+are filled in. -/
+
+def Calculate_pt_kern_at_i (i : Nat) (ptp : PMapPool) : PMapPool := setAt ptp 0 (setAt (ptp 0) i .PDEID)
+
+def Calculate_pt_kern : Nat → PMapPool → PMapPool
+  | 0, ptp => Calculate_pt_kern_at_i 256 ptp
+  | k + 1, ptp => Calculate_pt_kern_at_i (k + 1 + 256) (Calculate_pt_kern k ptp)
+
+/-- `real_pt`: `(kern_high - kern_low) / one_k - 1 = 703`. -/
+def real_pt (num_proc : Nat) (ptp : PMapPool) : PMapPool := Calculate_pt_kern 703 (real_ptp num_proc ptp)
+
+/-- **`pt_init_kern_spec`** (`ObjVMMFun.v`). -/
+def pt_init_kern_spec (num_proc kl kh : Nat) (mm : MMTable) (size : Nat) (d : PTData) : Option PTData :=
+  if d.init = false ∧ d.pg = false ∧ d.ipt = true then
+    some { d with AT := real_AT kl kh mm size d.AT, nps := real_nps mm size, AC := real_AC kl kh mm size,
+                  init := true, ptpool := real_pt num_proc d.ptpool, idpde := real_idpde d.idpde }
+  else none
+
+/-- The kernel's directory with `j` more entries written, from 256 up. -/
+def kernQ : Nat → PMapPool → PMapPool
+  | 0, ptp => ptp
+  | j + 1, ptp => Calculate_pt_kern_at_i (j + 256) (kernQ j ptp)
+
+theorem kernQ_calc (ptp : PMapPool) : ∀ k, Calculate_pt_kern k ptp = kernQ (k + 1) ptp
+  | 0 => rfl
+  | k + 1 => by
+    show Calculate_pt_kern_at_i (k + 1 + 256) (Calculate_pt_kern k ptp) = _
+    rw [kernQ_calc ptp k]; rfl
+
+theorem kern_step {num_proc : Nat} {d : PTData} (hpg : d.pg = false) (hinit : d.init = true)
+    (hipt : d.ipt = true) (hnp : 0 < num_proc) {j : Nat} (hj : j < 1024) (P : PMapPool) :
+    setPDE_spec num_proc 0 j (Dp d P) = some (Dp d (Calculate_pt_kern_at_i j P)) := by
+  unfold setPDE_spec
+  rw [if_pos ⟨hpg, hinit, hipt, hnp, hj⟩]; rfl
+
+/-- `while (i < 960) { set_PDE(0, i); i++; }` -/
+def kernLoop (pb ida : Nat) : Stmt APrim :=
+  .while (.bin .ltu (.var "i") (.const 960))
+    (.seq (setPDES pb ida) (.assign "i" (.bin .add (.var "i") (.const 1))))
+
+/-- The body of **`pt_init_kern`**:
+`pt_init_comm(mbi_adr); i = 256; while (i < 960) { set_PDE(0, i); i++; }`
+The first argument of `set_PDE` is passed by `n = 0`. -/
+def ptInitKernCS (mmb maxpage kl kh cb num_proc pb ib ida : Nat) : Stmt APrim :=
+  .seq (ptInitCommCS mmb maxpage kl kh cb num_proc pb ib ida)
+    (.seq (.assign "n" (.const 0)) (.seq (.assign "i" (.const 256)) (kernLoop pb ida)))
+
+section Proofs3
+variable {maxpage num_id cb num_proc pb ib fb ida : Nat}
+
+/-- **The loop** fills the kernel's directory, through `set_PDE`'s
+specification. -/
+theorem kernLoop_run (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_id cb num_proc pb ib fb)
+    (hida : ida + 2 ^ 22 + 7 ≤ 2 ^ 32) (hnp : 0 < num_proc) {d : PTData} (hpg : d.pg = false)
+    (hinit : d.init = true) (hipt : d.ipt = true) (P : PMapPool) (σ : Locals) (l : RLog) (b : Region)
+    (hlk : (σ "lk").toNat = i0) (hcs : CS1 c i0 l b)
+    (hM : MatchAll maxpage num_id cb num_proc pb ib fb ida (Dp d P) b) (hn : σ "n" = 0)
+    (hi : σ "i" = 256) :
+    ∃ σ' l' b', Runs (rprimsA εR c) (kernLoop pb ida) σ l σ' l' ∧ CS1 c i0 l' b' ∧
+      MatchAll maxpage num_id cb num_proc pb ib fb ida (Dp d (kernQ 704 P)) b' ∧ σ' "lk" = σ "lk" ∧
+      ∀ k, k < pb → b' k = b k := by
+  let Inv : Locals → RLog → Prop := fun τ l' => τ "lk" = σ "lk" ∧ τ "n" = BitVec.ofNat 32 0 ∧
+    ∃ m b', m ≤ 704 ∧ τ "i" = BitVec.ofNat 32 (m + 256) ∧ CS1 c i0 l' b' ∧
+      MatchAll maxpage num_id cb num_proc pb ib fb ida (Dp d (kernQ m P)) b' ∧ ∀ k, k < pb → b' k = b k
+  have hbody : ∀ τ l', Inv τ l' → ¬ (Expr.bin .ltu (.var "i") (.const 960)).eval τ = 0 →
+      ∃ τ' l'', Runs (rprimsA εR c) (.seq (setPDES pb ida) (.assign "i" (.bin .add (.var "i") (.const 1))))
+        τ l' τ' l'' ∧ Inv τ' l'' ∧ 960 - (τ' "i").toNat < 960 - (τ "i").toNat := by
+    rintro τ l' ⟨hlkτ, hnτ, m, b', hm, hiτ, hcs', hM', hfr⟩ hg
+    rw [ltu_eval (σ := τ) (ea := .var "i") (eb := .const 960) (b := 960) hiτ rfl (by omega) (by decide)] at hg
+    have hmlt : m + 256 < 960 := by
+      by_cases h : m + 256 < 960
+      · exact h
+      · rw [if_neg h] at hg; exact absurd rfl hg
+    obtain ⟨τ2, l2, b2, d2, hr2, hcs2, hM2, hlk2, hf2, hq⟩ :=
+      setPDE_triple εR c i0 hL hida 0 (m + 256) τ l' b' (Dp d (kernQ m P)) (by rw [hlkτ]; exact hlk) hcs' hM'
+        ⟨hnτ, hiτ, _, kern_step hpg hinit hipt hnp (by omega) _⟩
+    rw [kern_step hpg hinit hipt hnp (by omega)] at hq
+    simp only [Option.some.injEq] at hq
+    rw [← hq] at hM2
+    have fr2 : ∀ z : Ident, z ≠ "_" → τ2 z = τ z := fun z h1 =>
+      hr2.frame (by simp [frS, setPDES, Ne.symm h1])
+    have h3 := asg_run (εR := εR) (c := c) (σ := τ2) (l := l2) "i" (.bin .add (.var "i") (.const 1))
+      (inc_eval (m := m + 256) (by rw [fr2 _ (by decide)]; exact hiτ))
+    refine ⟨_, l2, Runs.seq hr2 h3, ⟨?_, ?_, m + 1, b2, by omega, ?_, hcs2, hM2, fun k hk => ?_⟩, ?_⟩
+    · simp [Locals.set, hlk2, hlkτ]
+    · simp [Locals.set, fr2, hnτ]
+    · rw [Locals.set_same, show m + 1 + 256 = m + 256 + 1 by omega]
+    · rw [hf2 k (by omega), hfr k hk]
+    · rw [Locals.set_same, hiτ, tn (show m + 256 + 1 < 2 ^ 32 by omega), tn (show m + 256 < 2 ^ 32 by omega)]
+      omega
+  obtain ⟨σ', l', hr, ⟨hlk', hn', m, b', hm, hi', hcs', hM', hfr⟩, h0⟩ :=
+    while_inv (εR := εR) (c := c) Inv (fun τ => 960 - (τ "i").toNat) hbody 960 σ l (by omega)
+      ⟨rfl, hn, 0, b, by omega, hi, hcs, hM, fun _ _ => rfl⟩
+  rw [ltu_eval (σ := σ') (ea := .var "i") (eb := .const 960) (b := 960) hi' rfl (by omega) (by decide)] at h0
+  have hme : m = 704 := by
+    by_cases h : m + 256 < 960
+    · rw [if_pos h] at h0; cases h0
+    · omega
+  subst hme
+  exact ⟨σ', l', b', hr, hcs', hM', hlk', hfr⟩
+
+/-- **`pt_init_kern` refines `pt_init_kern_spec`.** -/
+theorem pt_init_kern_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_id cb num_proc pb ib fb)
+    (hida : ida + 2 ^ 22 + 7 ≤ 2 ^ 32) (hnp : 0 < num_proc) {mmb size kl kh : Nat} {mm : MMTable}
+    (hcm : cb + 5 * num_id ≤ mmb) (hmb : mmb + 1 + 3 * size ≤ pb) (hnum : 0 < num_id)
+    (hmp : 2 ^ 20 ≤ maxpage) (hkl : 0 < kl) (hkl' : kl < 2 ^ 32) (hkh : kh < 2 ^ 20) (hsz : 0 < size)
+    (hv : MM_valid mm size) (hc : MM_correct mm size) :
+    Triple εR c i0
+      (fun (d : PTData) b => MatchAll maxpage num_id cb num_proc pb ib fb ida d b ∧ MatchMMap mmb mm size b)
+      (fun _ => True)
+      (fun _ d => d.init = false ∧ d.pg = false ∧ d.ipt = true ∧ (∀ j, (d.AC j).cused = false) ∧ NV d.ptpool)
+      (ptInitKernCS mmb maxpage kl kh cb num_proc pb ib ida)
+      (fun _ d _ d' => pt_init_kern_spec num_proc kl kh mm size d = some d') := by
+  rintro σ l b d hlk hcs hMM ⟨hin, hpg, hipt, hun, hnv⟩
+  obtain ⟨σ1, l1, b1, d1, hr1, hcs1, ⟨hM1, hMM1⟩, hlk1, -, hq1⟩ :=
+    pt_init_comm_triple εR c i0 hL hida hnp hcm hmb hnum hmp hkl hkl' hkh hsz hv hc σ l b d hlk hcs hMM
+      ⟨hin, hpg, hipt, hun, hnv⟩
+  have hd1 : d1 = { d with
+      AT := real_AT kl kh mm size d.AT
+      nps := real_nps mm size
+      AC := real_AC kl kh mm size
+      init := true
+      ptpool := real_ptp num_proc d.ptpool
+      idpde := real_idpde d.idpde } := by
+    have h : pt_init_comm_spec num_proc kl kh mm size d = some d1 := hq1
+    unfold pt_init_comm_spec at h
+    rw [if_pos ⟨hin, hpg, hipt⟩] at h
+    exact (Option.some.inj h).symm
+  let σ3 := (σ1.set "n" 0).set "i" 256
+  have h23 : Runs (rprimsA εR c) (.seq (.assign "n" (.const 0)) (.assign "i" (.const 256))) σ1 l1 σ3 l1 :=
+    Runs.seq (Runs.assign _ _) (Runs.assign _ _)
+  obtain ⟨σ4, l4, b4, hr4, hcs4, hM4, hlk4, hf4⟩ := kernLoop_run εR c i0 hL hida hnp (d := d1)
+    (by rw [hd1]; exact hpg) (by rw [hd1]) (by rw [hd1]; exact hipt) (real_ptp num_proc d.ptpool) σ3 l1 b1
+    (by simp [σ3, Locals.set, hlk1, hlk]) hcs1 (by rw [hd1] at hM1 ⊢; exact hM1)
+    (by simp [σ3, Locals.set]) (by simp [σ3])
+  refine ⟨σ4, l4, b4, Dp d1 (kernQ 704 (real_ptp num_proc d.ptpool)),
+    Runs.seq hr1 (Runs.seq (Runs.assign _ _) (Runs.seq (Runs.assign _ _) hr4)), hcs4,
+    ⟨hM4, matchMM_of_eq hMM1 (fun k hk hk2 => hf4 k (by omega))⟩, ?_, fun _ hk => absurd trivial hk, ?_⟩
+  · rw [hlk4]; simp [σ3, Locals.set, hlk1]
+  · show pt_init_kern_spec num_proc kl kh mm size d = some _
+    unfold pt_init_kern_spec real_pt
+    rw [if_pos ⟨hin, hpg, hipt⟩, kernQ_calc, hd1]
+    rfl
+
+end Proofs3
+
 end MPTInit
