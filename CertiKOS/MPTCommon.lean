@@ -287,4 +287,122 @@ theorem ptFreePDE_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage 
 
 end Free
 
+/-! ## `pt_alloc_pde` -/
+
+/-- A second-level table whose first `k` entries are cleared. -/
+def initPTE (k : Nat) : PTE := fun v => if v < k then .PTEUnPresent else .PTEUndef
+
+/-- `real_init_PTE`: all 1024 entries not present. -/
+def real_init_PTE : PTE := initPTE 1024
+
+theorem initPTE_zero : initPTE 0 = fun _ => .PTEUndef := by funext v; simp [initPTE]
+
+theorem initPTE_succ (k : Nat) : setAt (initPTE k) k .PTEUnPresent = initPTE (k + 1) := by
+  funext v
+  unfold setAt initPTE
+  by_cases h : v = k
+  · subst h; simp
+  · by_cases h2 : v < k
+    · simp [h, h2, show v < k + 1 by omega]
+    · simp [h, h2, show ¬ v < k + 1 by omega]
+
+theorem pool2 (P : PMapPool) (n i : Nat) (a b : PDE) :
+    setAt (setAt P n (setAt (P n) i a)) n (setAt ((setAt P n (setAt (P n) i a)) n) i b) =
+      setAt P n (setAt (P n) i b) := by
+  funext n' i'
+  unfold setAt
+  by_cases h1 : n' = n <;> by_cases h2 : i' = i <;> simp [h1, h2]
+
+/-- **`ptAllocPDE_spec`**: allocate a page from container `nn`, install it as
+the second-level table of `vadr`, with every entry not present. Returns the
+page, or 0 if the container is at its quota. -/
+def ptAllocPDE_spec (num_proc : Nat) (nn vadr : Nat) (d : PTData) : Option (PTData × Nat) :=
+  let c := d.AC nn
+  if d.init = true ∧ d.ipt = true ∧ c.cused = true ∧ pt_Arg' num_proc nn vadr then
+    if nn = d.PT then none
+    else
+      match d.ptpool nn (PDX vadr) with
+      | .PDEUnPresent =>
+        if c.cusage < c.cquota then
+          match first_free d.AT d.nps with
+          | some pi =>
+            let pt' := setAt (d.ptpool nn) (PDX vadr) (.PDEValid pi real_init_PTE)
+            some ({ d with HP := free_page pi d.HP, AT := setAt d.AT pi (.ATValid true .ATNorm 0),
+                           pperm := setAt d.pperm pi (.PGHide nn (PDX vadr)),
+                           ptpool := setAt d.ptpool nn pt',
+                           AC := setAt d.AC nn ⟨c.cquota, c.cusage + 1, c.cparent, c.cchildren, c.cused⟩ }, pi)
+          | none => none
+        else some (d, 0)
+      | _ => none
+  else none
+
+/-- The state while the new table is being cleared: `k` entries done. -/
+def Dk (DE : PTData) (nn pdi p k : Nat) : PTData :=
+  { DE with ptpool := setAt DE.ptpool nn (setAt (DE.ptpool nn) pdi (.PDEValid p (initPTE k))) }
+
+theorem rmv_step (num_proc : Nat) {DE : PTData} {nn pdi p k : Nat} (hinit : DE.init = true)
+    (hipt : DE.ipt = true) (hnp : nn < num_proc) (hpdx : pdi < 1024) (hk : k < 1024) (hPT : ¬ nn = DE.PT) :
+    rmvPTE_spec num_proc nn pdi k (Dk DE nn pdi p k) = some (Dk DE nn pdi p (k + 1)) := by
+  unfold rmvPTE_spec Dk
+  simp only
+  rw [if_pos ⟨hinit, hipt, ⟨hnp, hpdx⟩, hk⟩, if_neg hPT, pool_get_eq]
+  simp only [pool2, initPTE_succ]
+
+/-- `while (vadr < 1024) { rmv_PTE(n, i, vadr); vadr++; }` -/
+def rmvLoop (pb fb : Nat) : Stmt APrim :=
+  .while (.bin .ltu (.var "vadr") (.const 1024))
+    (.seq (rmvPTES pb fb) (.assign "vadr" (.bin .add (.var "vadr") (.const 1))))
+
+section Alloc
+variable {maxpage num_id cb num_proc pb ib fb ida : Nat}
+
+/-- The clearing loop, verified against `rmv_PTE`'s specification. -/
+theorem rmvLoop_run (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_id cb num_proc pb ib fb)
+    {DE : PTData} {nn pdi p : Nat} (hinit : DE.init = true) (hipt : DE.ipt = true) (hnp : nn < num_proc)
+    (hpdx : pdi < 1024) (hPT : ¬ nn = DE.PT) :
+    ∀ (m k : Nat), k + m = 1024 → ∀ (σ : Locals) (l : RLog) (b : Region), (σ "lk").toNat = i0 →
+      CS1 c i0 l b → MatchAll maxpage num_id cb num_proc pb ib fb ida (Dk DE nn pdi p k) b →
+      σ "n" = BitVec.ofNat 32 nn → σ "i" = BitVec.ofNat 32 pdi → σ "vadr" = BitVec.ofNat 32 k →
+      ∃ σ' l' b', Runs (rprimsA εR c) (rmvLoop pb fb) σ l σ' l' ∧ CS1 c i0 l' b' ∧
+        MatchAll maxpage num_id cb num_proc pb ib fb ida (Dk DE nn pdi p 1024) b' ∧ σ' "lk" = σ "lk" ∧
+        ∀ z, z ≠ "o" → z ≠ "_" → z ≠ "vadr" → σ' z = σ z
+  | 0, k, hk, σ, l, b, hlk, hcs, hM, hn, hi, hva => by
+    have hk' : k = 1024 := by omega
+    subst hk'
+    have hg : (σ "vadr").ult 1024 = false := by rw [hva]; decide
+    refine ⟨σ, l, b, Runs.while_false ?_, hcs, hM, rfl, fun _ _ _ _ => rfl⟩
+    show (if (σ "vadr").ult 1024 then (1 : Val) else 0) = 0
+    rw [hg]; rfl
+  | m + 1, k, hk, σ, l, b, hlk, hcs, hM, hn, hi, hva => by
+    have hk1 : k < 1024 := by omega
+    have hg : (σ "vadr").ult 1024 = true := by
+      rw [hva]
+      have := ult_ofNat (m := k) (n := 1024) (by omega) (by decide)
+      rw [show (1024 : Val) = BitVec.ofNat 32 1024 from rfl, this]; simp [hk1]
+    obtain ⟨σ1, l1, b1, d1, hr1, hcs1, hM1, hlk1, -, hq⟩ :=
+      rmvPTE_triple εR c i0 hL nn pdi k σ l b (Dk DE nn pdi p k) hlk hcs hM
+        ⟨hn, hi, hva, _, rmv_step num_proc hinit hipt hnp hpdx hk1 hPT⟩
+    rw [rmv_step num_proc hinit hipt hnp hpdx hk1 hPT] at hq
+    simp only [Option.some.injEq] at hq
+    rw [← hq] at hM1
+    have fr1 : ∀ z : Ident, z ≠ "o" → z ≠ "_" → σ1 z = σ z := fun z h1 h2 =>
+      hr1.frame (by simp [frS, rmvPTES, pteStoreS, Ne.symm h1, Ne.symm h2])
+    let σ2 := σ1.set "vadr" (BitVec.ofNat 32 (k + 1))
+    have ha : Runs (rprimsA εR c) (.assign "vadr" (.bin .add (.var "vadr") (.const 1))) σ1 l1 σ2 l1 := by
+      have h := Runs.assign (P := rprimsA εR c) (σ := σ1) (l := l1) "vadr" (.bin .add (.var "vadr") (.const 1))
+      have e : (Expr.bin .add (.var "vadr") (.const 1)).eval σ1 = BitVec.ofNat 32 (k + 1) := by
+        show σ1 "vadr" + 1 = _
+        rw [fr1 _ (by decide) (by decide), hva]; simp [BitVec.ofNat_add]
+      rw [e] at h; exact h
+    obtain ⟨σ', l', b', hr, hcs', hM', hlk', hfr⟩ := rmvLoop_run εR c i0 hL hinit hipt hnp hpdx hPT m (k + 1)
+      (by omega) σ2 l1 b1 (by simp [σ2, Locals.set, hlk1, hlk]) hcs1 hM1
+      (by simp [σ2, Locals.set, fr1, hn]) (by simp [σ2, Locals.set, fr1, hi]) (by simp [σ2])
+    refine ⟨σ', l', b', Runs.while_true ?_ (Runs.seq hr1 ha) hr, hcs', hM', ?_, fun z h1 h2 h3 => ?_⟩
+    · show ¬ (if (σ "vadr").ult 1024 then (1 : Val) else 0) = 0
+      rw [hg]; decide
+    · rw [hlk']; simp [σ2, Locals.set, hlk1]
+    · rw [hfr z h1 h2 h3]; simp [σ2, Locals.set, h3, fr1 z h1 h2]
+
+end Alloc
+
 end MPTCommon
