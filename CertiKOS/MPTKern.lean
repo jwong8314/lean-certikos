@@ -522,4 +522,213 @@ theorem ptInsert_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage n
 
 end Insert
 
+/-! ## `pt_rmv` -/
+
+/-- `padr / PAGESIZE` -/
+def pgE : Expr := .bin .div (.var "padr") (.const 4096)
+
+/-- ```
+padr = pt_read(n, vadr);
+if (padr != 0) {
+  pt_rmv_aux(n, vadr);
+  count = at_get_c(padr / PAGESIZE);
+  if (count > 0) at_set_c(padr / PAGESIZE, count - 1);
+}
+return padr / PAGESIZE;
+``` -/
+def ptRmvS (pb fb : Nat) : Stmt APrim :=
+  .seq (ptReadS pb fb) (.seq (.assign "padr" (.var "r"))
+    (.seq (.ite (.bin .ne (.var "padr") (.const 0))
+        (.seq (ptRmvAuxS pb fb) (.seq (atGetCS "count" pgE)
+          (.ite (.bin .ltu (.const 0) (.var "count"))
+            (atSetCS pgE (.bin .sub (.var "count") (.const 1))) .skip)))
+        .skip)
+      (.assign "r" pgE)))
+
+section Rmv
+variable {maxpage num_id cb num_proc pb ib fb ida : Nat}
+
+/-- **`pt_rmv` refines `ptRmv_spec`.** -/
+theorem ptRmv_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_id cb num_proc pb ib fb)
+    (hmax : 3 * maxpage < 2 ^ 32) (hmp : maxpage ≤ 2 ^ 20) (nn vadr : Nat) :
+    Triple εR c i0 (MatchAll maxpage num_id cb num_proc pb ib fb ida) (fun _ => True)
+      (fun σ d => σ "n" = BitVec.ofNat 32 nn ∧ σ "vaddr" = BitVec.ofNat 32 vadr ∧
+        ∃ d1 r, ptRmv_spec maxpage num_proc nn vadr d = some (d1, r))
+      (ptRmvS pb fb)
+      (fun _ d σ' d' => ∃ r, ptRmv_spec maxpage num_proc nn vadr d = some (d', r) ∧
+        σ' "r" = BitVec.ofNat 32 r) := by
+  intro σ l b d hlk hcs hM ⟨hn, hva, dF, rF, hs⟩
+  have := hL.hib; have := hL.hfb; have := hL.hend; have := hL.hpb; have := hL.hcb
+  have hs0 := hs
+  unfold ptRmv_spec at hs
+  have hc : d.init = true ∧ d.ipt = true ∧ d.pg = true ∧ pt_Arg' num_proc nn vadr := by
+    by_cases h : d.init = true ∧ d.ipt = true ∧ d.pg = true ∧ pt_Arg' num_proc nn vadr
+    · exact h
+    · rw [if_neg h] at hs; cases hs
+  rw [if_pos hc] at hs
+  obtain ⟨hinit, hipt, hpg, hn0, hnp, hlo, hhi⟩ := hc
+  have hv : vadr < 2 ^ 32 := by omega
+  have hpdx : PDX vadr < 1024 := by unfold PDX; omega
+  have hptx : PTX vadr < 1024 := by unfold PTX; omega
+  have hPT : ¬ nn = d.PT := by
+    intro h; rw [if_pos h] at hs; cases hs
+  rw [if_neg hPT] at hs
+  cases hp : d.ptpool nn (PDX vadr) with
+  | PDEID => rw [hp] at hs; cases hs
+  | PDEUnPresent => rw [hp] at hs; cases hs
+  | PDEUndef => rw [hp] at hs; cases hs
+  | PDEValid pi pdt =>
+    rw [hp] at hs; simp only at hs
+    have frR : ∀ (τ : Locals) (lb : RLog), Runs (rprimsA εR c) (ptReadS pb fb) σ l τ lb →
+        ∀ z : Ident, z ≠ "i" → z ≠ "vadr" → z ≠ "o" → z ≠ "r" → τ z = σ z := fun τ lb hr z h1 h2 h3 h4 =>
+      hr.frame (by simp [frS, ptReadS, withPDXPTX, getPTES, Ne.symm h1, Ne.symm h2, Ne.symm h3, Ne.symm h4])
+    cases hq : pdt (PTX vadr) with
+    | PTEUndef => rw [hq] at hs; cases hs
+    | PTEUnPresent =>
+      rw [hq] at hs
+      simp only [Option.some.injEq, Prod.mk.injEq] at hs; obtain ⟨hdF, hrF⟩ := hs
+      have e1 : ptRead_spec num_proc nn vadr d = some 0 := by
+        unfold ptRead_spec getPTE_spec
+        rw [if_pos ⟨hinit, hipt, ⟨hnp, hpdx⟩, hptx⟩, hp]; simp only; rw [hq]
+      obtain ⟨σ1, l1, b1, d1, hr1, hcs1, hM1, hlk1, -, hd1, v, hsv, hrv⟩ :=
+        ptRead_triple εR c i0 (pb := pb) (fb := fb) (num_proc := num_proc) (by omega) (by omega) nn vadr hv
+          σ l b d hlk hcs hM ⟨hn, hva, 0, e1⟩
+      rw [hd1] at hM1
+      rw [e1] at hsv; simp only [Option.some.injEq] at hsv
+      let σ2 := σ1.set "padr" (BitVec.ofNat 32 0)
+      have ha2 : Runs (rprimsA εR c) (.assign "padr" (.var "r")) σ1 l1 σ2 l1 := by
+        have h := Runs.assign (P := rprimsA εR c) (σ := σ1) (l := l1) "padr" (.var "r")
+        have e : (Expr.var "r").eval σ1 = BitVec.ofNat 32 0 := by rw [← hsv] at hrv; exact hrv
+        rw [e] at h; exact h
+      have ha3 : Runs (rprimsA εR c) (.assign "r" pgE) σ2 l1 (σ2.set "r" (BitVec.ofNat 32 0)) l1 := by
+        have h := Runs.assign (P := rprimsA εR c) (σ := σ2) (l := l1) "r" pgE
+        have e : pgE.eval σ2 = BitVec.ofNat 32 0 := by
+          show σ2 "padr" / 4096 = _; simp [σ2]
+        rw [e] at h; exact h
+      refine ⟨_, l1, b1, d, Runs.seq hr1 (Runs.seq ha2 (Runs.seq (Runs.ite_false (ne_false (by simp [σ2]))
+        Runs.skip) ha3)), hcs1, hM1, ?_, fun k hk => absurd trivial hk, 0, by rw [hs0, hdF, hrF], by simp⟩
+      rw [Locals.set_other _ _ (by decide)]; simp [σ2, Locals.set, hlk1]
+    | PTEValid padr p =>
+      rw [hq] at hs; simp only at hs
+      have hpr : 0 < padr ∧ padr < maxpage := by
+        by_cases h : 0 < padr ∧ padr < maxpage
+        · exact h
+        · rw [if_neg h] at hs; cases hs
+      rw [if_pos hpr] at hs
+      cases hA : d.AT padr with
+      | ATUndef => rw [hA] at hs; cases hs
+      | ATValid b0 t cnt =>
+        rw [hA] at hs
+        cases b0 <;> cases t <;> simp only at hs <;> try (cases hs)
+        have hcl : 0 < cnt ∧ cnt ≤ 2 ^ 32 - 1 := by
+          by_cases h : 0 < cnt ∧ cnt ≤ 2 ^ 32 - 1
+          · exact h
+          · rw [if_neg h] at hs; cases hs
+        rw [if_pos hcl] at hs
+        simp only [Option.some.injEq, Prod.mk.injEq] at hs; obtain ⟨hdF, hrF⟩ := hs
+        have hpm := perm_le p
+        have hW : padr * 4096 + PermtoZ p < 2 ^ 32 := by omega
+        -- pt_read
+        have e1 : ptRead_spec num_proc nn vadr d = some (padr * 4096 + PermtoZ p) := by
+          unfold ptRead_spec getPTE_spec
+          rw [if_pos ⟨hinit, hipt, ⟨hnp, hpdx⟩, hptx⟩, hp]; simp only; rw [hq]
+        obtain ⟨σ1, l1, b1, d1, hr1, hcs1, hM1, hlk1, -, hd1, v, hsv, hrv⟩ :=
+          ptRead_triple εR c i0 (pb := pb) (fb := fb) (num_proc := num_proc) (by omega) (by omega) nn vadr hv
+            σ l b d hlk hcs hM ⟨hn, hva, _, e1⟩
+        rw [hd1] at hM1
+        rw [e1] at hsv; simp only [Option.some.injEq] at hsv
+        have fr1 := frR σ1 l1 hr1
+        let σ2 := σ1.set "padr" (BitVec.ofNat 32 (padr * 4096 + PermtoZ p))
+        have ha2 : Runs (rprimsA εR c) (.assign "padr" (.var "r")) σ1 l1 σ2 l1 := by
+          have h := Runs.assign (P := rprimsA εR c) (σ := σ1) (l := l1) "padr" (.var "r")
+          have e : (Expr.var "r").eval σ1 = BitVec.ofNat 32 (padr * 4096 + PermtoZ p) := by
+            rw [← hsv] at hrv; exact hrv
+          rw [e] at h; exact h
+        have hg : σ2 "padr" ≠ 0 := by
+          have hne : (BitVec.ofNat 32 (padr * 4096 + PermtoZ p) : Val) ≠ BitVec.ofNat 32 0 :=
+            KernPAlloc.ofNat_ne (a := padr * 4096 + PermtoZ p) (b := 0) hW (by decide) (by omega)
+          simpa [σ2] using hne
+        -- the page number
+        have hpg : ∀ τ : Locals, τ "padr" = BitVec.ofNat 32 (padr * 4096 + PermtoZ p) →
+            pgE.eval τ = BitVec.ofNat 32 padr := by
+          intro τ hτ
+          show τ "padr" / 4096 = _
+          rw [hτ]
+          refine val_of_toNat ?_ (by omega)
+          rw [BitVec.toNat_udiv, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hW]
+          show (padr * 4096 + PermtoZ p) / 4096 = padr
+          omega
+        -- pt_rmv_aux
+        have e2 : ptRmvAux_spec num_proc nn vadr d = some { d with
+            ptpool := setAt d.ptpool nn (setAt (d.ptpool nn) (PDX vadr)
+              (.PDEValid pi (setAt pdt (PTX vadr) .PTEUnPresent))) } := by
+          unfold ptRmvAux_spec rmvPTE_spec
+          rw [if_pos ⟨hinit, hipt, ⟨hnp, hpdx⟩, hptx⟩, if_neg hPT, hp]
+        obtain ⟨σ3, l3, b3, d3, hr3, hcs3, hM3, hlk3, -, hq3⟩ :=
+          ptRmvAux_triple εR c i0 hL nn vadr hv σ2 l1 b1 d (by simp [σ2, Locals.set, hlk1, hlk]) hcs1 hM1
+            ⟨by simp [σ2, Locals.set, fr1, hn], by simp [σ2, Locals.set, fr1, hva], _, e2⟩
+        rw [e2] at hq3; simp only [Option.some.injEq] at hq3
+        rw [← hq3] at hM3
+        have hpa3 : σ3 "padr" = BitVec.ofNat 32 (padr * 4096 + PermtoZ p) := by
+          rw [hr3.frame (by simp [frS, ptRmvAuxS, withPDXPTX, rmvPTES, pteStoreS])]; simp [σ2]
+        -- count = at_get_c(padr / PAGESIZE)
+        have e3 : get_at_c_spec maxpage padr (PTData.toRData { d with
+            ptpool := setAt d.ptpool nn (setAt (d.ptpool nn) (PDX vadr)
+              (.PDEValid pi (setAt pdt (PTX vadr) .PTEUnPresent))) }).toPData = some cnt := by
+          unfold get_at_c_spec
+          rw [if_pos hpr.2]
+          show (match d.AT padr with
+            | .ATValid _ _ n => some n
+            | .ATUndef => none) = some cnt
+          rw [hA]
+        obtain ⟨σ4, l4, b4, d4, hr4, hcs4, hM4, hlk4, -, hd4, v4, hsv4, hσ4⟩ :=
+          atGetC_lift εR c i0 hL hmax "count" (by decide) pgE padr σ3 l3 b3 _
+            (by rw [hlk3]; simp [σ2, Locals.set, hlk1, hlk]) hcs3 hM3 ⟨hpg σ3 hpa3, _, e3⟩
+        rw [e3] at hsv4; simp only [Option.some.injEq] at hsv4
+        rw [hd4] at hM4
+        have hcnt4 : σ4 "count" = BitVec.ofNat 32 cnt := by rw [hσ4, Locals.set_same, ← hsv4]
+        have hpa4 : σ4 "padr" = BitVec.ofNat 32 (padr * 4096 + PermtoZ p) := by
+          rw [hσ4, Locals.set_other _ _ (by decide)]; exact hpa3
+        have hgc : ¬ (Expr.bin .ltu (.const 0) (.var "count")).eval σ4 = 0 := by
+          show ¬ (if (0 : Val).ult (σ4 "count") then (1 : Val) else 0) = 0
+          have := ult_ofNat (m := 0) (n := cnt) (by decide) (by omega)
+          rw [hcnt4, show (0 : Val) = BitVec.ofNat 32 0 from rfl, this]; simp [hcl.1]
+        -- at_set_c(padr / PAGESIZE, count - 1)
+        have e4 : set_at_c_spec maxpage padr (cnt - 1) (PTData.toRData { d with
+            ptpool := setAt d.ptpool nn (setAt (d.ptpool nn) (PDX vadr)
+              (.PDEValid pi (setAt pdt (PTX vadr) .PTEUnPresent))) }).toPData =
+            some { d.toPData with AT := setAt d.AT padr (.ATValid true .ATNorm (cnt - 1)) } := by
+          unfold set_at_c_spec
+          rw [if_pos hpr.2]
+          show (match d.AT padr with
+            | .ATValid b .ATNorm _ => some { d.toPData with AT := setAt d.AT padr (.ATValid b .ATNorm (cnt - 1)) }
+            | _ => none) = _
+          rw [hA]
+        obtain ⟨σ5, l5, b5, d5, hr5, hcs5, hM5, hlk5, -, r1, hd5, ⟨pd, hpd, hr1e⟩, hσ5⟩ :=
+          atSetC_lift εR c i0 hL hmax pgE (.bin .sub (.var "count") (.const 1)) padr (cnt - 1)
+            σ4 l4 b4 _ (by rw [hlk4, hlk3]; simp [σ2, Locals.set, hlk1, hlk]) hcs4 hM4
+            ⟨hpg σ4 hpa4, by
+              show σ4 "count" - 1 = _
+              rw [hcnt4]
+              have h1 : (1 : Val).toNat = 1 := rfl
+              have hc1 := hcl.1
+              have hc2 := hcl.2
+              refine val_of_toNat ?_ (by omega)
+              rw [BitVec.toNat_sub, BitVec.toNat_ofNat, h1]
+              omega, by have := hcl.2; omega, _, e4⟩
+        rw [e4] at hpd; simp only [Option.some.injEq] at hpd
+        rw [hd5, hr1e, ← hpd] at hM5
+        have hpa5 : σ5 "padr" = BitVec.ofNat 32 (padr * 4096 + PermtoZ p) := by
+          rw [hσ5, Locals.set_other _ _ (by decide)]; exact hpa4
+        have ha6 : Runs (rprimsA εR c) (.assign "r" pgE) σ5 l5 (σ5.set "r" (BitVec.ofNat 32 padr)) l5 := by
+          have h := Runs.assign (P := rprimsA εR c) (σ := σ5) (l := l5) "r" pgE
+          rw [hpg σ5 hpa5] at h; exact h
+        refine ⟨_, l5, b5, dF, Runs.seq hr1 (Runs.seq ha2 (Runs.seq (Runs.ite_true (ne_true hg)
+          (Runs.seq hr3 (Runs.seq hr4 (Runs.ite_true hgc hr5)))) ha6)), hcs5, ?_, ?_,
+          fun k hk => absurd trivial hk, padr, by rw [hs0, hrF], by simp⟩
+        · rw [← hdF]; exact hM5
+        · rw [Locals.set_other _ _ (by decide), hlk5, hlk4, hlk3]; simp [σ2, Locals.set, hlk1]
+
+end Rmv
+
 end MPTKern

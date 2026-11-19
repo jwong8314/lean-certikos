@@ -66,8 +66,8 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | `MContainer` | page-table pool accessors (`set_pt`, `get_PDE`, `set_PDE`, `rmv_PDE`, `set_PDEU`, `get_PTE`, `set_PTE`, `rmv_PTE`, `set_IDPTE`) | **ported**: `MPTIntro.lean`. All eight memory accessors refine their specs (`getPDE_triple`, `setPDE_triple`, `rmvPDE_triple`, `setPDEU_triple`, `getPTE_triple`, `setPTE_triple`, `rmvPTE_triple`, `setIDPTE_triple`). Missing: `set_pt` (loads `CR3`; needs the machine model) |
 | `MPTIntro` | `pt_read`, `pt_read_pde`, `pt_rmv_aux`, `pt_rmv_pde`, `pt_insert_aux`, `pt_insert_pde`, `idpde_init` | **ported**: `MPTOp.lean`. The six operations refine `ptRead_spec` … `ptInsertPDE_spec`, each verified against the accessor's triple. Missing: `idpde_init` (boot) |
 | `MPTOp` | `pt_alloc_pde`, `pt_free_pde`, `pt_init_comm` | **ported**: `MPTCommon.lean`. `pt_alloc_pde` refines `ptAllocPDE_spec` (through the specs of `container_alloc`, `pt_insert_pde`, and 1024 calls of `rmv_PTE`); `pt_free_pde` refines `ptFreePDE_spec` (through `pt_read_pde`, `pt_rmv_pde`, `pfree`). Missing: `pt_init_comm` (boot) |
-| `MPTCommon` | `pt_insert`, `pt_rmv` with reference counts | prototype only |
-| `MPTKern`, `MPTInit` | kernel page table, `pt_init`, paging on | missing |
+| `MPTCommon` | `pt_insert`, `pt_rmv` with reference counts, `pt_init_kern` | **ported**: `MPTKern.lean`. `pt_insert` refines `ptInsert_spec` (`ptInsert_triple`) and `pt_rmv` refines `ptRmv_spec` (`ptRmv_triple`), both keeping the page's count in the allocation table. Missing: `pt_init_kern` (boot) |
+| `MPTKern`, `MPTInit` | kernel page table, `pt_init`, paging on (`set_pg`, `set_cr3`) | missing: these are boot, and loading `CR3` needs the machine model |
 | `MPTNew` | `pt_new`, `pt_resv`, `pmap_init` | missing |
 | `MShareIntro`, `MShareOp`, `MShare` | shared memory | missing |
 | abstract ownership | `pperm`, the logical table `LAT` with its owner lists, `consistent_ppage` | `pperm` and `consistent_ppage` are in `MALOp.lean` and proved preserved. `LAT` missing. `KernOwner.lean` is a prototype with a different design |
@@ -197,6 +197,20 @@ Each port has the same shape, which is mCertiKOS's own two steps.
   - `ptAllocPDE_triple`: `pt_alloc_pde` refines `ptAllocPDE_spec`. The loop
     that clears the new table is verified against `rmv_PTE`'s specification,
     1024 times (`rmvLoop_run`), and ends with `real_init_PTE`.
+
+### `MPTKern.lean`
+
+- `ptInsert_triple`: `pt_insert(n, vadr, padr, perm)` refines `ptInsert_spec`.
+  It covers the three outcomes: the second-level table was there (returns 0);
+  it was allocated (returns its page); none could be allocated (returns
+  `MagicNumber`, nothing mapped). The proof goes through the specifications
+  of `pt_read_pde`, `pt_alloc_pde`, `pt_insert_aux`, `at_get_c` and
+  `at_set_c`.
+- `ptRmv_triple`: `pt_rmv(n, vadr)` refines `ptRmv_spec`: it clears the entry,
+  lowers the page's count, and returns the page, or returns 0 if nothing was
+  mapped.
+- `atGetC_lift`, `atSetC_lift`: the count accessors carried to the state with
+  page tables.
 
 ### `MContainerInv.lean` and the end of `MALOp.lean`: the invariants
 
