@@ -65,7 +65,7 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | `MALT` | container code: `container_init`, getters, `container_can_consume`, `container_split`, `container_alloc` | **ported** in `MContainer.lean`: the four getters (`getter_guarantee` with `get_*_ref`), `container_split` (`container_split_refines`), `container_alloc` (`container_alloc_refines`). `container_init_spec` ported in `MContainerInit.lean`, with `container_init_inv`: it establishes all three invariants. **C code of `container_init` ported**: `MContainerInitC.lean`, `container_init_triple`. Missing: `container_can_consume` |
 | `MContainer` | page-table pool accessors (`set_pt`, `get_PDE`, `set_PDE`, `rmv_PDE`, `set_PDEU`, `get_PTE`, `set_PTE`, `rmv_PTE`, `set_IDPTE`) | **ported**: `MPTIntro.lean`. All eight memory accessors refine their specs (`getPDE_triple`, `setPDE_triple`, `rmvPDE_triple`, `setPDEU_triple`, `getPTE_triple`, `setPTE_triple`, `rmvPTE_triple`, `setIDPTE_triple`). Missing: `set_pt` (loads `CR3`; needs the machine model) |
 | `MPTIntro` | `pt_read`, `pt_read_pde`, `pt_rmv_aux`, `pt_rmv_pde`, `pt_insert_aux`, `pt_insert_pde`, `idpde_init` | **ported**: `MPTOp.lean`. The six operations refine `ptRead_spec` … `ptInsertPDE_spec`, each verified against the accessor's triple. `idpde_init` is in `MPTInit.lean` (`idpde_init_triple`) |
-| `MPTOp` | `pt_alloc_pde`, `pt_free_pde`, `pt_init_comm` | **ported**: `MPTCommon.lean`. `pt_alloc_pde` refines `ptAllocPDE_spec` (through the specs of `container_alloc`, `pt_insert_pde`, and 1024 calls of `rmv_PTE`); `pt_free_pde` refines `ptFreePDE_spec` (through `pt_read_pde`, `pt_rmv_pde`, `pfree`). Missing: `pt_init_comm` (boot) |
+| `MPTOp` | `pt_alloc_pde`, `pt_free_pde`, `pt_init_comm` | **ported**: `MPTCommon.lean`. `pt_alloc_pde` refines `ptAllocPDE_spec` (through the specs of `container_alloc`, `pt_insert_pde`, and 1024 calls of `rmv_PTE`); `pt_free_pde` refines `ptFreePDE_spec` (through `pt_read_pde`, `pt_rmv_pde`, `pfree`). `pt_init_comm` is in `MPTInit.lean` (`pt_init_comm_triple`) |
 | `MPTCommon` | `pt_insert`, `pt_rmv` with reference counts, `pt_init_kern` | **ported**: `MPTKern.lean`. `pt_insert` refines `ptInsert_spec` (`ptInsert_triple`) and `pt_rmv` refines `ptRmv_spec` (`ptRmv_triple`), both keeping the page's count in the allocation table. Missing: `pt_init_kern` (boot) |
 | `MPTKern`, `MPTInit` | kernel page table, `pt_init`, paging on (`set_pg`, `set_cr3`) | missing: these are boot, and loading `CR3` needs the machine model |
 | `MPTNew` | `pt_new`, `pt_resv`, `pt_resv2`, `pmap_init` | **ported**: `MPTNew.lean`. `pt_new` refines `pt_new_spec`; `pt_resv` refines `ptResv_spec` (stated over `container_alloc_spec` and `ptInsert_spec`); `ptResv_locked` is `pt_resv` under the lock. Missing: `pt_resv2` (stage 3), `pmap_init` (boot), and the owner-list versions `ptInsert0_spec`, `ptRmv0_spec` |
@@ -96,8 +96,8 @@ Even for the ported layers:
 - `high_level_invariant`: the parts about the allocation table and the
   containers are proved preserved by the specifications
   (`MContainerInv.lean`). They are not yet carried along the shared log.
-- Boot: `mem_init`, `container_init` and `idpde_init` are ported with their
-  C code. `pt_init_comm`, `pt_init_kern`, `pmap_init` and `pt_init` are not.
+- Boot: `mem_init`, `container_init`, `idpde_init` and `pt_init_comm` are
+  ported with their C code. `pt_init_kern`, `pmap_init` and `pt_init` are not.
 
 ## How the ports are organised
 
@@ -283,7 +283,7 @@ What differs from the sources:
 - The two theorems are about the code inside a critical section. Boot runs
   before any other CPU, so no lock is taken in the sources.
 
-### `MPTInit.lean`: the identity page table at boot
+### `MPTInit.lean`: the page tables at boot
 
 - `real_idpde` (ported from `CalRealIDPDE.v`) and `idpde_init_spec`.
 - The C code of `idpde_init`: `container_init`, then 1024 x 1024 calls of
@@ -293,8 +293,20 @@ What differs from the sources:
 - The memory map sits between the containers and the page-table pool
   (`cb + 5 * num_id ≤ mmb`, `mmb + 1 + 3 * size ≤ pb`).
 
-Still missing for boot: `pt_init_comm`, `pt_init_kern`, `pmap_init`, and
-`pt_init`, which turns paging on and needs the machine model.
+- `real_ptp` (ported from `CalRealPTPool.v`) and `pt_init_comm_spec`: every
+  process's directory points at the identity table outside `[256, 960)` and
+  is empty inside.
+- The C code of `pt_init_comm`: `idpde_init`, then for each process 1024
+  calls of `set_PDE` or `rmv_PDE`.
+- **`pt_init_comm_triple`: the C code refines `pt_init_comm_spec`**, through
+  `idpde_init_triple`, `setPDE_triple` and `rmvPDE_triple`.
+- As in mCertiKOS (`valid_uninitialized`), it assumes no directory entry
+  holds a table before initialisation (`NV`).
+- The loop variables are the locals `set_PDE` and `rmv_PDE` take their
+  arguments in (`n`, `i`), so there is no separate argument passing.
+
+Still missing for boot: `pt_init_kern`, `pmap_init`, and `pt_init`, which
+turns paging on and needs the machine model.
 
 ### `MContainerInv.lean` and the end of `MALOp.lean`: the invariants
 
@@ -361,10 +373,11 @@ unused by the ports.
   is taken. Nothing yet shows that every release re-establishes them.
 - **No machine model.** `set_pt`, `set_pg`, context switch, traps and
   virtualization are about `CR3`, registers, privilege levels and assembly.
-- **Boot** (stage 2): `mem_init`, `container_init` and `idpde_init` are
-  ported, code and specification. The other page-table initialisers are not.
+- **Boot** (stage 2): `mem_init`, `container_init`, `idpde_init` and
+  `pt_init_comm` are ported, code and specification. `pt_init_kern`,
+  `pmap_init` and `pt_init` are not.
 
 ## Order
 
 See "How the ports are organised" above. Next: the rest of stage 2
-(`pt_init_comm`, `pt_init_kern`, `pmap_init`).
+(`pt_init_kern`, `pmap_init`), then stage 3.
