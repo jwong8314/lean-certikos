@@ -364,4 +364,294 @@ theorem smSet_run (εR : REnv) {c : CPU} {i0 : Nat} (hL : SLayout maxpage num_id
 
 end Runs
 
+/-! ## The accessors refine their specifications -/
+
+section Triples
+variable {maxpage num_id cb num_proc pb ib fb ida sb : Nat}
+
+/-- One word of a valid entry is overwritten, and the entry it now encodes. -/
+theorem sm_set1 (hL : SLayout maxpage num_id cb num_proc pb ib fb sb) {d : SData} {b : Region}
+    (hM : MatchS maxpage num_id cb num_proc pb ib fb ida sb d b) {p1 p2 : Nat} (h1 : p1 < num_proc)
+    (h2 : p2 < num_proc) {i : SharedMemInfo} {s : Bool} {v : Nat} (he : d.smspool p1 p2 = .SHRDValid i s v)
+    {k : Nat} (hk : k < 3) (w : Val) {i' : SharedMemInfo} {s' : Bool} {v' : Nat} (hv' : v' < 2 ^ 32)
+    (c0 : k = 0 → w = BitVec.ofNat 32 v') (c0' : k ≠ 0 → v' = v)
+    (c1 : k = 1 → w = BitVec.ofNat 32 (SharedMemInfo2Z i')) (c1' : k ≠ 1 → i' = i)
+    (c2 : k = 2 → w = BitVec.ofNat 32 (if s' then 1 else 0)) (c2' : k ≠ 2 → s' = s) :
+    MatchS maxpage num_id cb num_proc pb ib fb ida sb
+      { d with smspool := smSet d.smspool p1 p2 (.SHRDValid i' s' v') }
+      (setCell b (scell sb num_proc p1 p2 k) w) := by
+  obtain ⟨a0, a1, a2, -⟩ := sm_get hM.sp h1 h2 he
+  refine sm_put hL hM h1 h2 hv' (fun k' hk' => sc_ne _ _ (by unfold scell at *; omega)) ?_ ?_ ?_
+  · by_cases e : k = 0
+    · subst e; rw [sc_eq]; exact c0 rfl
+    · rw [sc_ne _ _ (by unfold scell; omega), c0' e]; exact a0
+  · by_cases e : k = 1
+    · subst e; rw [sc_eq]; exact c1 rfl
+    · rw [sc_ne _ _ (by unfold scell; omega), c1' e]; exact a1
+  · by_cases e : k = 2
+    · subst e; rw [sc_eq]; exact c2 rfl
+    · rw [sc_ne _ _ (by unfold scell; omega), c2' e]; exact a2
+
+theorem getState_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : SLayout maxpage num_id cb num_proc pb ib fb sb)
+    (x : Ident) (hx : x ≠ "lk") (e1 e2 : Expr) (p1 p2 : Nat) :
+    Triple εR c i0 (MatchS maxpage num_id cb num_proc pb ib fb ida sb) (fun _ => False)
+      (fun σ d => e1.eval σ = BitVec.ofNat 32 p1 ∧ e2.eval σ = BitVec.ofNat 32 p2 ∧
+        ∃ v, get_shared_mem_state_spec num_proc p1 p2 d = some v)
+      (getStateS sb num_proc x e1 e2)
+      (fun σ d σ' d' => d' = d ∧ ∃ v, get_shared_mem_state_spec num_proc p1 p2 d = some v ∧
+        σ' = σ.set x (BitVec.ofNat 32 v)) := by
+  intro σ l b d hlk hcs hM ⟨he1, he2, v, hs⟩
+  have hs0 := hs
+  unfold get_shared_mem_state_spec at hs
+  by_cases hc : d.pg = true ∧ d.ipt = true ∧ shared_mem_arg num_proc p1 p2
+  · rw [if_pos hc] at hs
+    obtain ⟨-, -, h1, h2, -⟩ := hc
+    cases he : d.smspool p1 p2 with
+    | SHRDUndef => rw [he] at hs; cases hs
+    | SHRDValid i s va =>
+      rw [he] at hs; simp only [Option.some.injEq] at hs
+      obtain ⟨-, a1, -, -⟩ := sm_get hM.sp h1 h2 he
+      have hr := smGet_run εR hL hcs hlk x he1 he2 h1 h2 (show 1 < 3 by decide)
+      rw [a1, hs] at hr
+      exact ⟨_, l, b, d, hr, hcs, hM, Locals.set_other _ _ (Ne.symm hx), fun _ _ => rfl, rfl, v, hs0, rfl⟩
+  · rw [if_neg hc] at hs; cases hs
+
+theorem getSeen_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : SLayout maxpage num_id cb num_proc pb ib fb sb)
+    (x : Ident) (hx : x ≠ "lk") (e1 e2 : Expr) (p1 p2 : Nat) :
+    Triple εR c i0 (MatchS maxpage num_id cb num_proc pb ib fb ida sb) (fun _ => False)
+      (fun σ d => e1.eval σ = BitVec.ofNat 32 p1 ∧ e2.eval σ = BitVec.ofNat 32 p2 ∧
+        ∃ v, get_shared_mem_seen_spec num_proc p1 p2 d = some v)
+      (getSeenS sb num_proc x e1 e2)
+      (fun σ d σ' d' => d' = d ∧ ∃ v, get_shared_mem_seen_spec num_proc p1 p2 d = some v ∧
+        σ' = σ.set x (BitVec.ofNat 32 v)) := by
+  intro σ l b d hlk hcs hM ⟨he1, he2, v, hs⟩
+  have hs0 := hs
+  unfold get_shared_mem_seen_spec at hs
+  by_cases hc : d.pg = true ∧ d.ipt = true ∧ shared_mem_arg num_proc p1 p2
+  · rw [if_pos hc] at hs
+    obtain ⟨-, -, h1, h2, -⟩ := hc
+    cases he : d.smspool p1 p2 with
+    | SHRDUndef => rw [he] at hs; cases hs
+    | SHRDValid i s va =>
+      rw [he] at hs; simp only [Option.some.injEq] at hs
+      obtain ⟨-, -, a2, -⟩ := sm_get hM.sp h1 h2 he
+      have hr := smGet_run εR hL hcs hlk x he1 he2 h1 h2 (show 2 < 3 by decide)
+      rw [a2, hs] at hr
+      exact ⟨_, l, b, d, hr, hcs, hM, Locals.set_other _ _ (Ne.symm hx), fun _ _ => rfl, rfl, v, hs0, rfl⟩
+  · rw [if_neg hc] at hs; cases hs
+
+theorem getLoc_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : SLayout maxpage num_id cb num_proc pb ib fb sb)
+    (x : Ident) (hx : x ≠ "lk") (e1 e2 : Expr) (p1 p2 : Nat) :
+    Triple εR c i0 (MatchS maxpage num_id cb num_proc pb ib fb ida sb) (fun _ => False)
+      (fun σ d => e1.eval σ = BitVec.ofNat 32 p1 ∧ e2.eval σ = BitVec.ofNat 32 p2 ∧
+        ∃ v, get_shared_mem_loc_spec num_proc p1 p2 d = some v)
+      (getLocS sb num_proc x e1 e2)
+      (fun σ d σ' d' => d' = d ∧ ∃ v, get_shared_mem_loc_spec num_proc p1 p2 d = some v ∧
+        σ' = σ.set x (BitVec.ofNat 32 v)) := by
+  intro σ l b d hlk hcs hM ⟨he1, he2, v, hs⟩
+  have hs0 := hs
+  unfold get_shared_mem_loc_spec at hs
+  by_cases hc : d.pg = true ∧ d.ipt = true ∧ shared_mem_arg num_proc p1 p2
+  · rw [if_pos hc] at hs
+    obtain ⟨-, -, h1, h2, -⟩ := hc
+    cases he : d.smspool p1 p2 with
+    | SHRDUndef => rw [he] at hs; cases hs
+    | SHRDValid i s va =>
+      rw [he] at hs; simp only [Option.some.injEq] at hs
+      obtain ⟨a0, -, -, -⟩ := sm_get hM.sp h1 h2 he
+      have hr := smGet_run εR hL hcs hlk x he1 he2 h1 h2 (show 0 < 3 by decide)
+      rw [a0, hs] at hr
+      exact ⟨_, l, b, d, hr, hcs, hM, Locals.set_other _ _ (Ne.symm hx), fun _ _ => rfl, rfl, v, hs0, rfl⟩
+  · rw [if_neg hc] at hs; cases hs
+
+/-- A write to a word of entry `(p1, p2)` is inside the table. -/
+theorem sm_foot {b : Region} {p1 p2 k : Nat} (h1 : p1 < num_proc) (h2 : p2 < num_proc) (hk : k < 3) (w : Val)
+    (k' : Nat) (hk' : ¬ (sb ≤ k' ∧ k' < sb + 3 * (num_proc * num_proc))) :
+    setCell b (scell sb num_proc p1 p2 k) w k' = b k' := by
+  refine sc_ne _ _ (fun e => hk' ?_)
+  subst e
+  exact ⟨by unfold scell; omega, scell_lt h1 h2 hk⟩
+
+theorem setState_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : SLayout maxpage num_id cb num_proc pb ib fb sb)
+    (e1 e2 ve : Expr) (p1 p2 nv : Nat) :
+    Triple εR c i0 (MatchS maxpage num_id cb num_proc pb ib fb ida sb)
+      (fun k => sb ≤ k ∧ k < sb + 3 * (num_proc * num_proc))
+      (fun σ d => e1.eval σ = BitVec.ofNat 32 p1 ∧ e2.eval σ = BitVec.ofNat 32 p2 ∧
+        ve.eval σ = BitVec.ofNat 32 nv ∧ ∃ d1, set_shared_mem_state_spec num_proc p1 p2 nv d = some d1)
+      (setStateS sb num_proc e1 e2 ve)
+      (fun σ d σ' d' => set_shared_mem_state_spec num_proc p1 p2 nv d = some d' ∧ σ' = σ.set "_" 0) := by
+  intro σ l b d hlk hcs hM ⟨he1, he2, hve, d1, hs⟩
+  have hs0 := hs
+  unfold set_shared_mem_state_spec at hs
+  by_cases hc : d.pg = true ∧ d.ipt = true ∧ shared_mem_arg num_proc p1 p2
+  · rw [if_pos hc] at hs
+    obtain ⟨-, -, h1, h2, -⟩ := hc
+    cases he : d.smspool p1 p2 with
+    | SHRDUndef => rw [he] at hs; cases hs
+    | SHRDValid i s va =>
+      cases hz : Z2SharedMemInfo nv with
+      | none => rw [he, hz] at hs; cases hs
+      | some i' =>
+        rw [he, hz] at hs; simp only [Option.some.injEq] at hs
+        obtain ⟨-, -, -, hva⟩ := sm_get hM.sp h1 h2 he
+        obtain ⟨l', hr, hcs'⟩ := smSet_run εR hL hcs hlk he1 he2 h1 h2 (show 1 < 3 by decide) hve
+        have hM' := sm_set1 hL hM h1 h2 he (show 1 < 3 by decide) (BitVec.ofNat 32 nv) (i' := i') (s' := s)
+          (v' := va) hva (fun e => by cases e) (fun _ => rfl)
+          (fun _ => by rw [Z2SharedMemInfo_correct hz]) (fun e => absurd rfl e)
+          (fun e => by cases e) (fun _ => rfl)
+        rw [hs] at hM'
+        exact ⟨_, l', _, d1, hr, hcs', hM', Locals.set_other _ _ (by decide),
+          sm_foot h1 h2 (by decide) _, hs0, rfl⟩
+  · rw [if_neg hc] at hs; cases hs
+
+theorem setSeen_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : SLayout maxpage num_id cb num_proc pb ib fb sb)
+    (e1 e2 ve : Expr) (p1 p2 nv : Nat) :
+    Triple εR c i0 (MatchS maxpage num_id cb num_proc pb ib fb ida sb)
+      (fun k => sb ≤ k ∧ k < sb + 3 * (num_proc * num_proc))
+      (fun σ d => e1.eval σ = BitVec.ofNat 32 p1 ∧ e2.eval σ = BitVec.ofNat 32 p2 ∧
+        ve.eval σ = BitVec.ofNat 32 nv ∧ ∃ d1, set_shared_mem_seen_spec num_proc p1 p2 nv d = some d1)
+      (setSeenS sb num_proc e1 e2 ve)
+      (fun σ d σ' d' => set_shared_mem_seen_spec num_proc p1 p2 nv d = some d' ∧ σ' = σ.set "_" 0) := by
+  intro σ l b d hlk hcs hM ⟨he1, he2, hve, d1, hs⟩
+  have hs0 := hs
+  unfold set_shared_mem_seen_spec at hs
+  by_cases hc : d.pg = true ∧ d.ipt = true ∧ shared_mem_arg num_proc p1 p2
+  · rw [if_pos hc] at hs
+    obtain ⟨-, -, h1, h2, -⟩ := hc
+    cases he : d.smspool p1 p2 with
+    | SHRDUndef => rw [he] at hs; cases hs
+    | SHRDValid i s va =>
+      cases hz : ZtoBool nv with
+      | none => rw [he, hz] at hs; cases hs
+      | some s' =>
+        rw [he, hz] at hs; simp only [Option.some.injEq] at hs
+        obtain ⟨-, -, -, hva⟩ := sm_get hM.sp h1 h2 he
+        obtain ⟨l', hr, hcs'⟩ := smSet_run εR hL hcs hlk he1 he2 h1 h2 (show 2 < 3 by decide) hve
+        have hM' := sm_set1 hL hM h1 h2 he (show 2 < 3 by decide) (BitVec.ofNat 32 nv) (i' := i) (s' := s')
+          (v' := va) hva (fun e => by cases e) (fun _ => rfl) (fun e => by cases e) (fun _ => rfl)
+          (fun _ => by rcases zbool_cases hz with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ <;> rfl) (fun e => absurd rfl e)
+        rw [hs] at hM'
+        exact ⟨_, l', _, d1, hr, hcs', hM', Locals.set_other _ _ (by decide),
+          sm_foot h1 h2 (by decide) _, hs0, rfl⟩
+  · rw [if_neg hc] at hs; cases hs
+
+/-- The location is a 32-bit value. -/
+theorem setLoc_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : SLayout maxpage num_id cb num_proc pb ib fb sb)
+    (e1 e2 ve : Expr) (p1 p2 va' : Nat) (hva' : va' < 2 ^ 32) :
+    Triple εR c i0 (MatchS maxpage num_id cb num_proc pb ib fb ida sb)
+      (fun k => sb ≤ k ∧ k < sb + 3 * (num_proc * num_proc))
+      (fun σ d => e1.eval σ = BitVec.ofNat 32 p1 ∧ e2.eval σ = BitVec.ofNat 32 p2 ∧
+        ve.eval σ = BitVec.ofNat 32 va' ∧ ∃ d1, set_shared_mem_loc_spec num_proc p1 p2 va' d = some d1)
+      (setLocS sb num_proc e1 e2 ve)
+      (fun σ d σ' d' => set_shared_mem_loc_spec num_proc p1 p2 va' d = some d' ∧ σ' = σ.set "_" 0) := by
+  intro σ l b d hlk hcs hM ⟨he1, he2, hve, d1, hs⟩
+  have hs0 := hs
+  unfold set_shared_mem_loc_spec at hs
+  by_cases hc : d.pg = true ∧ d.ipt = true ∧ shared_mem_arg num_proc p1 p2
+  · rw [if_pos hc] at hs
+    obtain ⟨-, -, h1, h2, -⟩ := hc
+    cases he : d.smspool p1 p2 with
+    | SHRDUndef => rw [he] at hs; cases hs
+    | SHRDValid i s va =>
+      rw [he] at hs; simp only [Option.some.injEq] at hs
+      obtain ⟨l', hr, hcs'⟩ := smSet_run εR hL hcs hlk he1 he2 h1 h2 (show 0 < 3 by decide) hve
+      have hM' := sm_set1 hL hM h1 h2 he (show 0 < 3 by decide) (BitVec.ofNat 32 va') (i' := i) (s' := s)
+        (v' := va') hva' (fun _ => rfl) (fun e => absurd rfl e) (fun e => by cases e) (fun _ => rfl)
+        (fun e => by cases e) (fun _ => rfl)
+      rw [hs] at hM'
+      exact ⟨_, l', _, d1, hr, hcs', hM', Locals.set_other _ _ (by decide),
+        sm_foot h1 h2 (by decide) _, hs0, rfl⟩
+  · rw [if_neg hc] at hs; cases hs
+
+/-- **Three writes to one entry**, in any order of the fields: the entry they
+leave. The two process arguments are locals other than `_`. -/
+theorem sm_write3 (εR : REnv) {c : CPU} {i0 : Nat} (hL : SLayout maxpage num_id cb num_proc pb ib fb sb)
+    {l : RLog} {b : Region} (hcs : CS1 c i0 l b) {σ : Locals} (hlk : (σ "lk").toNat = i0) {d : SData}
+    (hM : MatchS maxpage num_id cb num_proc pb ib fb ida sb d b) {a1 a2 : Ident} (ha1 : a1 ≠ "_")
+    (ha2 : a2 ≠ "_") {p1 p2 : Nat} (hp1 : σ a1 = BitVec.ofNat 32 p1) (hp2 : σ a2 = BitVec.ofNat 32 p2)
+    (h1 : p1 < num_proc) (h2 : p2 < num_proc) {k1 k2 k3 : Nat} (hk1 : k1 < 3) (hk2 : k2 < 3) (hk3 : k3 < 3)
+    (h12 : k1 ≠ k2) (h13 : k1 ≠ k3) (h23 : k2 ≠ k3) {v1 v2 v3 : Expr} {w1 w2 w3 : Val}
+    (hw1 : v1.eval σ = w1) (hw2 : v2.eval (σ.set "_" 0) = w2) (hw3 : v3.eval (σ.set "_" 0) = w3)
+    {i : SharedMemInfo} {s : Bool} {v : Nat} (hv : v < 2 ^ 32)
+    (hval : ∀ k w, (k = k1 ∧ w = w1) ∨ (k = k2 ∧ w = w2) ∨ (k = k3 ∧ w = w3) →
+      (k = 0 → w = BitVec.ofNat 32 v) ∧ (k = 1 → w = BitVec.ofNat 32 (SharedMemInfo2Z i)) ∧
+      (k = 2 → w = BitVec.ofNat 32 (if s then 1 else 0))) :
+    ∃ l' b', Runs (rprimsA εR c) (.seq (smSetS sb num_proc (.var a1) (.var a2) k1 v1)
+        (.seq (smSetS sb num_proc (.var a1) (.var a2) k2 v2) (smSetS sb num_proc (.var a1) (.var a2) k3 v3)))
+        σ l (σ.set "_" 0) l' ∧ CS1 c i0 l' b' ∧
+      MatchS maxpage num_id cb num_proc pb ib fb ida sb
+        { d with smspool := smSet d.smspool p1 p2 (.SHRDValid i s v) } b' ∧
+      ∀ k, ¬ (sb ≤ k ∧ k < sb + 3 * (num_proc * num_proc)) → b' k = b k := by
+  let σ1 := σ.set "_" 0
+  have hlk1 : (σ1 "lk").toNat = i0 := by simpa [σ1, Locals.set] using hlk
+  have hq1 : (Expr.var a1).eval σ1 = BitVec.ofNat 32 p1 := (Locals.set_other _ _ ha1).trans hp1
+  have hq2 : (Expr.var a2).eval σ1 = BitVec.ofNat 32 p2 := (Locals.set_other _ _ ha2).trans hp2
+  have hss : σ1.set "_" 0 = σ1 := set_set _ _ _ _
+  obtain ⟨l1, r1, c1⟩ := smSet_run εR hL hcs hlk (e1 := .var a1) (e2 := .var a2) (ve := v1) hp1 hp2 h1 h2 hk1 hw1
+  obtain ⟨l2, r2, c2⟩ := smSet_run εR hL c1 hlk1 (e1 := .var a1) (e2 := .var a2) (ve := v2) hq1 hq2 h1 h2 hk2 hw2
+  rw [hss] at r2
+  obtain ⟨l3, r3, c3⟩ := smSet_run εR hL c2 hlk1 (e1 := .var a1) (e2 := .var a2) (ve := v3) hq1 hq2 h1 h2 hk3 hw3
+  rw [hss] at r3
+  have n12 : scell sb num_proc p1 p2 k1 ≠ scell sb num_proc p1 p2 k2 := by unfold scell; omega
+  have n13 : scell sb num_proc p1 p2 k1 ≠ scell sb num_proc p1 p2 k3 := by unfold scell; omega
+  have n23 : scell sb num_proc p1 p2 k2 ≠ scell sb num_proc p1 p2 k3 := by unfold scell; omega
+  -- the value each of the three cells ends with
+  have rd : ∀ k w, (k = k1 ∧ w = w1) ∨ (k = k2 ∧ w = w2) ∨ (k = k3 ∧ w = w3) →
+      setCell (setCell (setCell b (scell sb num_proc p1 p2 k1) w1) (scell sb num_proc p1 p2 k2) w2)
+        (scell sb num_proc p1 p2 k3) w3 (scell sb num_proc p1 p2 k) = w := by
+    rintro k w (⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩)
+    · rw [sc_ne _ _ n13, sc_ne _ _ n12, sc_eq]
+    · rw [sc_ne _ _ n23, sc_eq]
+    · rw [sc_eq]
+  -- each field is written by one of them
+  have cover : ∀ k, k < 3 → ∃ w, (k = k1 ∧ w = w1) ∨ (k = k2 ∧ w = w2) ∨ (k = k3 ∧ w = w3) := by
+    intro k hk
+    by_cases e1 : k = k1
+    · exact ⟨w1, Or.inl ⟨e1, rfl⟩⟩
+    · by_cases e2 : k = k2
+      · exact ⟨w2, Or.inr (Or.inl ⟨e2, rfl⟩)⟩
+      · exact ⟨w3, Or.inr (Or.inr ⟨by omega, rfl⟩)⟩
+  refine ⟨l3, _, Runs.seq r1 (Runs.seq r2 r3), c3, sm_put hL hM h1 h2 hv (fun k hk => ?_) ?_ ?_ ?_,
+    fun k hk => ?_⟩
+  · rw [sc_ne _ _ (by unfold scell at *; omega), sc_ne _ _ (by unfold scell at *; omega),
+      sc_ne _ _ (by unfold scell at *; omega)]
+  · obtain ⟨w, hw⟩ := cover 0 (by decide)
+    rw [rd 0 w hw]; exact (hval 0 w hw).1 rfl
+  · obtain ⟨w, hw⟩ := cover 1 (by decide)
+    rw [rd 1 w hw]; exact (hval 1 w hw).2.1 rfl
+  · obtain ⟨w, hw⟩ := cover 2 (by decide)
+    rw [rd 2 w hw]; exact (hval 2 w hw).2.2 rfl
+  · rw [sm_foot h1 h2 hk3 _ k hk, sm_foot h1 h2 hk2 _ k hk, sm_foot h1 h2 hk1 _ k hk]
+
+/-- **`clear_shared_mem` refines `clear_shared_mem_spec`.** -/
+theorem clear_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : SLayout maxpage num_id cb num_proc pb ib fb sb)
+    (a1 a2 : Ident) (ha1 : a1 ≠ "_") (ha2 : a2 ≠ "_") (p1 p2 : Nat) :
+    Triple εR c i0 (MatchS maxpage num_id cb num_proc pb ib fb ida sb)
+      (fun k => sb ≤ k ∧ k < sb + 3 * (num_proc * num_proc))
+      (fun σ d => σ a1 = BitVec.ofNat 32 p1 ∧ σ a2 = BitVec.ofNat 32 p2 ∧
+        ∃ d1, clear_shared_mem_spec num_proc p1 p2 d = some d1)
+      (clearS sb num_proc (.var a1) (.var a2))
+      (fun σ d σ' d' => clear_shared_mem_spec num_proc p1 p2 d = some d' ∧ σ' = σ.set "_" 0) := by
+  intro σ l b d hlk hcs hM ⟨hp1, hp2, d1, hs⟩
+  have hs0 := hs
+  unfold clear_shared_mem_spec at hs
+  by_cases hc : d.pg = true ∧ d.ipt = true ∧ shared_mem_arg' num_proc p1 p2
+  · rw [if_pos hc] at hs
+    simp only [Option.some.injEq] at hs
+    obtain ⟨-, -, h1, h2⟩ := hc
+    obtain ⟨l', b', hr, hcs', hM', hf⟩ := sm_write3 εR hL hcs hlk hM ha1 ha2 hp1 hp2 h1 h2
+      (k1 := 0) (k2 := 1) (k3 := 2) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (v1 := .const 0) (v2 := .const 2) (v3 := .const 1) (w1 := BitVec.ofNat 32 0) (w2 := BitVec.ofNat 32 2)
+      (w3 := BitVec.ofNat 32 1) rfl rfl rfl (i := .SHRDDEAD) (s := true) (v := 0) (by decide)
+      (by
+        rintro k w (⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩)
+        · exact ⟨fun _ => rfl, (fun e => by cases e), (fun e => by cases e)⟩
+        · exact ⟨(fun e => by cases e), fun _ => rfl, (fun e => by cases e)⟩
+        · exact ⟨(fun e => by cases e), (fun e => by cases e), fun _ => rfl⟩)
+    rw [hs] at hM'
+    exact ⟨_, l', b', d1, hr, hcs', hM', Locals.set_other _ _ (by decide), hf, hs0, rfl⟩
+  · rw [if_neg hc] at hs; cases hs
+
+end Triples
+
 end MShare
