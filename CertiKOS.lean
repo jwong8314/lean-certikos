@@ -51,3 +51,4 @@ import CertiKOS.KernPAlloc
 import CertiKOS.KernFrame
 import CertiKOS.KernPT
 import CertiKOS.KernContainer
+import CertiKOS.KernOwner
