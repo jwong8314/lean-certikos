@@ -27,8 +27,6 @@ Cell `j` of the allocation table is now a **tag**: 0 when page `j` is free, 1
 when the kernel owns it (the pages of page tables, which `KernPT.lean`
 allocates with `palloc`), and `id + 2` when container `id` owns it.
 
-* `CS1`, `cs_guarantee1`: the one-lock step in the style of `KernFrame`
-  (`Runs`, and a state predicate with no second lock).
 * `pallocOSpec`, `pallocO_guarantee`: **`palloc` with an owner.** The first
   free page is tagged with the caller's tag `o`.
 * `pfreeOSpec`, `pfreeO_guarantee`: **`pfree` checks the owner.** Page `j` is
@@ -53,91 +51,6 @@ open LockArray (APrim AEnv ALog acquireA loopA lkE apull upd upd_same upd_other)
 open LockRegion (REvent RLog RState HLogR HEventR rreplay rstep REnv rpull rev Region setCell hmemR Holding)
 open LockRegionCPU KernPAlloc KernFrame
 open KernPT (setCell_eq setCell_ne)
-
-/-! ## The one-lock step, with `Runs` -/
-
-/-- Inside a critical section on lock `i`: the log is valid, we hold `i`, and
-region `i` is `b`. -/
-def CS1 (c : CPU) (i : Nat) (l : RLog) (b : Region) : Prop :=
-  ∃ S H, rreplay l = some (S, H) ∧ Holding S c i ∧ S.mem i = b
-
-theorem cs1_rd {εR : REnv} {c : CPU} {i : Nat} {l : RLog} {b : Region} (h : CS1 c i l b) {σ : Locals}
-    (hlk : (σ "lk").toNat = i) (x : Ident) (je : Expr) :
-    Runs (rprimsA εR c) (.call x .pull [lkE, je]) σ l (σ.set x (b (je.eval σ).toNat)) l := by
-  obtain ⟨S, H, hl, -, rfl⟩ := h
-  have hm := LockRegion.rreplay_mem hl i
-  rw [hm]
-  exact Runs.call (by simp [rprimsA, lkE, Expr.eval, hlk])
-
-theorem cs1_wr {εR : REnv} {c : CPU} {i : Nat} {l : RLog} {b : Region} (h : CS1 c i l b) {σ : Locals}
-    (hlk : (σ "lk").toNat = i) (je ve : Expr) :
-    ∃ l', Runs (rprimsA εR c) (.call "_" .push [lkE, je, ve]) σ l (σ.set "_" 0) l' ∧
-      CS1 c i l' (setCell b (je.eval σ).toNat (ve.eval σ)) := by
-  obtain ⟨S, H, hl, hh, rfl⟩ := h
-  have hs : rstep S ⟨c, i, .wr (je.eval σ).toNat (ve.eval σ)⟩ = some (⟨S.lk, upd S.mem i
-      (setCell (S.mem i) (je.eval σ).toNat (ve.eval σ)), upd S.dirty i true⟩, none) := by simp [rstep, hh]
-  have hl2 := LockRegion.rreplay_cons_of hl hs
-  exact ⟨⟨c, i, .wr (je.eval σ).toNat (ve.eval σ)⟩ :: l, Runs.call (by simp [rprimsA, lkE, Expr.eval, hlk]),
-    ⟨S.lk, upd S.mem i (setCell (S.mem i) (je.eval σ).toNat (ve.eval σ)), upd S.dirty i true⟩, H,
-    by simpa [LockRegion.consO] using hl2, hh, by simp⟩
-
-/-- **`acquire(lk); C; release(lk)`** for a critical section `C` verified with
-`Runs` and `CS1`. -/
-theorem cs_guarantee1 {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε) (hRR : RelyR εR c)
-    (hc : c < NCPU) (hRA : LockArray.RelyA ε c) {l : RLog} {S : RState} {H : HLogR}
-    (hl : rreplay l = some (S, H)) {iv : Val} (hidle : (S.lk iv.toNat).phase c = .idle)
-    (bound : ALog → Nat) (K : Nat) (hK : ∀ l, bound l ≤ K)
-    (hF : LockArray.FairA ε c iv.toNat (ticket (LockArray.projL iv.toNat (apull ε c (erase l)))) bound)
-    (σ : Locals) (hσ : σ "lk" = iv) (C : Stmt APrim) (R : Region → Locals → Region → Locals → Prop)
-    (hC : ∀ (σ : Locals) (l : RLog) (b : Region), σ "lk" = iv → CS1 c iv.toNat l b →
-      ∃ σ' l' b', Runs (rprimsA εR c) C σ l σ' l' ∧ CS1 c iv.toNat l' b' ∧ σ' "lk" = iv ∧ R b σ b' σ') :
-    ∃ (σ1 σ2 : Locals) (rb : RLog) (S3 : RState) (H1 H3 : HLogR),
-      Star (rprimsA εR c) ⟨.seq acquireA (.seq C relA), .stop, σ, l⟩ ⟨.skip, .stop, σ2.set "_" 0, rb⟩ ∧
-      rreplay rb = some (S3, H3) ∧ (S3.lk iv.toNat).phase c = .idle ∧
-      (∀ z, z ≠ "t" → z ≠ "n" → z ≠ "_" → z ≠ "v" → σ1 z = σ z) ∧
-      R (hmemR iv.toNat H1) σ1 (hmemR iv.toNat H3) σ2 := by
-  obtain ⟨SA, HA, hA, hlkA⟩ := rreplay_erase hl
-  have hidleA : (SA.lk iv.toNat).phase c = .idle := by rw [hlkA]; exact hidle
-  obtain ⟨r, hspec⟩ := LockArray.acquireA_live_bounded hc hRA hA hidleA bound K hK hF
-  obtain ⟨r0, σ1, -, -, hσ1, hstA⟩ := LockArray.acquireA_sim ε c _ σ iv (erase l) r .stop hσ hspec
-  obtain ⟨-, -, SA1, HA1, hA1, hholdA, -, -⟩ := LockArray.acquireA_guarantee hc hRA hA hidleA hspec
-  obtain ⟨⟨s1, k1, σy, r1⟩, hstR, hy⟩ := star_liftR hE c hstA ⟨acquireA, .stop, σ, l⟩ rfl lockS_acquireA trivial
-  simp only [erC, Config.mk.injEq] at hy
-  obtain ⟨rfl, rfl, rfl, her⟩ := hy
-  obtain ⟨S1, H1, hl1, hq1⟩ := lock_run_valid (i := iv.toNat) hRR hstR lockS_acquireA trivial
-    ⟨S, H, hl, fun hh => by obtain ⟨t, ht⟩ := hh; rw [hidle] at ht; cases ht⟩ ⟨SA1, HA1, by rw [her]; exact hA1⟩
-  have hold1 : Holding S1 c iv.toNat := by
-    obtain ⟨SA1', HA1', hA1', hlk1'⟩ := rreplay_erase hl1
-    rw [her, hA1] at hA1'
-    simp only [Option.some.injEq, Prod.mk.injEq] at hA1'; obtain ⟨rfl, -⟩ := hA1'
-    obtain ⟨t, ht⟩ := hholdA; exact ⟨t, by rw [← hlk1']; exact ht⟩
-  have hsee : S1.mem iv.toNat = hmemR iv.toNat H1 := LockRegion.acquire_sees hl1 (hq1 hold1)
-  have hσlk : σy "lk" = iv := by
-    rw [hσ1 "lk" (by decide) (by decide) (by decide) (by decide)]; exact hσ
-  obtain ⟨σ2, r2, b2, hcrit, ⟨S2, H2, hl2, hold2, hb2⟩, hσ2, hR⟩ :=
-    hC σy r1 (S1.mem iv.toNat) hσlk ⟨S1, H1, hl1, hold1, rfl⟩
-  obtain ⟨S2', H2', hl2'⟩ := hRR _ S2 H2 hl2
-  obtain ⟨g1, g2⟩ := rothers (c := c) (i := iv.toNat) hl2 (εR.query c r2) (εR.noSelf c r2) hl2'
-  obtain ⟨t, ht⟩ := hold2
-  have ht' : (S2'.lk iv.toNat).phase c = .holding t := by rw [g1 iv.toNat]; exact ht
-  have hps : pstep (S2'.lk iv.toNat) ⟨c, .incNow⟩ = some (⟨(S2'.lk iv.toNat).ticket, (S2'.lk iv.toNat).now + 1,
-      setPhase (S2'.lk iv.toNat).phase c .idle⟩, some (.rel c)) := by simp [pstep, hc, ht']
-  have hrs : rstep S2' (rev c iv.toNat .incNow) = some (⟨upd S2'.lk iv.toNat ⟨(S2'.lk iv.toNat).ticket,
-      (S2'.lk iv.toNat).now + 1, setPhase (S2'.lk iv.toNat).phase c .idle⟩, S2'.mem,
-      upd S2'.dirty iv.toNat false⟩, some (.relR c iv.toNat (S2'.mem iv.toNat))) := by
-    simp [rstep, rev, hps, LockRegion.lift]
-  have hl3 := LockRegion.rreplay_cons_of hl2' hrs
-  have hmem2' : S2'.mem iv.toNat = S2.mem iv.toNat := (g2 ⟨t, ht⟩).1
-  refine ⟨σy, σ2, rev c iv.toNat .incNow :: rpull εR c r2, _, H1, _, ?_, hl3, by simp, hσ1, ?_⟩
-  · have hfr := MCSBoundC.star_app hstR (.seq (.seq C relA) .stop) rfl
-    refine .step (c' := ⟨acquireA, .seq (.seq C relA) .stop, σ, l⟩) rfl (hfr.trans ?_)
-    refine .step (c' := ⟨.seq C relA, .stop, σy, r1⟩) rfl ?_
-    refine .step (c' := ⟨C, .seq relA .stop, σy, r1⟩) rfl ((hcrit _).trans ?_)
-    refine .step (c' := ⟨relA, .stop, σ2, r2⟩) rfl ?_
-    exact Star.single (by simp [step, rprimsA, relA, Expr.eval, lkE, hσ2])
-  · have : hmemR iv.toNat (LockRegion.consO (some (.relR c iv.toNat (S2'.mem iv.toNat))) H2') =
-        S2.mem iv.toNat := by simp [LockRegion.consO, hmemR, hmem2']
-    rw [this, hb2, ← hsee]; exact hR
 
 /-! ## The allocation table with owners -/
 
