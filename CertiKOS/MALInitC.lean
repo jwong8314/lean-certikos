@@ -257,4 +257,169 @@ theorem npsLoop_run (εR : REnv) {c : CPU} {i : Nat} {l : RLog} {b : Region} (hc
   subst hme
   exact ⟨σ', hr, hn', hsz', hlk'⟩
 
+/-! ## The inner loop: is page `i` inside a region of the memory map? -/
+
+/-- Region `x` of the memory map contains page `p`. -/
+def covers (x : MMInfo) (p : Nat) : Prop := ∃ s l q, x = .MMValid s l q ∧ s ≤ p * 4096 ∧ (p + 1) * 4096 ≤ l + s
+
+/-- `s <= i * PgSize && l + s >= (i + 1) * PgSize` -/
+def coverE : Expr :=
+  .bin .mul (.bin .eq (.bin .ltu (.bin .mul (.var "i") (.const 4096)) (.var "s")) (.const 0))
+    (.bin .eq (.bin .ltu (.bin .add (.var "l") (.var "s"))
+      (.bin .mul (.bin .add (.var "i") (.const 1)) (.const 4096))) (.const 0))
+
+theorem and0_eval (e1 e2 : Expr) (σ : Locals) :
+    (Expr.bin .mul (.bin .eq e1 (.const 0)) (.bin .eq e2 (.const 0))).eval σ =
+      (if e1.eval σ = 0 then 1 else 0) * (if e2.eval σ = 0 then 1 else 0) := rfl
+
+theorem cover_eval {σ : Locals} {p s ln : Nat} (hi : σ "i" = BitVec.ofNat 32 p) (hs : σ "s" = BitVec.ofNat 32 s)
+    (hl : σ "l" = BitVec.ofNat 32 ln) (hp : (p + 1) * 4096 < 2 ^ 32) (hsl : s + ln < 2 ^ 32) :
+    coverE.eval σ = if s ≤ p * 4096 ∧ (p + 1) * 4096 ≤ ln + s then 1 else 0 := by
+  have b1 : p * 4096 < 2 ^ 32 := Nat.lt_of_le_of_lt (Nat.mul_le_mul_right 4096 (Nat.le_succ p)) hp
+  have b2 : s < 2 ^ 32 := by omega
+  have b3 : ln + s < 2 ^ 32 := by omega
+  have e1 : (Expr.bin .mul (.var "i") (.const 4096)).eval σ = BitVec.ofNat 32 (p * 4096) := by
+    show σ "i" * (4096 : Val) = _
+    rw [hi]; apply BitVec.eq_of_toNat_eq; simp [BitVec.toNat_mul]
+  have e2 : (Expr.bin .add (.var "l") (.var "s")).eval σ = BitVec.ofNat 32 (ln + s) := by
+    show σ "l" + σ "s" = _
+    rw [hl, hs]; apply BitVec.eq_of_toNat_eq; simp [BitVec.toNat_add]
+  have e3 : (Expr.bin .mul (.bin .add (.var "i") (.const 1)) (.const 4096)).eval σ =
+      BitVec.ofNat 32 ((p + 1) * 4096) := by
+    show (σ "i" + 1) * (4096 : Val) = _
+    rw [hi]; apply BitVec.eq_of_toNat_eq; simp [BitVec.toNat_mul, BitVec.toNat_add]
+  have a1 := ltu_eval (σ := σ) (ea := .bin .mul (.var "i") (.const 4096)) (eb := .var "s") e1 hs b1 b2
+  have a2 := ltu_eval (σ := σ) (ea := .bin .add (.var "l") (.var "s"))
+    (eb := .bin .mul (.bin .add (.var "i") (.const 1)) (.const 4096)) e2 e3 b3 hp
+  unfold coverE
+  rw [and0_eval, a1, a2]
+  by_cases h1 : p * 4096 < s <;> by_cases h2 : ln + s < (p + 1) * 4096
+  · have hr : ¬ (s ≤ p * 4096 ∧ (p + 1) * 4096 ≤ ln + s) := by omega
+    rw [if_pos h1, if_pos h2, if_neg hr]; decide
+  · have hr : ¬ (s ≤ p * 4096 ∧ (p + 1) * 4096 ≤ ln + s) := by omega
+    rw [if_pos h1, if_neg h2, if_neg hr]; decide
+  · have hr : ¬ (s ≤ p * 4096 ∧ (p + 1) * 4096 ≤ ln + s) := by omega
+    rw [if_neg h1, if_pos h2, if_neg hr]; decide
+  · have hr : s ≤ p * 4096 ∧ (p + 1) * 4096 ≤ ln + s := by omega
+    rw [if_neg h1, if_neg h2, if_pos hr]; decide
+
+/-- `s = get_mms(j); l = get_mml(j); isnorm = is_usable(j);
+if (s <= i * PgSize && l + s >= (i + 1) * PgSize) flag = 1; j++;` -/
+def scanBody (mmb : Nat) : Stmt APrim :=
+  .seq (getMmsS mmb "s" (.var "j"))
+    (.seq (getMmlS mmb "l" (.var "j"))
+      (.seq (isUsableS mmb "isn" (.var "j"))
+        (.seq (.ite coverE (.assign "flag" (.const 1)) .skip)
+          (.assign "j" (.bin .add (.var "j") (.const 1))))))
+
+/-- `j < size && flag == 0` -/
+def scanGuard : Expr := .bin .mul (.bin .ltu (.var "j") (.var "size")) (.bin .eq (.var "flag") (.const 0))
+
+def scanLoop (mmb : Nat) : Stmt APrim := .while scanGuard (scanBody mmb)
+
+theorem scanGuard_eval {σ : Locals} {m size : Nat} (hj : σ "j" = BitVec.ofNat 32 m)
+    (hsz : σ "size" = BitVec.ofNat 32 size) (hm : m < 2 ^ 32) (hs : size < 2 ^ 32) :
+    scanGuard.eval σ = (if m < size then 1 else 0) * (if σ "flag" = 0 then 1 else 0) := by
+  show (Expr.bin .ltu (.var "j") (.var "size")).eval σ * (if σ "flag" = 0 then (1 : Val) else 0) = _
+  rw [ltu_eval (σ := σ) (ea := .var "j") (eb := .var "size") hj hsz hm hs]
+
+/-- What the inner loop leaves: no region contains the page, or `flag` is set
+and `isnorm` says whether the first region containing it is usable. -/
+def ScanPost (mm : MMTable) (size p : Nat) (m : Nat) (σ : Locals) : Prop :=
+  (σ "flag" = 0 ∧ ∀ j, j < m → ¬ covers (mm j) p) ∨
+  (σ "flag" = 1 ∧ ∃ j s ln q, j < size ∧ mm j = .MMValid s ln q ∧ s ≤ p * 4096 ∧ (p + 1) * 4096 ≤ ln + s ∧
+    σ "isn" = if q = .MMUsable then 1 else 0)
+
+/-- **The inner loop.** It only reads. -/
+theorem scanLoop_run (εR : REnv) {c : CPU} {i : Nat} {l : RLog} {b : Region} (hcs : CS1 c i l b)
+    {mmb size : Nat} {mm : MMTable} (hmb : mmb + 1 + 3 * size ≤ 2 ^ 32) (hM : MatchMM mmb mm size b)
+    (hv : MM_valid mm size) {p : Nat} (hp : (p + 1) * 4096 < 2 ^ 32) (σ : Locals) (hlk : (σ "lk").toNat = i)
+    (hi : σ "i" = BitVec.ofNat 32 p) (hsz : σ "size" = BitVec.ofNat 32 size) (hj : σ "j" = 0)
+    (hfl : σ "flag" = 0) :
+    ∃ σ', Runs (rprimsA εR c) (scanLoop mmb) σ l σ' l ∧ σ' "lk" = σ "lk" ∧ σ' "i" = σ "i" ∧
+      σ' "size" = σ "size" ∧ σ' "nps" = σ "nps" ∧ ScanPost mm size p size σ' := by
+  have hsize : size < 2 ^ 32 := by omega
+  let I : Locals → RLog → Prop := fun τ l' => l' = l ∧ τ "lk" = σ "lk" ∧ τ "i" = σ "i" ∧
+    τ "size" = σ "size" ∧ τ "nps" = σ "nps" ∧ ∃ m, m ≤ size ∧ τ "j" = BitVec.ofNat 32 m ∧ ScanPost mm size p m τ
+  have hbody : ∀ τ l', I τ l' → ¬ scanGuard.eval τ = 0 →
+      ∃ τ' l'', Runs (rprimsA εR c) (scanBody mmb) τ l' τ' l'' ∧ I τ' l'' ∧
+        size - (τ' "j").toNat < size - (τ "j").toNat := by
+    rintro τ l' ⟨rfl, hlkτ, hiτ, hszτ, hnτ, m, hm, hjτ, hpost⟩ hg
+    rw [scanGuard_eval hjτ (hszτ.trans hsz) (by omega) hsize] at hg
+    have hmlt : m < size := by
+      by_cases h : m < size
+      · exact h
+      · rw [if_neg h] at hg; exact absurd (by simp) hg
+    have hf0 : τ "flag" = 0 := by
+      by_cases h : τ "flag" = 0
+      · exact h
+      · rw [if_neg h] at hg; exact absurd (by simp) hg
+    have hnc : ∀ j, j < m → ¬ covers (mm j) p := by
+      rcases hpost with ⟨-, h⟩ | ⟨h1, -⟩
+      · exact h
+      · rw [hf0] at h1; exact absurd h1 (by decide)
+    obtain ⟨s, ln, q, hmm, hbs, hbl, hbu⟩ := hM.mat m hmlt
+    obtain ⟨s', l', q', hmm', -, hsl⟩ := hv m hmlt
+    rw [hmm] at hmm'; cases hmm'
+    have hlkτ' : (τ "lk").toNat = i := by rw [hlkτ]; exact hlk
+    let τ1 := τ.set "s" (BitVec.ofNat 32 s)
+    have h1 : Runs (rprimsA εR c) (getMmsS mmb "s" (.var "j")) τ l' τ1 l' := by
+      have h := rd_run (εR := εR) hcs hlkτ' "s" (mmE mmb (.var "j") 0)
+        (mm_ix hmb hmlt (σ := τ) (je := .var "j") hjτ (by omega))
+      rw [show mmb + 1 + 3 * m + 0 = mmb + 1 + 3 * m from rfl, hbs] at h; exact h
+    let τ2 := τ1.set "l" (BitVec.ofNat 32 ln)
+    have h2 : Runs (rprimsA εR c) (getMmlS mmb "l" (.var "j")) τ1 l' τ2 l' := by
+      have h := rd_run (εR := εR) hcs (σ := τ1) (by simpa [τ1, Locals.set] using hlkτ') "l"
+        (mmE mmb (.var "j") 1) (mm_ix hmb hmlt (σ := τ1) (je := .var "j")
+          (by show τ1 "j" = _; simp [τ1, Locals.set, hjτ]) (by omega))
+      rw [hbl] at h; exact h
+    let u : Val := if q = .MMUsable then 1 else 0
+    let τ3 := τ2.set "isn" u
+    have h3 : Runs (rprimsA εR c) (isUsableS mmb "isn" (.var "j")) τ2 l' τ3 l' := by
+      have h := rd_run (εR := εR) hcs (σ := τ2) (by simpa [τ2, τ1, Locals.set] using hlkτ') "isn"
+        (mmE mmb (.var "j") 2) (mm_ix hmb hmlt (σ := τ2) (je := .var "j")
+          (by show τ2 "j" = _; simp [τ2, τ1, Locals.set, hjτ]) (by omega))
+      rw [hbu] at h; exact h
+    have hce := cover_eval (σ := τ3) (p := p) (s := s) (ln := ln)
+      (by simp [τ3, τ2, τ1, Locals.set, hiτ, hi]) (by simp [τ3, τ2, τ1, Locals.set])
+      (by simp [τ3, τ2, Locals.set]) hp (by omega)
+    by_cases hcov : s ≤ p * 4096 ∧ (p + 1) * 4096 ≤ ln + s
+    · rw [if_pos hcov] at hce
+      let τ4 := τ3.set "flag" 1
+      have h4 : Runs (rprimsA εR c) (.assign "flag" (.const 1)) τ3 l' τ4 l' := Runs.assign _ _
+      have h5 := asg_run (εR := εR) (c := c) (σ := τ4) (l := l') "j" (.bin .add (.var "j") (.const 1))
+        (inc_eval (m := m) (by simp [τ4, τ3, τ2, τ1, Locals.set, hjτ]))
+      refine ⟨_, l', Runs.seq h1 (Runs.seq h2 (Runs.seq h3 (Runs.seq
+        (Runs.ite_true (by rw [hce]; decide) h4) h5))),
+        ⟨rfl, by simp [τ4, τ3, τ2, τ1, Locals.set, hlkτ], by simp [τ4, τ3, τ2, τ1, Locals.set, hiτ],
+          by simp [τ4, τ3, τ2, τ1, Locals.set, hszτ], by simp [τ4, τ3, τ2, τ1, Locals.set, hnτ],
+          m + 1, hmlt, by simp, Or.inr ⟨by simp [τ4, Locals.set], m, s, ln, q, hmlt, hmm, hcov.1, hcov.2,
+            by simp [τ4, τ3, Locals.set, u]⟩⟩, ?_⟩
+      rw [Locals.set_same, hjτ, tn (show m + 1 < 2 ^ 32 by omega), tn (show m < 2 ^ 32 by omega)]; omega
+    · rw [if_neg hcov] at hce
+      have h5 := asg_run (εR := εR) (c := c) (σ := τ3) (l := l') "j" (.bin .add (.var "j") (.const 1))
+        (inc_eval (m := m) (by simp [τ3, τ2, τ1, Locals.set, hjτ]))
+      refine ⟨_, l', Runs.seq h1 (Runs.seq h2 (Runs.seq h3 (Runs.seq (Runs.ite_false hce Runs.skip) h5))),
+        ⟨rfl, by simp [τ3, τ2, τ1, Locals.set, hlkτ], by simp [τ3, τ2, τ1, Locals.set, hiτ],
+          by simp [τ3, τ2, τ1, Locals.set, hszτ], by simp [τ3, τ2, τ1, Locals.set, hnτ],
+          m + 1, hmlt, by simp, Or.inl ⟨by simp [τ3, τ2, τ1, Locals.set, hf0], fun j hj hc => ?_⟩⟩, ?_⟩
+      · by_cases e : j = m
+        · subst e
+          obtain ⟨s2, l2, q2, hm2, c1, c2⟩ := hc
+          rw [hmm] at hm2; cases hm2; exact hcov ⟨c1, c2⟩
+        · exact hnc j (by omega) hc
+      · rw [Locals.set_same, hjτ, tn (show m + 1 < 2 ^ 32 by omega), tn (show m < 2 ^ 32 by omega)]; omega
+  obtain ⟨σ', l', hr, ⟨rfl, hlk', hi', hsz', hn', m, hm, hj', hpost⟩, h0⟩ :=
+    while_inv (εR := εR) (c := c) I (fun τ => size - (τ "j").toNat) hbody size σ l (by omega)
+      ⟨rfl, rfl, rfl, rfl, rfl, 0, by omega, hj, Or.inl ⟨hfl, fun j hj => by omega⟩⟩
+  refine ⟨σ', hr, hlk', hi', hsz', hn', ?_⟩
+  rw [scanGuard_eval hj' (hsz'.trans hsz) (by omega) hsize] at h0
+  rcases hpost with ⟨hf, hnc⟩ | hw
+  · have hme : m = size := by
+      by_cases h : m < size
+      · rw [if_pos h, if_pos hf] at h0; exact absurd h0 (by decide)
+      · omega
+    subst hme; exact Or.inl ⟨hf, hnc⟩
+  · exact Or.inr hw
+
 end MALInit
