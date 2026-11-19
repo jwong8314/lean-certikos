@@ -4,8 +4,24 @@ import CertiKOS.KernContainer
 # Kernel, memory management: page ownership
 
 The allocation table of `KernPAlloc.lean` records only whether a page is free.
-mCertiKOS's records who owns it, and the kernel's isolation arguments start
-there. This file adds the owner.
+This file adds an owner to each entry.
+
+**This is not a port of an mCertiKOS layer.** Checked against the public
+sources (`npe9/certikos`, `mcertikos/objects/ObjPMM.v`, `ObjContainer.v`,
+`layerlib/AuxStateDataType.v`), mCertiKOS differs:
+
+* An allocation-table entry is `ATValid allocated type refcount`. It has no
+  owning container.
+* `pfree` is `at_set(i, 0)` with no check. Its specification has a
+  precondition instead (the page is allocated, with permission `PGAlloc`).
+* Who uses a page is tracked in abstract state only: the permission table
+  `pperm` (`PGUndef | PGAlloc | PGHide owner`) and the logical allocation
+  table's list of page-table entries that map the page (`LATOwner`).
+* There is no `container_free`. Its specification is commented out, and it
+  only lowered the usage.
+
+So the runtime tag and the checked `pfree` here are a design of this
+prototype: a stricter kernel than mCertiKOS, not the same one.
 
 Cell `j` of the allocation table is now a **tag**: 0 when page `j` is free, 1
 when the kernel owns it (the pages of page tables, which `KernPT.lean`

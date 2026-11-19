@@ -135,6 +135,21 @@ Not covered: the getters. Page ownership is in `KernOwner.lean`, below.
 
 ## What `KernOwner.lean` proves
 
+**This file is not a port of an mCertiKOS layer.** It is this prototype's own
+design. Checked against the public sources (`npe9/certikos`:
+`objects/ObjPMM.v`, `objects/ObjContainer.v`, `layerlib/AuxStateDataType.v`,
+`mm/MALOpCSource.v`):
+
+| | mCertiKOS | here |
+|---|---|---|
+| allocation-table entry | `ATValid allocated type refcount`, no owner | an owner tag |
+| `pfree(i)` | `at_set(i, 0)`, no check; the spec has a precondition (allocated, `PGAlloc`) | checks the tag at run time |
+| who uses a page | abstract state only: `pperm` (`PGUndef`, `PGAlloc`, `PGHide owner`) and the logical table's list of page-table entries mapping it (`LATOwner`) | the tag, in the table itself |
+| `container_free` | none (its spec is commented out, and only lowered the usage) | frees and lowers usage if the tag matches |
+| `palloc` failure | returns 0; pages scanned from 1, only `ATNorm` ones | returns `np`; scans from 0, no page types |
+| `container_alloc` with no free page | undefined (`None`): the quota invariant rules it out | returns `np`, usage unchanged |
+| `container_split` | conditions are preconditions of the spec | quota checked at run time |
+
 The allocation table now says who owns each page. A cell is a tag: 0 for a
 free page, 1 for a kernel page (the pages of page tables), `id + 2` for a
 page of container `id`.
