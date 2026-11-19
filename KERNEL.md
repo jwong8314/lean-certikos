@@ -62,7 +62,7 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | `MBoot` | allocation-table accessors over memory | **ported** in `MALOp.lean`: `is_norm`, `at_get`, `at_set`, `at_set_c`, `get_nps`. Missing: `set_norm`, `set_nps`, `at_get_c` |
 | `MALInit` | `mem_init` | missing |
 | `MALOp` | `palloc`, `pfree` | **ported**: `MALOp.lean` (`palloc_refines`, `pfree_refines`) |
-| `MALT` | container code: `container_init`, getters, `container_can_consume`, `container_split`, `container_alloc` | prototype only (`KernContainer.lean`); port is next |
+| `MALT` | container code: `container_init`, getters, `container_can_consume`, `container_split`, `container_alloc` | **ported** in `MContainer.lean`: the four getters (`getter_guarantee` with `get_*_ref`), `container_split` (`container_split_refines`), `container_alloc` (`container_alloc_refines`). Missing: `container_init`, `container_can_consume` |
 | `MContainer` | page-table pool accessors (`set_pt`, `get_PDE`, `set_PDE`, `rmv_PDE`, `set_PDEU`, `get_PTE`, `set_PTE`, `rmv_PTE`, `set_IDPTE`) | missing (`KernPT.lean` is a prototype with a different layout) |
 | `MPTIntro` | `pt_read`, `pt_read_pde`, `pt_rmv_aux`, `pt_rmv_pde`, `pt_insert_aux`, `pt_insert_pde`, `idpde_init` | prototype only |
 | `MPTOp` | `pt_alloc_pde`, `pt_free_pde`, kernel mappings | missing |
@@ -97,6 +97,55 @@ Even for the ported layers:
   not yet proved to be preserved by each primitive.
 - Boot (`mem_init`, `container_init`) is not ported, so nothing establishes
   the invariant initially.
+
+## What the ported files prove
+
+Each port has the same shape, which is mCertiKOS's own two steps.
+
+1. The C code computes a function on the region, for any region
+   (`pallocC`, `pfreeC`, `ctAllocC`, `ctSplitC`).
+2. That function refines the abstract specification whenever the region
+   matches abstract data (`palloc_ref`, `pfree_ref`, `alloc_ref`,
+   `split_ref`).
+
+### `MALOp.lean`
+
+- State: `ATInfo` (`ATValid allocated type count`), `PPgInfo`, `PData`.
+- Relation: `MatchD`, mCertiKOS's `match_AT`. Entry `i` is the three words
+  at `3 * i`: type, allocated, count.
+- `palloc_refines`: `palloc()` refines `palloc'_spec`. It scans from page 1
+  for the first unallocated normal page, sets its allocated bit and clears
+  its count, and returns it, or returns 0. The proof uses `ATInv` (every
+  entry below `nps` is defined, `nps ≤ maxpage`).
+- `pfree_refines`: `pfree(j)` refines `pfree'_spec`. The code is
+  `at_set(j, 0)`. That the page was allocated, normal, unmapped and had
+  permission `PGAlloc` is a precondition of the specification.
+
+### `MContainer.lean`
+
+- State: `Container` (quota, usage, parent, children, used), `RData`.
+- Relation: `MatchC`, mCertiKOS's `match_container`. An unused container
+  matches any words whose "used" word is 0.
+- `getter_guarantee`, `get_quota_ref`, `get_usage_ref`, `get_parent_ref`,
+  `get_nchildren_ref`: the four getters.
+- `container_alloc_refines`: `container_alloc(id)` refines
+  `container_alloc_spec`. The code tests `usage == quota` where the
+  specification tests `usage < quota`, so the proof needs `usage ≤ quota`
+  (`cvalid_usage`).
+- `container_split_refines`: `container_split(id, q)` refines
+  `container_split_spec`. The code makes no checks. The specification's
+  conditions are what make the writes land on the right cells.
+
+Not done in the ports: the invariants (`ATInv`, `consistent_ppage`,
+`Container_valid`, `quota_bounded_AT`) are hypotheses or only stated. None is
+proved to be preserved. `container_alloc` takes the allocation table's lock
+inside the container table's, so the allocation table it changes is the one
+`palloc` finds then, not one fixed when `container_alloc` starts.
+
+# Prototype files
+
+The sections below describe the files written before the sources were
+checked. They are verified, but they are not mCertiKOS's specifications.
 
 ## What `KernPAlloc.lean` proves
 
