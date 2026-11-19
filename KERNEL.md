@@ -63,7 +63,7 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | `MALInit` | `mem_init` | missing |
 | `MALOp` | `palloc`, `pfree` | **ported**: `MALOp.lean` (`palloc_refines`, `pfree_refines`) |
 | `MALT` | container code: `container_init`, getters, `container_can_consume`, `container_split`, `container_alloc` | **ported** in `MContainer.lean`: the four getters (`getter_guarantee` with `get_*_ref`), `container_split` (`container_split_refines`), `container_alloc` (`container_alloc_refines`). Missing: `container_init`, `container_can_consume` |
-| `MContainer` | page-table pool accessors (`set_pt`, `get_PDE`, `set_PDE`, `rmv_PDE`, `set_PDEU`, `get_PTE`, `set_PTE`, `rmv_PTE`, `set_IDPTE`) | **in progress**: `MPTIntro.lean` has the state, the eight specs (`getPDE_spec` … `setIDPTE_spec`) and the relation to memory (`MatchPT`). The C code and its proofs are next. `setPT'_spec` not yet |
+| `MContainer` | page-table pool accessors (`set_pt`, `get_PDE`, `set_PDE`, `rmv_PDE`, `set_PDEU`, `get_PTE`, `set_PTE`, `rmv_PTE`, `set_IDPTE`) | **in progress**: `MPTIntro.lean` has the state, the eight specs (`getPDE_spec` … `setIDPTE_spec`) and the relation to memory (`MatchPT`). C code proved for the two readers: `get_PDE` (`getPDE_triple`) and `get_PTE` (`getPTE_triple`). The six writers and `set_pt` are next |
 | `MPTIntro` | `pt_read`, `pt_read_pde`, `pt_rmv_aux`, `pt_rmv_pde`, `pt_insert_aux`, `pt_insert_pde`, `idpde_init` | prototype only |
 | `MPTOp` | `pt_alloc_pde`, `pt_free_pde`, kernel mappings | missing |
 | `MPTCommon` | `pt_insert`, `pt_rmv` with reference counts | prototype only |

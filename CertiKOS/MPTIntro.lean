@@ -40,7 +40,7 @@ set_option linter.unusedVariables false
 namespace MPTIntro
 
 open LockRegion (Region)
-open ClightL
+open ClightL Ticket
 open MALOp MContainer
 
 /-! ## Abstract data (`AuxStateDataType.v`) -/
@@ -264,5 +264,159 @@ structure MatchPT (num_proc pb ib fb ida : Nat) (d : PTData) (b : Region) : Prop
     ∀ vadr, vadr < 1024 → RelPTE (pdx vadr) (b (fb + pi * 1024 + vadr))
   /-- `flatmem_inj`: visible flat memory is what the region holds. -/
   hp : ∀ a v, d.HP a = some v → b (fb + a) = v
+
+/-! ## The C code of the read accessors (`MContainerCSource.v`) -/
+
+open LockArray (APrim lkE)
+open LockRegion (RLog REnv)
+open LockRegionCPU KernFrame Layer
+
+/-- The whole memory-management region at this layer. -/
+structure MatchAll (maxpage num_id cb num_proc pb ib fb ida : Nat) (d : PTData) (b : Region) : Prop where
+  mm : MatchMM maxpage num_id cb d.toRData b
+  pt : MatchPT num_proc pb ib fb ida d b
+
+/-- `&PTPool_LOC[n][i]` -/
+def pdeE (pb : Nat) : Expr :=
+  .bin .add (.bin .add (.const (BitVec.ofNat 32 pb)) (.bin .mul (.var "n") (.const 1024))) (.var "i")
+
+/-- `get_PDE(n, i)`: `return (unsigned int)PTPool_LOC[n][i] / 4096;` -/
+def getPDES (pb : Nat) : Stmt APrim :=
+  .seq (.call "r" .pull [lkE, pdeE pb]) (.assign "r" (.bin .div (.var "r") (.const 4096)))
+
+/-- `get_PTE(n, i, vadr)`:
+`offset = ((unsigned int)PTPool_LOC[n][i] - PT_PERM_PTU) / 4096; return fload(offset * 1024 + vadr);` -/
+def getPTES (pb fb : Nat) : Stmt APrim :=
+  .seq (.call "o" .pull [lkE, pdeE pb])
+    (.seq (.assign "o" (.bin .div (.bin .sub (.var "o") (.const 7)) (.const 4096)))
+      (.call "r" .pull [lkE, .bin .add (.bin .add (.const (BitVec.ofNat 32 fb))
+        (.bin .mul (.var "o") (.const 1024))) (.var "vadr")]))
+
+theorem pde_ix {pb num_proc n i : Nat} (hpb : pb + num_proc * 1024 < 2 ^ 32) (hn : n < num_proc)
+    (hi : i < 1024) {σ : Locals} (h1 : σ "n" = BitVec.ofNat 32 n) (h2 : σ "i" = BitVec.ofNat 32 i) :
+    ((pdeE pb).eval σ).toNat = pb + n * 1024 + i := by
+  show (BitVec.ofNat 32 pb + σ "n" * 1024 + σ "i").toNat = _
+  rw [h1, h2]
+  simp [BitVec.toNat_add, BitVec.toNat_mul]; omega
+
+section Read
+variable {maxpage num_id cb num_proc pb ib fb ida : Nat}
+
+/-- **`get_PDE` refines `getPDE_spec`.** -/
+theorem getPDE_triple (εR : REnv) (c : CPU) (i0 : Nat) (hpb : pb + num_proc * 1024 < 2 ^ 32) (n i : Nat) :
+    Triple εR c i0 (MatchAll maxpage num_id cb num_proc pb ib fb ida) (fun _ => False)
+      (fun σ d => σ "n" = BitVec.ofNat 32 n ∧ σ "i" = BitVec.ofNat 32 i ∧
+        ∃ v, getPDE_spec num_proc n i d = some v)
+      (getPDES pb)
+      (fun _ d σ' d' => d' = d ∧ ∃ v, getPDE_spec num_proc n i d = some v ∧ σ' "r" = BitVec.ofNat 32 v) := by
+  intro σ l b d hlk hcs hM ⟨hn, hi, v, hs⟩
+  have hs0 := hs
+  unfold getPDE_spec at hs
+  have hc : d.init = true ∧ d.ipt = true ∧ PDE_Arg num_proc n i := by
+    by_cases h : d.init = true ∧ d.ipt = true ∧ PDE_Arg num_proc n i
+    · exact h
+    · rw [if_neg h] at hs; cases hs
+  rw [if_pos hc] at hs
+  obtain ⟨-, -, hnp, hi1⟩ := hc
+  have hix := pde_ix hpb hnp hi1 hn hi
+  have hrd := cs1_rd (εR := εR) hcs hlk "r" (pdeE pb)
+  rw [hix] at hrd
+  have hm := hM.pt.pool n i hnp hi1
+  have hval : b (pb + n * 1024 + i) / 4096 = BitVec.ofNat 32 v := by
+    cases hp : d.ptpool n i with
+    | PDEValid pi pte =>
+      rw [hp] at hs hm; simp only [Option.some.injEq] at hs; subst hs
+      obtain ⟨hv, -⟩ := hm
+      have hlt := (b (pb + n * 1024 + i)).isLt
+      exact val_of_toNat (by rw [BitVec.toNat_udiv, hv]; show (pi * 4096 + 7) / 4096 = pi; omega) (by omega)
+    | PDEUnPresent =>
+      rw [hp] at hs hm; simp only [Option.some.injEq] at hs; subst hs
+      rw [show b (pb + n * 1024 + i) = 0 from hm]; rfl
+    | PDEID => rw [hp] at hs; cases hs
+    | PDEUndef => rw [hp] at hs; cases hs
+  have ha := Runs.assign (P := rprimsA εR c) (σ := σ.set "r" (b (pb + n * 1024 + i))) (l := l) "r"
+    (.bin .div (.var "r") (.const 4096))
+  have e : (Expr.bin .div (.var "r") (.const 4096)).eval (σ.set "r" (b (pb + n * 1024 + i))) =
+      BitVec.ofNat 32 v := by
+    show (σ.set "r" (b (pb + n * 1024 + i))) "r" / 4096 = _
+    rw [Locals.set_same]; exact hval
+  rw [e] at ha
+  exact ⟨_, l, b, d, Runs.seq hrd ha, hcs, hM, by simp [Locals.set], fun _ _ => rfl, rfl, v, hs0, by simp⟩
+
+/-- **`get_PTE` refines `getPTE_spec`.** The entry is read from the page that
+holds the second-level table, through flat memory. -/
+theorem getPTE_triple (εR : REnv) (c : CPU) (i0 : Nat) (hpb : pb + num_proc * 1024 < 2 ^ 32)
+    (hfb : fb + 2 ^ 30 ≤ 2 ^ 32) (n i vadr : Nat) :
+    Triple εR c i0 (MatchAll maxpage num_id cb num_proc pb ib fb ida) (fun _ => False)
+      (fun σ d => σ "n" = BitVec.ofNat 32 n ∧ σ "i" = BitVec.ofNat 32 i ∧
+        σ "vadr" = BitVec.ofNat 32 vadr ∧ ∃ v, getPTE_spec num_proc n i vadr d = some v)
+      (getPTES pb fb)
+      (fun _ d σ' d' => d' = d ∧ ∃ v, getPTE_spec num_proc n i vadr d = some v ∧
+        σ' "r" = BitVec.ofNat 32 v) := by
+  intro σ l b d hlk hcs hM ⟨hn, hi, hva, v, hs⟩
+  have hs0 := hs
+  unfold getPTE_spec at hs
+  have hc : d.init = true ∧ d.ipt = true ∧ PTE_Arg num_proc n i vadr := by
+    by_cases h : d.init = true ∧ d.ipt = true ∧ PTE_Arg num_proc n i vadr
+    · exact h
+    · rw [if_neg h] at hs; cases hs
+  rw [if_pos hc] at hs
+  obtain ⟨-, -, ⟨hnp, hi1⟩, hv1⟩ := hc
+  have hix := pde_ix hpb hnp hi1 hn hi
+  have hrd := cs1_rd (εR := εR) hcs hlk "o" (pdeE pb)
+  rw [hix] at hrd
+  have hm := hM.pt.pool n i hnp hi1
+  cases hp : d.ptpool n i with
+  | PDEID => rw [hp] at hs; cases hs
+  | PDEUnPresent => rw [hp] at hs; cases hs
+  | PDEUndef => rw [hp] at hs; cases hs
+  | PDEValid pi pdt =>
+    rw [hp] at hs hm
+    simp only at hs
+    obtain ⟨hv, -⟩ := hm
+    have hlt := (b (pb + n * 1024 + i)).isLt
+    have hpi : pi < 2 ^ 20 := by omega
+    have hrel := hM.pt.pte n i pi pdt hnp hi1 hp vadr hv1
+    -- the offset
+    let σ1 := σ.set "o" (b (pb + n * 1024 + i))
+    let σ2 := σ1.set "o" (BitVec.ofNat 32 pi)
+    have ha : Runs (rprimsA εR c) (.assign "o" (.bin .div (.bin .sub (.var "o") (.const 7)) (.const 4096)))
+        σ1 l σ2 l := by
+      have h := Runs.assign (P := rprimsA εR c) (σ := σ1) (l := l) "o"
+        (.bin .div (.bin .sub (.var "o") (.const 7)) (.const 4096))
+      have e : (Expr.bin .div (.bin .sub (.var "o") (.const 7)) (.const 4096)).eval σ1 =
+          BitVec.ofNat 32 pi := by
+        show (σ1 "o" - 7) / 4096 = _
+        have : σ1 "o" = b (pb + n * 1024 + i) := by simp [σ1]
+        rw [this]
+        refine val_of_toNat ?_ (by omega)
+        rw [BitVec.toNat_udiv, BitVec.toNat_sub, hv]
+        show (2 ^ 32 - 7 + (pi * 4096 + 7)) % 2 ^ 32 / 4096 = pi
+        omega
+      rw [e] at h; exact h
+    have hrd2 := cs1_rd (εR := εR) hcs (σ := σ2) (by simpa [σ2, σ1, Locals.set] using hlk) "r"
+      (.bin .add (.bin .add (.const (BitVec.ofNat 32 fb)) (.bin .mul (.var "o") (.const 1024))) (.var "vadr"))
+    have hix2 : ((Expr.bin .add (.bin .add (.const (BitVec.ofNat 32 fb))
+        (.bin .mul (.var "o") (.const 1024))) (.var "vadr")).eval σ2).toNat = fb + pi * 1024 + vadr := by
+      show (BitVec.ofNat 32 fb + σ2 "o" * 1024 + σ2 "vadr").toNat = _
+      have h1 : σ2 "o" = BitVec.ofNat 32 pi := by simp [σ2]
+      have h2 : σ2 "vadr" = BitVec.ofNat 32 vadr := by simp [σ2, σ1, Locals.set, hva]
+      rw [h1, h2]
+      simp [BitVec.toNat_add, BitVec.toNat_mul]; omega
+    rw [hix2] at hrd2
+    have hval : b (fb + pi * 1024 + vadr) = BitVec.ofNat 32 v := by
+      have hlt2 := (b (fb + pi * 1024 + vadr)).isLt
+      cases hq : pdt vadr with
+      | PTEValid padr p =>
+        rw [hq] at hs hrel; simp only [Option.some.injEq] at hs; subst hs
+        exact val_of_toNat hrel (by rw [← show (b (fb + pi * 1024 + vadr)).toNat = _ from hrel]; exact hlt2)
+      | PTEUnPresent =>
+        rw [hq] at hs hrel; simp only [Option.some.injEq] at hs; subst hs; exact hrel
+      | PTEUndef => rw [hq] at hs; cases hs
+    rw [hval] at hrd2
+    exact ⟨_, l, b, d, Runs.seq hrd (Runs.seq ha hrd2), hcs, hM, by simp [σ2, σ1, Locals.set],
+      fun _ _ => rfl, rfl, v, hs0, by simp⟩
+
+end Read
 
 end MPTIntro
