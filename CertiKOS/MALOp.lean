@@ -844,4 +844,59 @@ theorem pfree_refines {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε)
   refine ⟨σ2.set "_" 0, rb, S3, H1, H3, hrun, hl3, hid, hm, fun d d' i hi hM hs => ?_⟩
   rw [hm, hi]; exact pfree_ref hmax hM hs
 
+/-! ## The specifications preserve the invariant -/
+
+/-- **`palloc'_spec` preserves the allocation-table invariant.** -/
+theorem palloc_inv {maxpage kl kh : Nat} {d d' : PData} {r : Nat} (hI : ATInv maxpage kl kh d)
+    (h : palloc'_spec d = some (d', r)) : ATInv maxpage kl kh d' := by
+  unfold palloc'_spec at h
+  by_cases hin : d.init = true
+  · rw [if_pos hin] at h
+    cases hff : first_free d.AT d.nps with
+    | none =>
+      rw [hff] at h; simp only [Option.some.injEq, Prod.mk.injEq] at h; obtain ⟨rfl, -⟩ := h; exact hI
+    | some i =>
+      rw [hff] at h; simp only [Option.some.injEq, Prod.mk.injEq] at h; obtain ⟨rfl, -⟩ := h
+      obtain ⟨hi0, hin', ⟨c, hc⟩, -⟩ := first_free_some hff
+      refine ⟨hI.valid_nps, fun j hj => ?_, fun j h1 h2 => ?_, fun j hj => ?_⟩
+      · by_cases hji : j = i
+        · subst hji; have := hI.valid_AT_kern j hj; rw [hc] at this; cases this
+        · simp only [setAt_ne _ _ hji]; exact hI.valid_AT_kern j hj
+      · by_cases hji : j = i
+        · subst hji; simp only [setAt_eq]; exact ⟨true, Or.inl ⟨0, rfl⟩⟩
+        · simp only [setAt_ne _ _ hji]; exact hI.valid_AT_usr j h1 h2
+      · by_cases hji : j = i
+        · subst hji; simp only [setAt_eq]
+          exact ⟨fun _ => ⟨0, rfl⟩, fun _ _ e => by cases e⟩
+        · simp only [setAt_ne _ _ hji]; exact hI.valid_pperm j hj
+  · rw [if_neg hin] at h; cases h
+
+/-- **`pfree'_spec` preserves the allocation-table invariant.** -/
+theorem pfree_inv {maxpage kl kh : Nat} {d d' : PData} {i : Nat} (hI : ATInv maxpage kl kh d)
+    (h : pfree'_spec maxpage i d = some d') : ATInv maxpage kl kh d' := by
+  unfold pfree'_spec at h
+  by_cases hin : d.init = true
+  · rw [if_pos hin] at h
+    by_cases hi : i < maxpage
+    · rw [if_pos hi] at h
+      cases hA : d.AT i with
+      | ATUndef => rw [hA] at h; simp at h
+      | ATValid b0 t n =>
+        rw [hA] at h
+        cases hP : d.pperm i <;> rw [hP] at h <;> cases b0 <;> cases t <;> cases n <;> simp at h
+        subst h
+        refine ⟨hI.valid_nps, fun j hj => ?_, fun j h1 h2 => ?_, fun j hj => ?_⟩
+        · by_cases hji : j = i
+          · subst hji; have := hI.valid_AT_kern j hj; rw [hA] at this; cases this
+          · simp only [setAt_ne _ _ hji]; exact hI.valid_AT_kern j hj
+        · by_cases hji : j = i
+          · subst hji; simp only [setAt_eq]; exact ⟨false, Or.inl ⟨0, rfl⟩⟩
+          · simp only [setAt_ne _ _ hji]; exact hI.valid_AT_usr j h1 h2
+        · by_cases hji : j = i
+          · subst hji; simp only [setAt_eq]
+            exact ⟨fun e => absurd rfl e, fun _ e => by cases e⟩
+          · simp only [setAt_ne _ _ hji]; exact hI.valid_pperm j hj
+    · rw [if_neg hi] at h; cases h
+  · rw [if_neg hin] at h; cases h
+
 end MALOp
