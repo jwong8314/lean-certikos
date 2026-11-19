@@ -602,11 +602,11 @@ theorem filled_step {kl kh : Nat} {mm : MMTable} {size : Nat} {b0 b : Region} {m
       · simp only [set3, setCell]; rw [if_neg (by omega), if_neg (by omega), if_neg (by omega)]; exact h3
 
 theorem matchMM_of_eq {mmb size : Nat} {mm : MMTable} {b b' : Region} (hM : MatchMMap mmb mm size b)
-    (h : ∀ k, mmb ≤ k → b' k = b k) : MatchMMap mmb mm size b' := by
-  refine ⟨by rw [h mmb (Nat.le_refl _)]; exact hM.msize, fun j hj => ?_⟩
+    (h : ∀ k, mmb ≤ k → k < mmb + 1 + 3 * size → b' k = b k) : MatchMMap mmb mm size b' := by
+  refine ⟨by rw [h mmb (Nat.le_refl _) (by omega)]; exact hM.msize, fun j hj => ?_⟩
   obtain ⟨s, l, p, hm, h1, h2, h3⟩ := hM.mat j hj
-  exact ⟨s, l, p, hm, by rw [h _ (by omega)]; exact h1, by rw [h _ (by omega)]; exact h2,
-    by rw [h _ (by omega)]; exact h3⟩
+  exact ⟨s, l, p, hm, by rw [h _ (by omega) (by omega)]; exact h1, by rw [h _ (by omega) (by omega)]; exact h2,
+    by rw [h _ (by omega) (by omega)]; exact h3⟩
 
 /-- **The second loop** gives every page below `nps` its type, and writes
 nothing else. -/
@@ -631,7 +631,7 @@ theorem fillLoop_run (εR : REnv) {c : CPU} {i : Nat} {l : RLog} {b0 : Region} (
       by_cases h : m < nps
       · exact h
       · rw [if_neg h] at hg; exact absurd rfl hg
-    have hM' : MatchMMap mmb mm size b' := matchMM_of_eq hM (fun k hk => hF.1 k (by omega))
+    have hM' : MatchMMap mmb mm size b' := matchMM_of_eq hM (fun k hk _ => hF.1 k (by omega))
     obtain ⟨τ', l'', hr, hcs'', hi', hsz', hn', hlk'⟩ := fillBody_run εR hcs' hmb hmax' hkl hkh hM' hv hc
       (σ := τ) (by rw [hlkτ]; exact hlk) hiτ (by omega) hszτ
     refine ⟨τ', l'', hr, ⟨hlk'.trans hlkτ, hsz'.trans hszτ, hn'.trans hnτ, m + 1, _, hmlt, hi', hcs'',
@@ -687,7 +687,7 @@ theorem memInitCS_run (εR : REnv) {c : CPU} {i : Nat} {l : RLog} {b : Region} (
   let σ6 := (σ4.set "_" 0).set "i" 0
   have h6 : Runs (rprimsA εR c) (.assign "i" (.const 0)) (σ4.set "_" 0) l5 σ6 l5 := Runs.assign _ _
   have hM0 : MatchMMap mmb mm size (setCell b (3 * maxpage) (BitVec.ofNat 32 (cnps mm size))) :=
-    matchMM_of_eq hM (fun k hk => by simp only [setCell]; rw [if_neg (by omega)])
+    matchMM_of_eq hM (fun k hk _ => by simp only [setCell]; rw [if_neg (by omega)])
   have hcl := cnps_le hv size (Nat.le_refl _)
   obtain ⟨σ7, l7, b7, h7, c7, hF, hlk7⟩ := fillLoop_run εR c5 hmb hmax hkl hkh hM0 hv hc
     (nps := cnps mm size) (by omega) σ6 (by simpa [σ6, Locals.set] using hlkσ4) (by simp [σ6])
@@ -742,7 +742,7 @@ theorem mem_init_triple (εR : REnv) (c : CPU) (i : Nat) {mmb size maxpage kl kh
     intro k h1 h2
     rw [hF.1 k h2]; simp only [setCell]; rw [if_neg h1]
   refine ⟨σ', l', b', { d with AT := real_AT kl kh mm size d.AT, nps := real_nps mm size, init := true },
-    hr, hcs', ⟨⟨fun p hp => ?_, ?_⟩, matchMM_of_eq hM (fun k hk => hb0 k (by omega) (by omega))⟩, hlk',
+    hr, hcs', ⟨⟨fun p hp => ?_, ?_⟩, matchMM_of_eq hM (fun k hk _ => hb0 k (by omega) (by omega))⟩, hlk',
     fun k hk => hb0 k (by omega) (by omega), by show mem_init_spec kl kh mm size d = some _; unfold mem_init_spec; rw [if_pos hin]⟩
   · show MatchInfo (real_AT kl kh mm size d.AT p) _ _ _
     by_cases hpn : p < real_nps mm size

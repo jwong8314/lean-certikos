@@ -226,7 +226,7 @@ theorem container_init_triple (εR : REnv) (c : CPU) (i : Nat) {mmb size maxpage
     { d with AT := real_AT kl kh mm size d.AT, nps := real_nps mm size, init := true,
              AC := real_AC kl kh mm size },
     Runs.seq hr1 (Runs.seq h2 (Runs.seq (Runs.assign _ _) (Runs.seq (Runs.assign _ _) (Runs.seq h5 h6)))),
-    hcs6, ⟨⟨⟨fun p hp => ?_, ?_⟩, fun j hj => ?_⟩, matchMM_of_eq hM1 (fun k hk => hb2 k (by omega))⟩, ?_,
+    hcs6, ⟨⟨⟨fun p hp => ?_, ?_⟩, fun j hj => ?_⟩, matchMM_of_eq hM1 (fun k hk hk2 => hb2 k (by omega))⟩, ?_,
     fun k hk => ?_, by show container_init_spec kl kh mm size d = some _; unfold container_init_spec; rw [if_pos hin]⟩
   · have h := hD1.mat p hp
     rw [hd1] at h
