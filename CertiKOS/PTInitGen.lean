@@ -414,4 +414,124 @@ theorem ptAllocPDE_exist {num_proc : Nat} {h h' : HData} {d : PTData} {nn vadr v
       simp only [Option.some.injEq, Prod.mk.injEq] at hs; obtain ⟨rfl, rfl⟩ := hs
       exact ⟨_, rfl, hR⟩
 
+/-- What `ptAllocPDE0_spec` leaves alone, and what it returns. -/
+theorem allocPDE0_facts {num_proc : Nat} {h h2 : HData} {nn vadr v : Nat}
+    (hs : ptAllocPDE0_spec num_proc nn vadr h = some (h2, v)) :
+    h2.pg = h.pg ∧ h2.init = h.init ∧ h2.PT = h.PT ∧ h2.ipt = h.ipt ∧ h2.nps = h.nps ∧
+    ((v = 0 ∧ h2 = h) ∨ (0 < v ∧ v < h.nps ∧ h2.ptpool nn (PDX vadr) = .PDEValid v real_init_PTE)) := by
+  unfold ptAllocPDE0_spec at hs
+  simp only at hs
+  by_cases hc : h.pg = true ∧ h.ipt = true ∧ (h.AC nn).cused = true ∧ pt_Arg' num_proc nn vadr
+  · rw [if_pos hc] at hs
+    cases hp : h.ptpool nn (PDX vadr) with
+    | PDEID => rw [hp] at hs; cases hs
+    | PDEValid a1 a2 => rw [hp] at hs; cases hs
+    | PDEUndef => rw [hp] at hs; cases hs
+    | PDEUnPresent =>
+      rw [hp] at hs; simp only at hs
+      by_cases hlt : (h.AC nn).cusage < (h.AC nn).cquota
+      · rw [if_pos hlt] at hs
+        cases hL : Lfirst_free h.LAT h.nps with
+        | none => rw [hL] at hs; cases hs
+        | some pi =>
+          rw [hL] at hs
+          simp only [Option.some.injEq, Prod.mk.injEq] at hs; obtain ⟨rfl, rfl⟩ := hs
+          obtain ⟨h0, hn, -⟩ := Lfirst_free_some hL
+          exact ⟨rfl, rfl, rfl, rfl, rfl, Or.inr ⟨h0, hn, pool_get_eq _ _ _ _⟩⟩
+      · rw [if_neg hlt] at hs
+        simp only [Option.some.injEq, Prod.mk.injEq] at hs; obtain ⟨rfl, rfl⟩ := hs
+        exact ⟨rfl, rfl, rfl, rfl, rfl, Or.inl ⟨rfl, rfl⟩⟩
+  · rw [if_neg hc] at hs; cases hs
+
+/-- **`ptInsert0_spec`**: `pt_insert` over the owner lists. -/
+def ptInsert0_spec (maxpage num_proc : Nat) (nn vadr padr perm : Nat) (h : HData) : Option (HData × Nat) :=
+  if h.ipt = true ∧ h.pg = true ∧ pt_Arg num_proc nn vadr padr h.nps then
+    match ZtoPerm perm with
+    | some p =>
+      match h.ptpool nn (PDX vadr) with
+      | .PDEValid _ _ =>
+        match ptInsertPTE0_spec num_proc nn vadr padr p h with
+        | some h' => some (h', 0)
+        | none => none
+      | .PDEUnPresent =>
+        match ptAllocPDE0_spec num_proc nn vadr h with
+        | some (h', v) =>
+          if v = 0 then some (h', maxpage + 1)
+          else
+            match ptInsertPTE0_spec num_proc nn vadr padr p h' with
+            | some h'' => some (h'', v)
+            | none => none
+        | none => none
+      | _ => none
+    | none => none
+  else none
+
+/-- **`ptInsert_exist`.** If `pt_insert` over owner lists is defined, so is
+`pt_insert` over counts on any related state, with the same result. -/
+theorem ptInsert_exist {maxpage num_proc : Nat} (hmp : maxpage ≤ 2 ^ 20) {h h' : HData} {d : PTData}
+    {nn vadr padr perm r : Nat} (hR : Relate h d) (hI : HInvI maxpage num_proc h)
+    (hs : ptInsert0_spec maxpage num_proc nn vadr padr perm h = some (h', r)) :
+    ∃ d', ptInsert_spec maxpage num_proc nn vadr padr perm d = some (d', r) ∧ Relate h' d' := by
+  unfold ptInsert0_spec at hs
+  have hc : h.ipt = true ∧ h.pg = true ∧ pt_Arg num_proc nn vadr padr h.nps := by
+    by_cases hh : h.ipt = true ∧ h.pg = true ∧ pt_Arg num_proc nn vadr padr h.nps
+    · exact hh
+    · rw [if_neg hh] at hs; cases hs
+  rw [if_pos hc] at hs
+  obtain ⟨hipt, hpg, ⟨hn0, hnp, hlo, hhi⟩, hpa0, hpan⟩ := hc
+  have hnpsm := hI.valid_nps
+  unfold ptInsert_spec
+  rw [if_pos ⟨by rw [hR.init, ← hI.valid_pg_init]; exact hpg, by rw [hR.ipt]; exact hipt,
+    by rw [hR.pg]; exact hpg, ⟨hn0, hnp, hlo, hhi⟩, hpa0, by rw [hR.nps]; exact hpan⟩]
+  cases hz : ZtoPerm perm with
+  | none => rw [hz] at hs; cases hs
+  | some p =>
+    rw [hz] at hs; simp only at hs ⊢
+    rw [hR.ptpool]
+    cases hp : h.ptpool nn (PDX vadr) with
+    | PDEID => rw [hp] at hs; cases hs
+    | PDEUndef => rw [hp] at hs; cases hs
+    | PDEValid pi pdt =>
+      rw [hp] at hs; simp only at hs ⊢
+      cases hi : ptInsertPTE0_spec num_proc nn vadr padr p h with
+      | none => rw [hi] at hs; cases hs
+      | some h1 =>
+        rw [hi] at hs
+        simp only [Option.some.injEq, Prod.mk.injEq] at hs; obtain ⟨rfl, rfl⟩ := hs
+        obtain ⟨d1, hd1, hR1⟩ := ptInsertPTE_exist hR hI.valid_pg_init hI.valid_PT_kern
+          (fun pi' pdt' hq => by
+            have := (hI.valid_pperm_pmap nn hnp vadr (by omega) pdt' pi' hq).1
+            omega) hi
+        rw [hd1]; exact ⟨d1, rfl, hR1⟩
+    | PDEUnPresent =>
+      rw [hp] at hs; simp only at hs ⊢
+      cases ha : ptAllocPDE0_spec num_proc nn vadr h with
+      | none => rw [ha] at hs; cases hs
+      | some pr =>
+        obtain ⟨h1, v⟩ := pr
+        rw [ha] at hs; simp only at hs
+        obtain ⟨d1, hd1, hR1⟩ := ptAllocPDE_exist hR hI.valid_pg_init hI.valid_PT_kern hI.valid_LATable_nil ha
+        obtain ⟨e1, e2, e3, e4, e5, hcase⟩ := allocPDE0_facts ha
+        rw [hd1]; simp only
+        by_cases hv0 : v = 0
+        · rw [if_pos hv0] at hs ⊢
+          simp only [Option.some.injEq, Prod.mk.injEq] at hs; obtain ⟨rfl, rfl⟩ := hs
+          exact ⟨d1, rfl, hR1⟩
+        · rw [if_neg hv0] at hs ⊢
+          cases hi : ptInsertPTE0_spec num_proc nn vadr padr p h1 with
+          | none => rw [hi] at hs; cases hs
+          | some h2 =>
+            rw [hi] at hs
+            simp only [Option.some.injEq, Prod.mk.injEq] at hs; obtain ⟨rfl, rfl⟩ := hs
+            have hvb : 0 < v ∧ v < h.nps ∧ h1.ptpool nn (PDX vadr) = .PDEValid v real_init_PTE := by
+              rcases hcase with ⟨h0, -⟩ | hh
+              · exact absurd h0 hv0
+              · exact hh
+            obtain ⟨d2, hd2, hR2⟩ := ptInsertPTE_exist hR1 (by rw [e1, e2]; exact hI.valid_pg_init)
+              (by rw [e1, e3, e4]; exact hI.valid_PT_kern)
+              (fun pi' pdt' hq => by
+                rw [hvb.2.2] at hq; cases hq
+                have := hvb.1; have := hvb.2.1; omega) hi
+            rw [hd2]; exact ⟨d2, rfl, hR2⟩
+
 end PTInitGen
