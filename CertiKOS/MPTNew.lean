@@ -106,4 +106,159 @@ theorem ptNew_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_
 
 end New
 
+/-! ## `pt_resv` -/
+
+/-- **`ptResv_spec`**: allocate a page from process `n`'s quota and map it at
+`vadr`. Returns `MagicNumber` if no page could be allocated. -/
+def ptResv_spec (maxpage num_proc : Nat) (n vadr perm : Nat) (d : PTData) : Option (PTData × Nat) :=
+  match container_alloc_spec n d.toRData with
+  | some (r1, b) =>
+    if b = 0 then some (d, maxpage + 1)
+    else ptInsert_spec maxpage num_proc n vadr b perm { d with toRData := r1 }
+  | none => none
+
+/-- What `container_alloc_spec` returns: 0 and no change, or a page below `nps`
+with the container still within its quota. -/
+theorem alloc_facts {d r1 : RData} {id b : Nat} (hu : (d.AC id).cusage ≤ (d.AC id).cquota)
+    (h : container_alloc_spec id d = some (r1, b)) :
+    (b = 0 ∧ r1 = d) ∨ (0 < b ∧ b < d.nps ∧ (r1.AC id).cusage ≤ (r1.AC id).cquota) := by
+  unfold container_alloc_spec at h
+  simp only at h
+  by_cases hiu : d.init = true ∧ (d.AC id).cused = true
+  · rw [if_pos hiu] at h
+    by_cases hlt : (d.AC id).cusage < (d.AC id).cquota
+    · rw [if_pos hlt] at h
+      cases hff : first_free d.AT d.nps with
+      | none => rw [hff] at h; cases h
+      | some p =>
+        rw [hff] at h
+        simp only [Option.some.injEq, Prod.mk.injEq] at h; obtain ⟨rfl, rfl⟩ := h
+        obtain ⟨h0, hn, -, -⟩ := first_free_some hff
+        refine Or.inr ⟨h0, hn, ?_⟩
+        simp only [setAt_eq]; omega
+    · rw [if_neg hlt] at h
+      simp only [Option.some.injEq, Prod.mk.injEq] at h; obtain ⟨rfl, rfl⟩ := h
+      exact Or.inl ⟨rfl, rfl⟩
+  · rw [if_neg hiu] at h; cases h
+
+/-- ```
+pi = container_alloc(n);
+if (pi == 0) result = MagicNumber;
+else result = pt_insert(n, vaddr, pi, perm);
+return result;
+``` -/
+def ptResvS (cb maxpage pb fb : Nat) : Stmt APrim :=
+  .seq (.assign "id" (.var "n")) (.seq (ctAllocCS cb maxpage) (.seq (.assign "padr" (.var "r"))
+    (.ite (.bin .eq (.var "padr") (.const 0)) (.assign "r" (.const (BitVec.ofNat 32 (maxpage + 1))))
+      (ptInsertS cb maxpage pb fb))))
+
+section Resv
+variable {maxpage num_id cb num_proc pb ib fb ida : Nat}
+
+/-- **`pt_resv` refines `ptResv_spec`.** -/
+theorem ptResv_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_id cb num_proc pb ib fb)
+    (hmax : 3 * maxpage < 2 ^ 32) (hnum : cb + 5 * num_id < 2 ^ 32) (hmp : maxpage ≤ 2 ^ 20)
+    (hnn : num_proc ≤ num_id) {kl kh : Nat} (nn vadr perm : Nat) (hnid : nn < num_id) :
+    Triple εR c i0 (MatchAll maxpage num_id cb num_proc pb ib fb ida) (fun _ => True)
+      (fun σ d => σ "n" = BitVec.ofNat 32 nn ∧ σ "vaddr" = BitVec.ofNat 32 vadr ∧
+        σ "perm" = BitVec.ofNat 32 perm ∧ ATInv maxpage kl kh d.toPData ∧
+        (d.AC nn).cusage ≤ (d.AC nn).cquota ∧
+        ∃ d1 r, ptResv_spec maxpage num_proc nn vadr perm d = some (d1, r))
+      (ptResvS cb maxpage pb fb)
+      (fun _ d σ' d' => ∃ r, ptResv_spec maxpage num_proc nn vadr perm d = some (d', r) ∧
+        σ' "r" = BitVec.ofNat 32 r) := by
+  intro σ l b d hlk hcs hM ⟨hn, hva, hpe, hI, hu, dF, rF, hs⟩
+  have hs0 := hs
+  unfold ptResv_spec at hs
+  cases hA : container_alloc_spec nn d.toRData with
+  | none => rw [hA] at hs; cases hs
+  | some pr =>
+    obtain ⟨r1, bq⟩ := pr
+    rw [hA] at hs; simp only at hs
+    let σa := σ.set "id" (BitVec.ofNat 32 nn)
+    have ha0 : Runs (rprimsA εR c) (.assign "id" (.var "n")) σ l σa l := by
+      have h := Runs.assign (P := rprimsA εR c) (σ := σ) (l := l) "id" (.var "n")
+      have e : (Expr.var "n").eval σ = BitVec.ofNat 32 nn := hn
+      rw [e] at h; exact h
+    obtain ⟨σb, lb, bb, db, hrb, hcsb, hMb, hlkb, -, r1', hdb, r, hsr, hrr⟩ :=
+      container_alloc_lift εR c i0 hL hmax hnum (kl := kl) (kh := kh) nn hnid σa l b d
+        (by simpa [σa, Locals.set] using hlk) hcs hM ⟨by simp [σa], hI, hu, _, _, hA⟩
+    rw [hA] at hsr
+    simp only [Option.some.injEq, Prod.mk.injEq] at hsr; obtain ⟨hr1, hrb'⟩ := hsr
+    rw [← hr1] at hdb; rw [← hrb'] at hrr
+    have frb : ∀ z : Ident, z = "n" ∨ z = "vaddr" ∨ z = "perm" → σb z = σ z := by
+      intro z hz
+      have h1 : σb z = σa z := by
+        rcases hz with rfl | rfl | rfl <;>
+          exact hrb.frame (by simp [frS, ctAllocCS, pallocCS, getNpsS, pallocLoop, loopBody, isNormS, atGetS,
+            atSetS, atSetCS])
+      rw [h1]
+      rcases hz with rfl | rfl | rfl <;> simp [σa, Locals.set]
+    let σc := σb.set "padr" (BitVec.ofNat 32 bq)
+    have hac : Runs (rprimsA εR c) (.assign "padr" (.var "r")) σb lb σc lb := by
+      have h := Runs.assign (P := rprimsA εR c) (σ := σb) (l := lb) "padr" (.var "r")
+      have e : (Expr.var "r").eval σb = BitVec.ofNat 32 bq := hrr
+      rw [e] at h; exact h
+    have hlkc : (σc "lk").toNat = i0 := by simp [σc, Locals.set, hlkb, σa, hlk]
+    rcases alloc_facts hu hA with ⟨hb0, hr1d⟩ | ⟨hbpos, hblt, hu2⟩
+    · rw [if_pos hb0] at hs
+      simp only [Option.some.injEq, Prod.mk.injEq] at hs; obtain ⟨hdF, hrF⟩ := hs
+      have hdbd : db = d := by rw [hdb, hr1d]
+      rw [hdbd] at hMb
+      refine ⟨_, lb, bb, d, Runs.seq ha0 (Runs.seq hrb (Runs.seq hac (Runs.ite_true
+        (eq_true (by simp [σc, hb0])) (Runs.assign _ _)))), hcsb, hMb, ?_,
+        fun k hk => absurd trivial hk, maxpage + 1, by rw [hs0, hdF, hrF], by simp [Expr.eval]⟩
+      rw [Locals.set_other _ _ (by decide)]; simp [σc, Locals.set, hlkb, σa]
+    · rw [if_neg (by omega)] at hs
+      have hnpsm : d.nps ≤ maxpage := hI.valid_nps.2
+      have hne : σc "padr" ≠ 0 := by
+        have h : (BitVec.ofNat 32 bq : Val) ≠ BitVec.ofNat 32 0 :=
+          KernPAlloc.ofNat_ne (a := bq) (b := 0) (by omega) (by decide) (by omega)
+        simpa [σc] using h
+      have hI2 : ATInv maxpage kl kh db.toPData := by rw [hdb]; exact alloc_at_inv hI hA
+      obtain ⟨σd, ld, bd, dd, hrd, hcsd, hMd, hlkd, -, r', hsr', hrr'⟩ :=
+        ptInsert_triple εR c i0 hL hmax hnum hmp hnn (kl := kl) (kh := kh) nn vadr bq perm σc lb bb db
+          hlkc hcsb hMb
+          ⟨by simp [σc, Locals.set, frb, hn], by simp [σc, Locals.set, frb, hva], by simp [σc],
+            by simp [σc, Locals.set, frb, hpe], hI2, by rw [hdb]; exact hu2, dF, rF, by rw [hdb]; exact hs⟩
+      rw [hdb, hs] at hsr'
+      simp only [Option.some.injEq, Prod.mk.injEq] at hsr'; obtain ⟨hdd, hrr2⟩ := hsr'
+      rw [← hdd] at hMd; rw [← hrr2] at hrr'
+      refine ⟨σd, ld, bd, dF, Runs.seq ha0 (Runs.seq hrb (Runs.seq hac (Runs.ite_false (eq_false hne) hrd))),
+        hcsd, hMd, ?_, fun k hk => absurd trivial hk, rF, hs0, hrr'⟩
+      rw [hlkd]; simp [σc, Locals.set, hlkb, σa]
+
+/-- **`pt_resv` under the memory-management lock.** `acquire; pt_resv; release`
+acquires on any log. If the region it finds matches `d`, the invariants hold
+and `ptResv_spec` is defined, the call finishes on a valid log, idle, and the
+region it releases matches the specification's result. -/
+theorem ptResv_locked {εR : REnv} {ε : LockArray.AEnv} {c : CPU} (hE : EnvErases εR ε) (hRR : RelyR εR c)
+    (hc : c < NCPU) (hRA : LockArray.RelyA ε c) {l : RLog} {S : LockRegion.RState} {H : LockRegion.HLogR}
+    (hl : LockRegion.rreplay l = some (S, H)) {iv : Val} (hidle : (S.lk iv.toNat).phase c = .idle)
+    (bound : LockArray.ALog → Nat) (K : Nat) (hK : ∀ l, bound l ≤ K)
+    (hF : LockArray.FairA ε c iv.toNat
+      (ticket (LockArray.projL iv.toNat (LockArray.apull ε c (erase l)))) bound)
+    (σ : Locals) (hσ : σ "lk" = iv) (hL : Layout maxpage num_id cb num_proc pb ib fb)
+    (hmax : 3 * maxpage < 2 ^ 32) (hnum : cb + 5 * num_id < 2 ^ 32) (hmp : maxpage ≤ 2 ^ 20)
+    (hnn : num_proc ≤ num_id) {kl kh : Nat} (nn vadr perm : Nat) (hnid : nn < num_id) :
+    ∃ (σ1 : Locals) (r1 : RLog) (H1 : LockRegion.HLogR),
+      Runs (rprimsA εR c) LockArray.acquireA σ l σ1 r1 ∧
+      (∀ z, z ≠ "t" → z ≠ "n" → z ≠ "_" → z ≠ "v" → σ1 z = σ z) ∧
+      ∀ d, MatchAll maxpage num_id cb num_proc pb ib fb ida d (LockRegion.hmemR iv.toNat H1) →
+        (σ1 "n" = BitVec.ofNat 32 nn ∧ σ1 "vaddr" = BitVec.ofNat 32 vadr ∧
+          σ1 "perm" = BitVec.ofNat 32 perm ∧ ATInv maxpage kl kh d.toPData ∧
+          (d.AC nn).cusage ≤ (d.AC nn).cquota ∧
+          ∃ d1 r, ptResv_spec maxpage num_proc nn vadr perm d = some (d1, r)) →
+        ∃ (σ2 : Locals) (rb : RLog) (S3 : LockRegion.RState) (H3 : LockRegion.HLogR) (d' : PTData),
+          Star (rprimsA εR c)
+            ⟨.seq LockArray.acquireA (.seq (ptResvS cb maxpage pb fb) relA), .stop, σ, l⟩
+            ⟨.skip, .stop, σ2.set "_" 0, rb⟩ ∧
+          LockRegion.rreplay rb = some (S3, H3) ∧ (S3.lk iv.toNat).phase c = .idle ∧
+          MatchAll maxpage num_id cb num_proc pb ib fb ida d' (LockRegion.hmemR iv.toNat H3) ∧
+          ∃ r, ptResv_spec maxpage num_proc nn vadr perm d = some (d', r) ∧ σ2 "r" = BitVec.ofNat 32 r :=
+  Triple.locked hE hRR hc hRA hl hidle bound K hK hF σ hσ
+    (ptResv_triple εR c iv.toNat hL hmax hnum hmp hnn (kl := kl) (kh := kh) nn vadr perm hnid)
+
+end Resv
+
 end MPTNew

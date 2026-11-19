@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-63 Lean files, about 29,000 lines. No `sorry`. The main theorems depend only on
+64 Lean files, about 27,000 lines. No `sorry`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-18)
@@ -76,53 +76,25 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
   switching only at yield points, are a special case of the multicore machine,
   so the multicore safety theorems apply to them.
 
-- **Kernel, memory management** ([KERNEL.md](KERNEL.md) tracks the port module
-  by module):
-  - **Page allocator** (`KernPAlloc.lean`): `palloc` (acquire, scan the
-    allocation table, release) refines an abstract allocator, and `pfree`
-    clears an entry. `cs_guarantee` is the generic step for a critical
-    section on one region.
-  - **Two locks** (`KernFrame.lean`): `cs_guarantee2` covers a critical
-    section that takes a second lock inside. `ext_frame` is the frame: code
-    working on one lock leaves every other lock we hold, and its region,
-    alone.
-  - **Page tables** (`KernPT.lean`): two-level page tables as a region.
-    `pt_insert` reads the directory, calls `palloc` under the page table's
-    lock if the second-level table is missing, zeroes and installs the new
-    table, and writes the entry. It refines `ptInsertSpec`
-    (`ptInsert_guarantee`), with `ptRmv_guarantee` and `ptRead_guarantee`
-    for unmapping and lookup. Under the invariant `PTInv`, the region is a
-    map: an inserted entry reads back, every other entry is unchanged, and
-    the invariant is kept (`insert_lookup_same`, `insert_lookup_other`,
-    `insert_inv`).
-  - **Containers** (`KernContainer.lean`): per-process memory quotas.
-    `container_alloc` charges a page and calls `palloc`, `container_free`
-    gives one back and calls `pfree`, and `container_split` carves a child's
-    quota out of its parent's. Each refines its abstract operation
-    (`ctAlloc_guarantee`, `ctFree_guarantee`, `ctSplit_guarantee`), and each
-    keeps `usage ≤ quota` (`alloc_inv`, `free_inv`, `split_inv`).
-  - **Ported from the mCertiKOS sources** (`MALOp.lean`, `MContainer.lean`):
-    the allocation table and the containers with mCertiKOS's own abstract
-    state, specifications and C code. `palloc`, `pfree`, `container_alloc`,
-    `container_split` and the container getters are proved to refine
-    `palloc'_spec`, `pfree'_spec`, `container_alloc_spec`,
-    `container_split_spec` and the getter specs. mCertiKOS's invariants on
-    these two layers (`Container_valid`, `quota_bounded_AT`, the allocation-table
-    invariant) are ported and proved preserved by the specifications
-    (`MContainerInv.lean`). The page tables are ported on top (`MPTIntro.lean`,
-    `MPTOp.lean`, `MPTCommon.lean`, `MPTKern.lean`): eight accessors, then the
-    operations by virtual address, then `pt_alloc_pde`, `pt_free_pde`,
-    `pt_insert` and `pt_rmv`, each refining its mCertiKOS specification and
-    each verified against the specifications of the layer below
-    (`Layer.lean`). The files above and below
-    this one in the list are earlier prototypes with their own
-    specifications; [KERNEL.md](KERNEL.md) says which is which.
-  - **Page ownership** (`KernOwner.lean`): the allocation table records who
-    owns each page. `palloc` tags the page, `pfree` frees it only for its
-    owner, and `container_free` lowers the usage only if the page was the
-    container's. No owner changes another owner's pages (`ostep_other`), so a
-    page table keeps its invariant whatever containers allocate and free
-    (`pt_osteps`).
+- **Kernel, memory management, ported from the mCertiKOS sources**
+  ([KERNEL.md](KERNEL.md) tracks the port layer by layer). The abstract
+  state, the specifications and the C code are transcribed from the public
+  mCertiKOS sources, and the C code is proved to refine the specifications.
+  - **Layers** (`Layer.lean`): a primitive's interface is a triple with a
+    write footprint. Each layer is verified against the triples of the layer
+    below, never its code. `Triple.lift` is the frame rule and
+    `Triple.locked` connects a triple to `acquire; s; release`.
+  - **Allocation table** (`MALOp.lean`): `palloc`, `pfree`, and the table
+    accessors.
+  - **Containers** (`MContainer.lean`, `MContainerInv.lean`):
+    `container_alloc`, `container_split`, the getters, and the invariants
+    `Container_valid` and `quota_bounded_AT`, proved preserved.
+  - **Page tables** (`MPTIntro.lean`, `MPTOp.lean`, `MPTCommon.lean`,
+    `MPTKern.lean`, `MPTNew.lean`): the eight accessors of the page-table
+    pool, the operations by virtual address, `pt_alloc_pde`, `pt_free_pde`,
+    `pt_insert` and `pt_rmv` with reference counts, `pt_new` and `pt_resv`.
+  - **Lock rules** (`KernPAlloc.lean`, `KernFrame.lean`): `cs_guarantee`,
+    `Runs`, and the frame lemmas for regions.
 
 **Not done yet**
 

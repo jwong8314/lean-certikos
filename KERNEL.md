@@ -46,9 +46,9 @@ Two kinds of files exist, and they should not be confused.
   the sequential PLDI'16 kernel). The abstract state, the specifications and
   the C code are transcribed, and the C code is proved to refine the
   specifications. The sources were read, not run.
-- **Prototype**: written before the sources were checked. Verified, but its
-  state and specifications are this project's own and differ from
-  mCertiKOS's. To be replaced by ports.
+- **Prototype**: written before the sources were checked. The memory-management
+  prototypes have been replaced by ports and removed (see "Retired
+  prototypes").
 
 The concurrent kernel (mC2) is not public. Where a lock protects an object
 here, that part follows the papers, not sources.
@@ -68,9 +68,9 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | `MPTOp` | `pt_alloc_pde`, `pt_free_pde`, `pt_init_comm` | **ported**: `MPTCommon.lean`. `pt_alloc_pde` refines `ptAllocPDE_spec` (through the specs of `container_alloc`, `pt_insert_pde`, and 1024 calls of `rmv_PTE`); `pt_free_pde` refines `ptFreePDE_spec` (through `pt_read_pde`, `pt_rmv_pde`, `pfree`). Missing: `pt_init_comm` (boot) |
 | `MPTCommon` | `pt_insert`, `pt_rmv` with reference counts, `pt_init_kern` | **ported**: `MPTKern.lean`. `pt_insert` refines `ptInsert_spec` (`ptInsert_triple`) and `pt_rmv` refines `ptRmv_spec` (`ptRmv_triple`), both keeping the page's count in the allocation table. Missing: `pt_init_kern` (boot) |
 | `MPTKern`, `MPTInit` | kernel page table, `pt_init`, paging on (`set_pg`, `set_cr3`) | missing: these are boot, and loading `CR3` needs the machine model |
-| `MPTNew` | `pt_new`, `pt_resv`, `pmap_init` | missing |
+| `MPTNew` | `pt_new`, `pt_resv`, `pt_resv2`, `pmap_init` | **ported**: `MPTNew.lean`. `pt_new` refines `pt_new_spec`; `pt_resv` refines `ptResv_spec` (stated over `container_alloc_spec` and `ptInsert_spec`); `ptResv_locked` is `pt_resv` under the lock. Missing: `pt_resv2` (stage 3), `pmap_init` (boot), and the owner-list versions `ptInsert0_spec`, `ptRmv0_spec` |
 | `MShareIntro`, `MShareOp`, `MShare` | shared memory | missing |
-| abstract ownership | `pperm`, the logical table `LAT` with its owner lists, `consistent_ppage` | `pperm` and `consistent_ppage` are in `MALOp.lean` and proved preserved. `LAT` missing. `KernOwner.lean` is a prototype with a different design |
+| abstract ownership | `pperm`, the logical table `LAT` with its owner lists, `consistent_ppage`, `consistent_pmap` | `pperm` and `consistent_ppage` are in `MALOp.lean` and proved preserved. `LAT` and `consistent_pmap` missing |
 | **Process management** (`proc`) | | |
 | `PKContext`, `PKContextNew` | kernel contexts, `kctxt_switch`, `kctxt_new` | missing (needs assembly and a machine model) |
 | `PThreadIntro`, `PThreadInit` | thread control blocks | missing |
@@ -104,7 +104,7 @@ Even for the ported layers:
 - **Agreed order** (2026-11-19): 0 calling convention for layers, 1 page
   tables, 2 boot and init, 3 shared memory, 4 invariants along the shared
   log, 5 thread data, 6 machine model and scheduler, 7 IPC, 8 processes and
-  traps, 9 security and virtualization. Stage 0 is done. Stage 1 has started.
+  traps, 9 security and virtualization. Stage 0 is done. Stage 1: all C code outside boot is ported; the owner-list abstraction (`LAT`) remains.
 - **`Layer.lean`: a primitive's interface is a triple.**
   `Triple εR c i M F P s Q` says: in a critical section, on a region matching
   abstract data `d` with precondition `P`, the code `s` runs to completion,
@@ -244,153 +244,43 @@ Not done in the ports:
   no invariant lemmas. The setters do not preserve the invariant one at a
   time.
 
-# Prototype files
+# Retired prototypes
 
-The sections below describe the files written before the sources were
-checked. They are verified, but they are not mCertiKOS's specifications.
+Before the mCertiKOS sources were checked, this project had its own
+simplified allocator, page tables, containers and page ownership
+(`KernPT.lean`, `KernContainer.lean`, `KernOwner.lean`, and the allocator in
+`KernPAlloc.lean`). They were verified, but their state and specifications
+were not mCertiKOS's. The ports above replace them, and the three files were
+removed on 2026-11-19. They remain in the git history, up to the commit
+before "Retire the memory-management prototypes".
 
-## What `KernPAlloc.lean` proves
-
-- `pallocSpec np b`: the abstract allocator on a table of `np` pages. It marks
-  the first free page and returns it, or returns `np` when none is free.
-- `palloc_fresh`: the returned page was free, is now allocated, and no other
-  entry changed.
-- `scan_run`: the C scan loop
-  `while (i != np) { x = AT[i]; if (x == 0) { AT[i] = 1; r = i; i = np; } else i++; }`
-  computes `pallocSpec`.
-- `palloc_guarantee`: `palloc()` (acquire, scan, release) refines
-  `pallocSpec`: the page it returns and the table it releases are
-  `pallocSpec` of the table the previous holder released.
-- `pfree_guarantee`: `pfree(j)` clears entry `j` and nothing else.
-
-## What `KernPT.lean` proves
-
-The page table of one address space is a region. Its first `nd` cells are the
-page directory. Entry `d` is 0 when no second-level table is present, and
-otherwise the address of the table's page. Page `p` has address
-`nd + p * ne`, and entry `e` of the table at address `x` is cell `x + e`.
-
-- `ptInsertSpec`: the abstract `pt_insert(d, e, w)`. If the table for `d` is
-  present, write the entry. Otherwise take a page from the allocator, zero
-  it, install it in the directory, and write the entry. If no page is free,
-  change nothing.
-- `ptInsertCS`: the C code.
-  `pd = PT[d]; if (pd == 0) { r = palloc(); if (r != np) { pd = nd + r * ne; for k < ne: PT[pd + k] = 0; PT[d] = pd; } } if (pd != 0) PT[pd + e] = w;`
-- `palloc_nested`: `palloc` called while holding the page table's lock. It
-  takes and releases the allocation table's lock. Afterwards we still hold
-  the page table's lock and its region is unchanged.
-- `ptInsert_guarantee`: `pt_insert` refines `ptInsertSpec`. It finishes idle
-  on both locks. The page table it releases is `ptInsertSpec` of the one the
-  previous holder released, with the page that `palloc` returned.
-- `ptRmv_guarantee`, `ptRead_guarantee`: unmapping clears the entry, and
-  lookup returns it and releases the table unchanged.
-- `PTInv`: the invariant between a page table and the allocation table. Each
-  present directory entry is the address of an allocated page, and no two
-  entries share a page.
-- `insert_lookup_same`, `insert_lookup_other`, `insert_inv`, `rmv_lookup`:
-  under `PTInv` the region behaves as a map. An inserted entry reads back,
-  every other entry reads as before, and the invariant holds again with the
-  allocation table that `palloc` left.
-
-Not covered: permission bits in entries, freeing a second-level table, and
-the kernel's own page table (`MPTKern`). `ptInsert_guarantee` does not say
-where in the final log the nested `palloc` happened, only that the page is
-`pallocSpec` of some allocation table it found.
-
-## What `KernContainer.lean` proves
-
-The container table is a region. Container `id` is five cells from `id * 5`:
-quota, usage, parent, number of children, in use.
-
-- `ctAlloc_guarantee`: `container_alloc(id)` refines `ctAllocSpec`. If the
-  container is under quota it calls `palloc` on the allocation table's lock,
-  and charges one page if a page came back.
-- `ctFree_guarantee`: `container_free(id, j)` refines `ctFreeSpec`. It gives
-  one page back and calls `pfree(j)`.
-- `ctSplit_guarantee`: `container_split(id, amt)` refines `ctSplitSpec`. If
-  the parent has `amt` pages left it sets up the child slot
-  `id * mc + 1 + nchildren` with quota `amt` and charges the parent.
-- `alloc_inv`, `free_inv`, `split_inv`: `usage ≤ quota` is kept. After a
-  split the child has quota `amt`, usage 0, the right parent, and is marked
-  in use; the parent's quota is unchanged and its usage grew by `amt`.
-- `nest_run`: the general form of the nested call. Any code that works only
-  on the lock in `lk`, run on another lock inside a critical section, leaves
-  our lock held and our region unchanged.
-
-Not covered: the getters. Page ownership is in `KernOwner.lean`, below.
-
-## What `KernOwner.lean` proves
-
-**This file is not a port of an mCertiKOS layer.** It is this prototype's own
-design. Checked against the public sources (`npe9/certikos`:
-`objects/ObjPMM.v`, `objects/ObjContainer.v`, `layerlib/AuxStateDataType.v`,
-`mm/MALOpCSource.v`):
-
-| | mCertiKOS | here |
-|---|---|---|
-| allocation-table entry | `ATValid allocated type refcount`, no owner | an owner tag |
-| `pfree(i)` | `at_set(i, 0)`, no check; the spec has a precondition (allocated, `PGAlloc`) | checks the tag at run time |
-| who uses a page | abstract state only: `pperm` (`PGUndef`, `PGAlloc`, `PGHide owner`) and the logical table's list of page-table entries mapping it (`LATOwner`) | the tag, in the table itself |
-| `container_free` | none (its spec is commented out, and only lowered the usage) | frees and lowers usage if the tag matches |
-| `palloc` failure | returns 0; pages scanned from 1, only `ATNorm` ones | returns `np`; scans from 0, no page types |
-| `container_alloc` with no free page | undefined (`None`): the quota invariant rules it out | returns `np`, usage unchanged |
-| `container_split` | conditions are preconditions of the spec | quota checked at run time |
-
-The allocation table now says who owns each page. A cell is a tag: 0 for a
-free page, 1 for a kernel page (the pages of page tables), `id + 2` for a
-page of container `id`.
-
-- `pallocO_guarantee`: `palloc(o)` refines `pallocOSpec`. It tags the first
-  free page with `o`. `KernPAlloc`'s `palloc` is the case `o = 1`
-  (`pallocO_one`).
-- `pfreeO_guarantee`: `pfree(o, j)` refines `pfreeOSpec`. It frees page `j`
-  only if its tag is `o`, and returns whether it did (`pfreeO_ok`).
-- `ctAllocO_guarantee`: `container_alloc(id)` as before, with the page tagged
-  `id + 2`.
-- `ctFreeO_guarantee`: `container_free(id, j)` calls `pfree(id + 2, j)` and
-  lowers the usage only if the page was freed. A container cannot free a
-  page it does not own, and its usage does not move if it tries.
-- `ostep_other`: a `palloc` or `pfree` by the owner tagged `o'` leaves the set
-  of pages tagged `o` exactly as it was, for every other nonzero `o`.
-- `PTOwn`, `pt_ostep`, `pt_osteps`: if every page of a page table is tagged 1,
-  then `PTInv` and `PTOwn` hold again after any sequence of allocations and
-  frees by owners other than the kernel. This is the rely that `PTInv`
-  needed.
-- `insert_own`: `pt_insert` keeps `PTOwn`.
-
-Not covered: `ostep_other` and `pt_osteps` are about the abstract steps. They
-are not yet joined to the shared log, where one would show that every event
-on the allocation table's lock is such a step. Usage is not shown equal to
-the number of pages a container owns. `pt_insert` still allocates with the
-kernel's tag, not the tag of the process whose address space it is.
+`KernPAlloc.lean` and `KernFrame.lean` stay. They hold the lock rules
+(`cs_guarantee`, `cs_guarantee1`, `cs_guarantee2`), `Runs` and the frame
+lemmas that the ports use. The simplified `palloc` in `KernPAlloc.lean` is
+unused by the ports.
 
 ## What stands in the way of the rest
 
 - **No pointers or structs in ClightL.** Kernel objects are regions of
   32-bit cells indexed by number. That fits tables (allocation table,
-  page-table entries, thread control blocks as fixed-size records) but not
-  linked structures as CertiKOS writes them.
-- **`PTInv` across CPUs.** `KernOwner.pt_osteps` shows the invariant survives
-  any allocations and frees by containers, on the abstract allocation table.
-  What is left is to show that the events other CPUs put on the allocation
-  table's lock are exactly such steps: a kernel-wide invariant on the log.
-- **No machine model.** Context switch, traps and virtualization are about
-  registers, privilege levels and assembly. None of that exists here, so those
-  modules need a machine model first.
-- **Per-CPU only.** `cs_guarantee` and `cs_guarantee2` are per-CPU
-  guarantees. The multicore results for regions (`RegionLive.lean`,
-  `RegionNoLost.lean`) are for one client shape, not for arbitrary kernel
-  operations.
+  page-table entries, thread control blocks as fixed-size records). Where
+  mCertiKOS stores a pointer, the port stores a number (see `MPTIntro.lean`).
+- **No function calls in ClightL.** A call is the callee's statement, inlined.
+  Arguments are passed in agreed local variables. Triples make this sound to
+  reason about, but the code is not literally the C functions.
+- **The owner lists (`LAT`).** mCertiKOS abstracts the reference counts into
+  lists of the page-table entries that map each page, and proves
+  `consistent_pmap`. That is a refinement between abstract states with no C
+  code. It is the last part of stage 1 and is not done.
+- **Invariants along the shared log** (stage 4). The invariants are proved
+  preserved by the specifications. `Triple.locked` assumes them when the lock
+  is taken. Nothing yet shows that every release re-establishes them.
+- **No machine model.** `set_pt`, `set_pg`, context switch, traps and
+  virtualization are about `CR3`, registers, privilege levels and assembly.
+- **Boot** (stage 2) is not ported, so nothing establishes the invariants
+  initially.
 
-## Suggested order
+## Order
 
-1. Tie ownership to the log: every release of the allocation table's lock
-   is an `OStep` of the releasing CPU's current owner, and usage equals the
-   number of pages owned.
-2. Address spaces (`MPTKern`, `MPTInit`, `MPTNew`) and shared memory
-   (`MShare*`): built from `pt_insert` and `pt_rmv`.
-3. Thread control blocks and queues (`PThreadIntro` to `PAbQueue`): tables
-   again, with queues as index-linked lists inside a region.
-4. Scheduler and IPC: these need the thread layer extended with queues and
-   liveness.
-5. Traps, context switch, virtualization: need a machine model.
+See "How the ports are organised" above. Next: the owner lists (`LAT`), then
+stage 2 (boot and init).

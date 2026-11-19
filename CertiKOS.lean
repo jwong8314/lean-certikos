@@ -49,9 +49,6 @@ import CertiKOS.RegionLive
 import CertiKOS.RegionNoLost
 import CertiKOS.KernPAlloc
 import CertiKOS.KernFrame
-import CertiKOS.KernPT
-import CertiKOS.KernContainer
-import CertiKOS.KernOwner
 import CertiKOS.Layer
 import CertiKOS.MALOp
 import CertiKOS.MContainer
