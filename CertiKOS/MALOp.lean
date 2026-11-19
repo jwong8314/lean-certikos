@@ -491,4 +491,357 @@ theorem pfree_ref {d d' : PData} {b : Region} {i : Nat} (hM : MatchD maxpage d b
 
 end Refine
 
+/-! ## The C code (`MBootCSource.v`, `MALOpCSource.v`) -/
+
+/-- The index of `AT[i].field`. -/
+def ixE (ie : Expr) (k : Val) : Expr := .bin .add (.bin .mul ie (.const 3)) (.const k)
+
+/-- `x = is_norm(i)`: `x = AT[i].isnorm; if (x != 0) { if (x == 1) x = 0; else x = 1; }` -/
+def isNormS (x : Ident) (ie : Expr) : Stmt APrim :=
+  .seq (.call x .pull [lkE, ixE ie 0])
+    (.ite (.bin .ne (.var x) (.const 0))
+      (.ite (.bin .eq (.var x) (.const 1)) (.assign x (.const 0)) (.assign x (.const 1))) .skip)
+
+/-- `x = at_get(i)`: `x = AT[i].allocated; if (x != 0) x = 1;` -/
+def atGetS (x : Ident) (ie : Expr) : Stmt APrim :=
+  .seq (.call x .pull [lkE, ixE ie 1]) (.ite (.bin .ne (.var x) (.const 0)) (.assign x (.const 1)) .skip)
+
+/-- `at_set(i, v)`: `AT[i].allocated = v;` -/
+def atSetS (ie ve : Expr) : Stmt APrim := .call "_" .push [lkE, ixE ie 1, ve]
+
+/-- `at_set_c(i, v)`: `AT[i].c = v;` -/
+def atSetCS (ie ve : Expr) : Stmt APrim := .call "_" .push [lkE, ixE ie 2, ve]
+
+/-- `x = get_nps()` -/
+def getNpsS (maxpage : Nat) (x : Ident) : Stmt APrim :=
+  .call x .pull [lkE, .const (BitVec.ofNat 32 (3 * maxpage))]
+
+/-- `palloc_index < tnps && palloc_free_index == tnps` -/
+def guardE : Expr := .bin .mul (.bin .ltu (.var "pi") (.var "tnps")) (.bin .eq (.var "fi") (.var "tnps"))
+
+/-- The loop body of `palloc`:
+`isn = is_norm(pi); if (isn == 1) { cur = at_get(pi); if (cur == 0) fi = pi; } pi++;` -/
+def loopBody : Stmt APrim :=
+  .seq (isNormS "isn" (.var "pi"))
+    (.seq (.ite (.bin .eq (.var "isn") (.const 1))
+        (.seq (atGetS "cur" (.var "pi")) (.ite (.bin .eq (.var "cur") (.const 0)) (.assign "fi" (.var "pi")) .skip))
+        .skip)
+      (.assign "pi" (.bin .add (.var "pi") (.const 1))))
+
+def pallocLoop : Stmt APrim := .while guardE loopBody
+
+/-- The body of `palloc` (`pi` is `palloc_index`, `fi` is `palloc_free_index`):
+`tnps = get_nps(); pi = 1; fi = tnps; while (pi < tnps && fi == tnps) { ... }
+if (fi == tnps) fi = 0; else { at_set(fi, 1); at_set_c(fi, 0); } return fi;` -/
+def pallocCS (maxpage : Nat) : Stmt APrim :=
+  .seq (getNpsS maxpage "tnps") (.seq (.assign "pi" (.const 1)) (.seq (.assign "fi" (.var "tnps"))
+    (.seq pallocLoop
+      (.seq (.ite (.bin .eq (.var "fi") (.var "tnps")) (.assign "fi" (.const 0))
+          (.seq (atSetS (.var "fi") (.const 1)) (atSetCS (.var "fi") (.const 0))))
+        (.assign "r" (.var "fi"))))))
+
+/-- `palloc()` under the allocation table's lock. The result is in `r`. -/
+def palloc (maxpage : Nat) : Stmt APrim := .seq acquireA (.seq (pallocCS maxpage) relA)
+
+/-- `pfree(j)`: `at_set(j, 0);` -/
+def pfreeCS : Stmt APrim := atSetS (.var "j") (.const 0)
+
+def pfree : Stmt APrim := .seq acquireA (.seq pfreeCS relA)
+
+/-! ## The C code computes the region functions -/
+
+theorem set_set (σ : Locals) (x : Ident) (a v : Val) : (σ.set x a).set x v = σ.set x v := by
+  funext y; by_cases h : y = x <;> simp [Locals.set, h]
+
+theorem set_eq {σ : Locals} {x : Ident} {v w : Val} (h : v = w) : (σ.set x v) x = w :=
+  (Locals.set_same _ _ _).trans h
+
+theorem set_neq {σ : Locals} {x : Ident} {v w : Val} (h : ¬ v = w) : (σ.set x v) x ≠ w :=
+  fun e => h ((Locals.set_same _ _ _).symm.trans e)
+
+theorem ult_ofNat {m n : Nat} (hm : m < 2 ^ 32) (hn : n < 2 ^ 32) :
+    (BitVec.ofNat 32 m).ult (BitVec.ofNat 32 n) = decide (m < n) := by
+  simp [BitVec.ult, Nat.mod_eq_of_lt hm, Nat.mod_eq_of_lt hn]
+
+theorem guard_eval (σ : Locals) : guardE.eval σ =
+    (if (σ "pi").ult (σ "tnps") then 1 else 0) * (if σ "fi" = σ "tnps" then 1 else 0) := rfl
+
+theorem isNorm_run {εR : REnv} {c : CPU} {i : Nat} {l : RLog} {b : Region} (h : CS1 c i l b) {σ : Locals}
+    (hlk : (σ "lk").toNat = i) (x : Ident) (ie : Expr) :
+    Runs (rprimsA εR c) (isNormS x ie) σ l (σ.set x (isNormC b (ie.eval σ))) l := by
+  have hrd := cs1_rd (εR := εR) h hlk x (ixE ie 0)
+  have e : ((ixE ie 0).eval σ).toNat = ix (ie.eval σ) 0 := rfl
+  rw [e] at hrd
+  unfold isNormC
+  by_cases h0 : b (ix (ie.eval σ) 0) = 0
+  · rw [if_pos h0]
+    have hs : σ.set x (0 : Val) = σ.set x (b (ix (ie.eval σ) 0)) := by rw [h0]
+    rw [hs]
+    exact Runs.seq hrd (Runs.ite_false (ne_false (set_eq h0)) Runs.skip)
+  · rw [if_neg h0]
+    by_cases h1 : b (ix (ie.eval σ) 0) = 1
+    · rw [if_pos h1]
+      have ha := Runs.assign (P := rprimsA εR c) (σ := σ.set x (b (ix (ie.eval σ) 0))) (l := l) x (.const 0)
+      rw [set_set] at ha
+      exact Runs.seq hrd (Runs.ite_true (ne_true (set_neq h0)) (Runs.ite_true (eq_true (set_eq h1)) ha))
+    · rw [if_neg h1]
+      have ha := Runs.assign (P := rprimsA εR c) (σ := σ.set x (b (ix (ie.eval σ) 0))) (l := l) x (.const 1)
+      rw [set_set] at ha
+      exact Runs.seq hrd (Runs.ite_true (ne_true (set_neq h0)) (Runs.ite_false (eq_false (set_neq h1)) ha))
+
+theorem atGet_run {εR : REnv} {c : CPU} {i : Nat} {l : RLog} {b : Region} (h : CS1 c i l b) {σ : Locals}
+    (hlk : (σ "lk").toNat = i) (x : Ident) (ie : Expr) :
+    Runs (rprimsA εR c) (atGetS x ie) σ l (σ.set x (atGetC b (ie.eval σ))) l := by
+  have hrd := cs1_rd (εR := εR) h hlk x (ixE ie 1)
+  have e : ((ixE ie 1).eval σ).toNat = ix (ie.eval σ) 1 := rfl
+  rw [e] at hrd
+  unfold atGetC
+  by_cases h0 : b (ix (ie.eval σ) 1) = 0
+  · rw [if_pos h0]
+    have hs : σ.set x (0 : Val) = σ.set x (b (ix (ie.eval σ) 1)) := by rw [h0]
+    rw [hs]
+    exact Runs.seq hrd (Runs.ite_false (ne_false (set_eq h0)) Runs.skip)
+  · rw [if_neg h0]
+    have ha := Runs.assign (P := rprimsA εR c) (σ := σ.set x (b (ix (ie.eval σ) 1))) (l := l) x (.const 1)
+    rw [set_set] at ha
+    exact Runs.seq hrd (Runs.ite_true (ne_true (set_neq h0)) ha)
+
+/-- One iteration of `palloc`'s loop. -/
+theorem body_run (εR : REnv) {c : CPU} {i : Nat} {l : RLog} {b : Region} (hcs : CS1 c i l b) {σ : Locals}
+    (hlk : (σ "lk").toNat = i) {m nps : Nat} (hpi : σ "pi" = BitVec.ofNat 32 m)
+    (hfi : σ "fi" = BitVec.ofNat 32 nps) (htn : σ "tnps" = BitVec.ofNat 32 nps) :
+    ∃ σ', Runs (rprimsA εR c) loopBody σ l σ' l ∧ σ' "pi" = BitVec.ofNat 32 (m + 1) ∧
+      σ' "fi" = (if freeC b m = true then BitVec.ofNat 32 m else BitVec.ofNat 32 nps) ∧
+      σ' "tnps" = BitVec.ofNat 32 nps ∧ σ' "lk" = σ "lk" := by
+  let σ1 := σ.set "isn" (isNormC b (BitVec.ofNat 32 m))
+  have h1 : Runs (rprimsA εR c) (isNormS "isn" (.var "pi")) σ l σ1 l := by
+    have h := isNorm_run (εR := εR) hcs hlk "isn" (.var "pi")
+    have e : (Expr.var "pi").eval σ = BitVec.ofNat 32 m := hpi
+    rw [e] at h; exact h
+  have hinc : ∀ (τ : Locals), τ "pi" = BitVec.ofNat 32 m →
+      Runs (rprimsA εR c) (.assign "pi" (.bin .add (.var "pi") (.const 1))) τ l
+        (τ.set "pi" (BitVec.ofNat 32 (m + 1))) l := by
+    intro τ hτ
+    have h := Runs.assign (P := rprimsA εR c) (σ := τ) (l := l) "pi" (.bin .add (.var "pi") (.const 1))
+    have e : (Expr.bin .add (.var "pi") (.const 1)).eval τ = BitVec.ofNat 32 (m + 1) := by
+      simp [Expr.eval, BinOp.eval, hτ, BitVec.ofNat_add]
+    rw [e] at h; exact h
+  by_cases hn : isNormC b (BitVec.ofNat 32 m) = 1
+  · let σ2 := σ1.set "cur" (atGetC b (BitVec.ofNat 32 m))
+    have h2 : Runs (rprimsA εR c) (atGetS "cur" (.var "pi")) σ1 l σ2 l := by
+      have h := atGet_run (εR := εR) hcs (σ := σ1) (by simpa [σ1, Locals.set] using hlk) "cur" (.var "pi")
+      have e : (Expr.var "pi").eval σ1 = BitVec.ofNat 32 m := by
+        show σ1 "pi" = _; simp [σ1, Locals.set, hpi]
+      rw [e] at h; exact h
+    have hg1 : ¬ (Expr.bin .eq (.var "isn") (.const 1)).eval σ1 = 0 := eq_true (by simp [σ1, hn])
+    by_cases hc0 : atGetC b (BitVec.ofNat 32 m) = 0
+    · let σ3 := σ2.set "fi" (BitVec.ofNat 32 m)
+      have h3 : Runs (rprimsA εR c) (.assign "fi" (.var "pi")) σ2 l σ3 l := by
+        have h := Runs.assign (P := rprimsA εR c) (σ := σ2) (l := l) "fi" (.var "pi")
+        have e : (Expr.var "pi").eval σ2 = BitVec.ofNat 32 m := by
+          show σ2 "pi" = _; simp [σ2, σ1, Locals.set, hpi]
+        rw [e] at h; exact h
+      have hf : freeC b m = true := by simp [freeC, hn, hc0]
+      refine ⟨σ3.set "pi" (BitVec.ofNat 32 (m + 1)), Runs.seq h1 (Runs.seq (Runs.ite_true hg1 (Runs.seq h2
+        (Runs.ite_true (eq_true (by simp [σ2, hc0])) h3))) (hinc σ3 (by simp [σ3, σ2, σ1, Locals.set, hpi]))),
+        by simp, ?_, ?_, ?_⟩
+      · simp [hf, σ3, Locals.set]
+      · simp [σ3, σ2, σ1, Locals.set, htn]
+      · simp [σ3, σ2, σ1, Locals.set]
+    · have hf : ¬ freeC b m = true := by
+        intro h; simp only [freeC, Bool.and_eq_true, decide_eq_true_eq] at h; exact hc0 h.2
+      refine ⟨σ2.set "pi" (BitVec.ofNat 32 (m + 1)), Runs.seq h1 (Runs.seq (Runs.ite_true hg1 (Runs.seq h2
+        (Runs.ite_false (eq_false (set_neq hc0)) Runs.skip))) (hinc σ2 (by simp [σ2, σ1, Locals.set, hpi]))),
+        by simp, ?_, ?_, ?_⟩
+      · simp [hf, σ2, σ1, Locals.set, hfi]
+      · simp [σ2, σ1, Locals.set, htn]
+      · simp [σ2, σ1, Locals.set]
+  · have hf : ¬ freeC b m = true := by
+      intro h; simp only [freeC, Bool.and_eq_true, decide_eq_true_eq] at h; exact hn h.1
+    refine ⟨σ1.set "pi" (BitVec.ofNat 32 (m + 1)), Runs.seq h1 (Runs.seq (Runs.ite_false
+      (eq_false (set_neq hn)) Runs.skip) (hinc σ1 (by simp [σ1, Locals.set, hpi]))), by simp, ?_, ?_, ?_⟩
+    · simp [hf, σ1, Locals.set, hfi]
+    · simp [σ1, Locals.set, htn]
+    · simp [σ1, Locals.set]
+
+/-- **`palloc`'s loop computes `scanC`.** It only reads. -/
+theorem loop_run (εR : REnv) {c : CPU} {i : Nat} {l : RLog} {b : Region} (hcs : CS1 c i l b) (nps : Nat)
+    (hnps : nps < 2 ^ 32) :
+    ∀ (k m : Nat), nps - m = k → (m ≤ nps ∨ m = 1) → ∀ σ : Locals, (σ "lk").toNat = i →
+      σ "pi" = BitVec.ofNat 32 m → σ "fi" = BitVec.ofNat 32 nps → σ "tnps" = BitVec.ofNat 32 nps →
+      ∃ σ', Runs (rprimsA εR c) pallocLoop σ l σ' l ∧ σ' "fi" = BitVec.ofNat 32 (scanC b nps m k) ∧
+        σ' "tnps" = BitVec.ofNat 32 nps ∧ σ' "lk" = σ "lk"
+  | 0, m, hk, hm, σ, _, hpi, hfi, htn => by
+    refine ⟨σ, Runs.while_false ?_, by simp [scanC, hfi], htn, rfl⟩
+    rw [guard_eval, hpi, htn, ult_ofNat (by omega) hnps]
+    simp [show ¬ m < nps by omega]
+  | k + 1, m, hk, hm, σ, hlk, hpi, hfi, htn => by
+    have hmlt : m < nps := by omega
+    obtain ⟨σ1, hb, hpi1, hfi1, htn1, hlk1⟩ := body_run εR hcs hlk hpi hfi htn
+    have hg : ¬ guardE.eval σ = 0 := by
+      rw [guard_eval, hpi, htn, hfi, ult_ofNat (by omega) hnps]; simp [hmlt]
+    by_cases hf : freeC b m = true
+    · rw [if_pos hf] at hfi1
+      refine ⟨σ1, Runs.while_true hg hb (Runs.while_false ?_), by simp [scanC, hf, hfi1], htn1, hlk1⟩
+      rw [guard_eval, hfi1, htn1]
+      have hne : (BitVec.ofNat 32 m : Val) ≠ BitVec.ofNat 32 nps := ofNat_ne (by omega) hnps (by omega)
+      simp [hne]
+    · rw [if_neg hf] at hfi1
+      obtain ⟨σ2, hr, hfi2, htn2, hlk2⟩ := loop_run εR hcs nps hnps k (m + 1) (by omega) (Or.inl (by omega))
+        σ1 (by rw [hlk1]; exact hlk) hpi1 hfi1 htn1
+      exact ⟨σ2, Runs.while_true hg hb hr, by simp [scanC, hf, hfi2], htn2, hlk2.trans hlk1⟩
+
+theorem scanC_bound (b : Region) (nps : Nat) : ∀ (k m : Nat),
+    scanC b nps m k = nps ∨ (m ≤ scanC b nps m k ∧ scanC b nps m k < m + k)
+  | 0, _ => Or.inl rfl
+  | k + 1, m => by
+    simp only [scanC]
+    split
+    · exact Or.inr ⟨Nat.le_refl _, by omega⟩
+    · rcases scanC_bound b nps k (m + 1) with h | ⟨h1, h2⟩
+      · exact Or.inl h
+      · exact Or.inr ⟨by omega, by omega⟩
+
+/-- **The body of `palloc` computes `pallocC`**, on any region. -/
+theorem pallocCS_run (εR : REnv) {c : CPU} {i : Nat} {maxpage : Nat} (hmax : 3 * maxpage < 2 ^ 32)
+    (σ : Locals) (l : RLog) (b : Region) (hlk : (σ "lk").toNat = i) (hcs : CS1 c i l b) :
+    ∃ σ' l', Runs (rprimsA εR c) (pallocCS maxpage) σ l σ' l' ∧
+      CS1 c i l' (pallocC maxpage b).1 ∧ σ' "r" = (pallocC maxpage b).2 := by
+  let N := (b (3 * maxpage)).toNat
+  have hN : N < 2 ^ 32 := (b (3 * maxpage)).isLt
+  have hbN : b (3 * maxpage) = BitVec.ofNat 32 N := val_of_toNat rfl hN
+  let σ1 := σ.set "tnps" (BitVec.ofNat 32 N)
+  have h1 : Runs (rprimsA εR c) (getNpsS maxpage "tnps") σ l σ1 l := by
+    have h := cs1_rd (εR := εR) hcs hlk "tnps" (.const (BitVec.ofNat 32 (3 * maxpage)))
+    have e : ((Expr.const (BitVec.ofNat 32 (3 * maxpage))).eval σ).toNat = 3 * maxpage := by
+      show (BitVec.ofNat 32 (3 * maxpage)).toNat = _
+      simp only [BitVec.toNat_ofNat]; exact Nat.mod_eq_of_lt hmax
+    rw [e, hbN] at h; exact h
+  let σ2 := σ1.set "pi" 1
+  let σ3 := σ2.set "fi" (BitVec.ofNat 32 N)
+  have h2 : Runs (rprimsA εR c) (.assign "pi" (.const 1)) σ1 l σ2 l := Runs.assign _ _
+  have h3 : Runs (rprimsA εR c) (.assign "fi" (.var "tnps")) σ2 l σ3 l := by
+    have h := Runs.assign (P := rprimsA εR c) (σ := σ2) (l := l) "fi" (.var "tnps")
+    have e : (Expr.var "tnps").eval σ2 = BitVec.ofNat 32 N := by show σ2 "tnps" = _; simp [σ2, σ1, Locals.set]
+    rw [e] at h; exact h
+  obtain ⟨σ4, h4, hfi4, htn4, hlk4⟩ := loop_run εR hcs N hN (N - 1) 1 rfl (Or.inr rfl) σ3
+    (by simpa [σ3, σ2, σ1, Locals.set] using hlk) (by simp [σ3, σ2, Locals.set]) (by simp [σ3])
+    (by simp [σ3, σ2, σ1, Locals.set])
+  have hlk4' : (σ4 "lk").toNat = i := by rw [hlk4]; simpa [σ3, σ2, σ1, Locals.set] using hlk
+  have hfb : scanC b N 1 (N - 1) ≤ N := by
+    rcases scanC_bound b N (N - 1) 1 with h | ⟨h1, h2⟩ <;> omega
+  have hpc : pallocC maxpage b = (if scanC b N 1 (N - 1) = N then (b, 0) else
+      (setCell (setCell b (ix (BitVec.ofNat 32 (scanC b N 1 (N - 1))) 1) 1)
+        (ix (BitVec.ofNat 32 (scanC b N 1 (N - 1))) 2) 0, BitVec.ofNat 32 (scanC b N 1 (N - 1)))) := rfl
+  by_cases hf : scanC b N 1 (N - 1) = N
+  · rw [hpc, if_pos hf]
+    have hg : ¬ (Expr.bin .eq (.var "fi") (.var "tnps")).eval σ4 = 0 := by
+      simp [Expr.eval, BinOp.eval, hfi4, htn4, hf]
+    let σ5 := σ4.set "fi" 0
+    have h5 : Runs (rprimsA εR c) (.assign "fi" (.const 0)) σ4 l σ5 l := Runs.assign _ _
+    have h6 : Runs (rprimsA εR c) (.assign "r" (.var "fi")) σ5 l (σ5.set "r" 0) l := by
+      have h := Runs.assign (P := rprimsA εR c) (σ := σ5) (l := l) "r" (.var "fi")
+      have e : (Expr.var "fi").eval σ5 = 0 := by show σ5 "fi" = _; simp [σ5]
+      rw [e] at h; exact h
+    exact ⟨σ5.set "r" 0, l, Runs.seq h1 (Runs.seq h2 (Runs.seq h3 (Runs.seq h4
+      (Runs.seq (Runs.ite_true hg h5) h6)))), hcs, by simp⟩
+  · rw [hpc, if_neg hf]
+    have hne : (BitVec.ofNat 32 (scanC b N 1 (N - 1)) : Val) ≠ BitVec.ofNat 32 N :=
+      ofNat_ne (by omega) hN hf
+    have hg : (Expr.bin .eq (.var "fi") (.var "tnps")).eval σ4 = 0 := by
+      simp [Expr.eval, BinOp.eval, hfi4, htn4, hne]
+    obtain ⟨l5, h5, hc5⟩ := cs1_wr (εR := εR) hcs hlk4' (ixE (.var "fi") 1) (.const 1)
+    have e5 : ((ixE (.var "fi") 1).eval σ4).toNat = ix (BitVec.ofNat 32 (scanC b N 1 (N - 1))) 1 := by
+      show ix (σ4 "fi") 1 = _; rw [hfi4]
+    have e5' : (Expr.const 1).eval σ4 = 1 := rfl
+    rw [e5, e5'] at hc5
+    let σ5 := σ4.set "_" 0
+    obtain ⟨l6, h6, hc6⟩ := cs1_wr (εR := εR) hc5 (σ := σ5) (by simpa [σ5, Locals.set] using hlk4')
+      (ixE (.var "fi") 2) (.const 0)
+    have e6 : ((ixE (.var "fi") 2).eval σ5).toNat = ix (BitVec.ofNat 32 (scanC b N 1 (N - 1))) 2 := by
+      show ix (σ5 "fi") 2 = _; simp [σ5, Locals.set, hfi4]
+    have e6' : (Expr.const 0).eval σ5 = 0 := rfl
+    rw [e6, e6'] at hc6
+    let σ6 := σ5.set "_" 0
+    have h7 : Runs (rprimsA εR c) (.assign "r" (.var "fi")) σ6 l6
+        (σ6.set "r" (BitVec.ofNat 32 (scanC b N 1 (N - 1)))) l6 := by
+      have h := Runs.assign (P := rprimsA εR c) (σ := σ6) (l := l6) "r" (.var "fi")
+      have e : (Expr.var "fi").eval σ6 = BitVec.ofNat 32 (scanC b N 1 (N - 1)) := by
+        show σ6 "fi" = _; simp [σ6, σ5, Locals.set, hfi4]
+      rw [e] at h; exact h
+    exact ⟨_, l6, Runs.seq h1 (Runs.seq h2 (Runs.seq h3 (Runs.seq h4
+      (Runs.seq (Runs.ite_false hg (Runs.seq h5 h6)) h7)))), hc6, by simp⟩
+
+theorem pallocCS_fr (maxpage : Nat) : frS "lk" (pallocCS maxpage) = true := by
+  simp [frS, pallocCS, getNpsS, pallocLoop, loopBody, isNormS, atGetS, atSetS, atSetCS]
+
+/-! ## `palloc` and `pfree` under the lock -/
+
+/-- **`palloc()` computes `pallocC`** of the table the previous holder released. -/
+theorem palloc_guarantee {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε) (hRR : RelyR εR c)
+    (hc : c < NCPU) (hRA : LockArray.RelyA ε c) {l : RLog} {S : RState} {H : HLogR}
+    (hl : rreplay l = some (S, H)) {iv : Val} (hidle : (S.lk iv.toNat).phase c = .idle)
+    (bound : ALog → Nat) (K : Nat) (hK : ∀ l, bound l ≤ K)
+    (hF : LockArray.FairA ε c iv.toNat (ticket (LockArray.projL iv.toNat (apull ε c (erase l)))) bound)
+    (σ : Locals) (hσ : σ "lk" = iv) {maxpage : Nat} (hmax : 3 * maxpage < 2 ^ 32) :
+    ∃ (σ' : Locals) (rb : RLog) (S3 : RState) (H1 H3 : HLogR),
+      Star (rprimsA εR c) ⟨palloc maxpage, .stop, σ, l⟩ ⟨.skip, .stop, σ', rb⟩ ∧
+      rreplay rb = some (S3, H3) ∧ (S3.lk iv.toNat).phase c = .idle ∧
+      hmemR iv.toNat H3 = (pallocC maxpage (hmemR iv.toNat H1)).1 ∧
+      σ' "r" = (pallocC maxpage (hmemR iv.toNat H1)).2 := by
+  obtain ⟨σ1, σ2, rb, S3, H1, H3, hrun, hl3, hid, -, hR1, hR2⟩ :=
+    cs_guarantee1 hE hRR hc hRA hl hidle bound K hK hF σ hσ (pallocCS maxpage)
+      (fun b _ b' σ' => b' = (pallocC maxpage b).1 ∧ σ' "r" = (pallocC maxpage b).2)
+      (fun σ l b hlk hcs => by
+        obtain ⟨σ', l', hr, hc', hres⟩ := pallocCS_run εR hmax σ l b (by rw [hlk]) hcs
+        exact ⟨σ', l', _, hr, hc', (hr.frame (pallocCS_fr maxpage)).trans hlk, rfl, hres⟩)
+  exact ⟨σ2.set "_" 0, rb, S3, H1, H3, hrun, hl3, hid, hR1, by
+    rw [Locals.set_other _ _ (by decide)]; exact hR2⟩
+
+/-- **`palloc()` refines `palloc'_spec`.** If the table the previous holder
+released matches abstract data `d` that satisfies the invariant, and the
+specification is defined on `d`, then the table `palloc` releases matches the
+specification's result, and `r` is the page it returns. -/
+theorem palloc_refines {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε) (hRR : RelyR εR c)
+    (hc : c < NCPU) (hRA : LockArray.RelyA ε c) {l : RLog} {S : RState} {H : HLogR}
+    (hl : rreplay l = some (S, H)) {iv : Val} (hidle : (S.lk iv.toNat).phase c = .idle)
+    (bound : ALog → Nat) (K : Nat) (hK : ∀ l, bound l ≤ K)
+    (hF : LockArray.FairA ε c iv.toNat (ticket (LockArray.projL iv.toNat (apull ε c (erase l)))) bound)
+    (σ : Locals) (hσ : σ "lk" = iv) {maxpage : Nat} (hmax : 3 * maxpage < 2 ^ 32) :
+    ∃ (σ' : Locals) (rb : RLog) (S3 : RState) (H1 H3 : HLogR),
+      Star (rprimsA εR c) ⟨palloc maxpage, .stop, σ, l⟩ ⟨.skip, .stop, σ', rb⟩ ∧
+      rreplay rb = some (S3, H3) ∧ (S3.lk iv.toNat).phase c = .idle ∧
+      ∀ (kl kh : Nat) (d d' : PData) (r : Nat), MatchD maxpage d (hmemR iv.toNat H1) →
+        ATInv maxpage kl kh d → palloc'_spec d = some (d', r) →
+        MatchD maxpage d' (hmemR iv.toNat H3) ∧ σ' "r" = BitVec.ofNat 32 r := by
+  obtain ⟨σ', rb, S3, H1, H3, hrun, hl3, hid, hm, hr⟩ :=
+    palloc_guarantee hE hRR hc hRA hl hidle bound K hK hF σ hσ hmax
+  refine ⟨σ', rb, S3, H1, H3, hrun, hl3, hid, fun kl kh d d' r hM hI hs => ?_⟩
+  obtain ⟨g1, g2⟩ := palloc_ref hmax hM hI hs
+  exact ⟨by rw [hm]; exact g1, by rw [hr]; exact g2⟩
+
+/-- **`pfree(j)` refines `pfree'_spec`.** -/
+theorem pfree_refines {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε) (hRR : RelyR εR c)
+    (hc : c < NCPU) (hRA : LockArray.RelyA ε c) {l : RLog} {S : RState} {H : HLogR}
+    (hl : rreplay l = some (S, H)) {iv : Val} (hidle : (S.lk iv.toNat).phase c = .idle)
+    (bound : ALog → Nat) (K : Nat) (hK : ∀ l, bound l ≤ K)
+    (hF : LockArray.FairA ε c iv.toNat (ticket (LockArray.projL iv.toNat (apull ε c (erase l)))) bound)
+    (σ : Locals) (hσ : σ "lk" = iv) {maxpage : Nat} (hmax : 3 * maxpage < 2 ^ 32) :
+    ∃ (σ' : Locals) (rb : RLog) (S3 : RState) (H1 H3 : HLogR),
+      Star (rprimsA εR c) ⟨pfree, .stop, σ, l⟩ ⟨.skip, .stop, σ', rb⟩ ∧
+      rreplay rb = some (S3, H3) ∧ (S3.lk iv.toNat).phase c = .idle ∧
+      hmemR iv.toNat H3 = pfreeC (hmemR iv.toNat H1) (σ "j") ∧
+      ∀ (d d' : PData) (i : Nat), σ "j" = BitVec.ofNat 32 i → MatchD maxpage d (hmemR iv.toNat H1) →
+        pfree'_spec maxpage i d = some d' → MatchD maxpage d' (hmemR iv.toNat H3) := by
+  obtain ⟨σ1, σ2, rb, S3, H1, H3, hrun, hl3, hid, hfr, hR⟩ :=
+    cs_guarantee1 hE hRR hc hRA hl hidle bound K hK hF σ hσ pfreeCS
+      (fun b σ b' _ => b' = pfreeC b (σ "j"))
+      (fun σ l b hlk hcs => by
+        obtain ⟨l', hw, hc'⟩ := cs1_wr (εR := εR) hcs (σ := σ) (by rw [hlk]) (ixE (.var "j") 1) (.const 0)
+        exact ⟨σ.set "_" 0, l', _, hw, hc', by rw [Locals.set_other _ _ (by decide)]; exact hlk, rfl⟩)
+  have hj := hfr "j" (by decide) (by decide) (by decide) (by decide)
+  have hm : hmemR iv.toNat H3 = pfreeC (hmemR iv.toNat H1) (σ "j") := by rw [hR, hj]
+  refine ⟨σ2.set "_" 0, rb, S3, H1, H3, hrun, hl3, hid, hm, fun d d' i hi hM hs => ?_⟩
+  rw [hm, hi]; exact pfree_ref hmax hM hs
+
 end MALOp
