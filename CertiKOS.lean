@@ -54,3 +54,4 @@ import CertiKOS.KernContainer
 import CertiKOS.KernOwner
 import CertiKOS.MALOp
 import CertiKOS.MContainer
+import CertiKOS.MContainerInv
