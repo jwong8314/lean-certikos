@@ -347,6 +347,131 @@ theorem ptResv2_lift (εR : REnv) (c : CPU) (i0 : Nat) (hL : SLayout maxpage num
   rw [e 0 (by decide), e 1 (by decide), e 2 (by decide)]
   exact h2 q1 q2 g1 g2
 
+/-- **`shared_mem_to_ready` refines its specification.** -/
+theorem toReady_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : SLayout maxpage num_id cb num_proc pb ib fb sb)
+    (hmax : 3 * maxpage < 2 ^ 32) (hnum : cb + 5 * num_id < 2 ^ 32) (hmp : maxpage ≤ 2 ^ 20)
+    (hnn : num_proc ≤ num_id) {kl kh : Nat} (p1 p2 va : Nat) :
+    Triple εR c i0 (MatchS maxpage num_id cb num_proc pb ib fb ida sb)
+      (fun k => (k < cb + 5 * num_id ∨ pb ≤ k) ∨ (sb ≤ k ∧ k < sb + 3 * (num_proc * num_proc)))
+      (fun σ d => σ "pid1" = BitVec.ofNat 32 p1 ∧ σ "pid2" = BitVec.ofNat 32 p2 ∧
+        σ "sva" = BitVec.ofNat 32 va ∧ ATInv maxpage kl kh d.toPData ∧ UQ d.AC ∧
+        ∃ d1 r, shared_mem_to_ready_spec num_proc maxpage p1 p2 va d = some (d1, r))
+      (toReadyS cb maxpage pb fb sb num_proc)
+      (fun σ d σ' d' => ∃ r, shared_mem_to_ready_spec num_proc maxpage p1 p2 va d = some (d', r) ∧
+        σ' "r" = BitVec.ofNat 32 r ∧ σ' "pid1" = σ "pid1" ∧ σ' "pid2" = σ "pid2" ∧ σ' "sva" = σ "sva") := by
+  intro σ l b d hlk hcs hM ⟨hp1, hp2, hsva, hI, hu, dF, rF, hs⟩
+  have hs0 := hs
+  have hmagic : maxpage + 1 < 2 ^ 32 := by omega
+  unfold shared_mem_to_ready_spec at hs
+  by_cases hc : d.pg = true ∧ d.ipt = true ∧ shared_mem_arg num_proc p1 p2
+  · rw [if_pos hc] at hs
+    obtain ⟨-, -, h1, h2, -⟩ := hc
+    cases he1 : d.smspool p1 p2 with
+    | SHRDUndef => rw [he1] at hs; cases hs
+    | SHRDValid i1 s1 v1 =>
+      rw [he1] at hs; simp only at hs
+      cases he2 : d.smspool p2 p1 with
+      | SHRDUndef => rw [he2] at hs; cases hs
+      | SHRDValid i2 s2 v2 =>
+        rw [he2] at hs; simp only at hs
+        obtain ⟨a0, -, -, hv2⟩ := sm_get hM.sp h2 h1 he2
+        rw [if_pos hv2] at hs
+        cases hR : ptResv2_spec maxpage num_proc p1 va 7 p2 v2 7 d.toPTData with
+        | none => rw [hR] at hs; cases hs
+        | some pr =>
+          obtain ⟨pt', rest⟩ := pr
+          rw [hR] at hs; simp only at hs
+          -- dest_va = get_shared_mem_loc(pid2, pid1)
+          let σ1 := σ.set "dva" (BitVec.ofNat 32 v2)
+          have hr1 : Runs (rprimsA εR c) (getLocS sb num_proc "dva" (.var "pid2") (.var "pid1")) σ l σ1 l := by
+            have h := smGet_run εR hL hcs hlk "dva" (e1 := .var "pid2") (e2 := .var "pid1") hp2 hp1 h2 h1
+              (show 0 < 3 by decide)
+            rw [a0] at h; exact h
+          -- the arguments of pt_resv2
+          let τ1 := σ1.set "n" (BitVec.ofNat 32 p1)
+          let τ2 := τ1.set "vaddr" (BitVec.ofNat 32 va)
+          let τ3 := τ2.set "perm" (BitVec.ofNat 32 7)
+          let τ4 := τ3.set "n2" (BitVec.ofNat 32 p2)
+          let τ5 := τ4.set "vaddr2" (BitVec.ofNat 32 v2)
+          let τ6 := τ5.set "perm2" (BitVec.ofNat 32 7)
+          have g1 : Runs (rprimsA εR c) (.assign "n" (.var "pid1")) σ1 l τ1 l :=
+            asg_run _ _ (by show σ1 "pid1" = _; simp [σ1, Locals.set, hp1])
+          have g2 : Runs (rprimsA εR c) (.assign "vaddr" (.var "sva")) τ1 l τ2 l :=
+            asg_run _ _ (by show τ1 "sva" = _; simp [τ1, σ1, Locals.set, hsva])
+          have g3 : Runs (rprimsA εR c) (.assign "perm" (.const 7)) τ2 l τ3 l := asg_run _ _ rfl
+          have g4 : Runs (rprimsA εR c) (.assign "n2" (.var "pid2")) τ3 l τ4 l :=
+            asg_run _ _ (by show τ3 "pid2" = _; simp [τ3, τ2, τ1, σ1, Locals.set, hp2])
+          have g5 : Runs (rprimsA εR c) (.assign "vaddr2" (.var "dva")) τ4 l τ5 l :=
+            asg_run _ _ (by show τ4 "dva" = _; simp [τ4, τ3, τ2, τ1, σ1, Locals.set])
+          have g6 : Runs (rprimsA εR c) (.assign "perm2" (.const 7)) τ5 l τ6 l := asg_run _ _ rfl
+          have hlk6 : (τ6 "lk").toNat = i0 := by
+            simpa [τ6, τ5, τ4, τ3, τ2, τ1, σ1, Locals.set] using hlk
+          obtain ⟨σ3, l3, b3, d3, hr3, hcs3, hM3, hlk3, hf3, pt1, hd3, r, hsr, hrr⟩ :=
+            ptResv2_lift εR c i0 hL hmax hnum hmp hnn (kl := kl) (kh := kh) p1 va 7 p2 v2 7 (by omega)
+              τ6 l b d hlk6 hcs hM
+              ⟨by simp [τ6, τ5, τ4, τ3, τ2, τ1, Locals.set], by simp [τ6, τ5, τ4, τ3, τ2, Locals.set],
+                by simp [τ6, τ5, τ4, τ3, Locals.set], by simp [τ6, τ5, τ4, Locals.set],
+                by simp [τ6, τ5, Locals.set], by simp [τ6], hI, hu, pt', rest, hR⟩
+          rw [hR] at hsr
+          simp only [Option.some.injEq, Prod.mk.injEq] at hsr; obtain ⟨hpt, hrest⟩ := hsr
+          rw [← hpt] at hd3; rw [← hrest] at hrr
+          have fr3 : ∀ z : Ident, z = "pid1" ∨ z = "pid2" ∨ z = "sva" → σ3 z = σ z := by
+            intro z hz
+            have e : σ3 z = τ6 z := by rcases hz with rfl | rfl | rfl <;> exact hr3.frame rfl
+            rw [e]
+            rcases hz with rfl | rfl | rfl <;> simp [τ6, τ5, τ4, τ3, τ2, τ1, σ1, Locals.set]
+          -- res = r
+          let σ4 := σ3.set "rs" (BitVec.ofNat 32 rest)
+          have g7 : Runs (rprimsA εR c) (.assign "rs" (.var "r")) σ3 l3 σ4 l3 := asg_run _ _ hrr
+          have hlk4 : (σ4 "lk").toNat = i0 := by simp [σ4, Locals.set, hlk3, hlk6]
+          have hpre : ∀ {S : Stmt APrim} {τ : Locals} {lt : RLog}, Runs (rprimsA εR c) S σ4 l3 τ lt →
+              Runs (rprimsA εR c)
+                (.seq (getLocS sb num_proc "dva" (.var "pid2") (.var "pid1"))
+                (.seq (.assign "n" (.var "pid1")) (.seq (.assign "vaddr" (.var "sva"))
+                (.seq (.assign "perm" (.const 7)) (.seq (.assign "n2" (.var "pid2"))
+                (.seq (.assign "vaddr2" (.var "dva")) (.seq (.assign "perm2" (.const 7))
+                (.seq (ptResv2S cb maxpage pb fb) (.seq (.assign "rs" (.var "r")) S)))))))))
+                σ l τ lt := fun hS =>
+            Runs.seq hr1 (Runs.seq g1 (Runs.seq g2 (Runs.seq g3 (Runs.seq g4 (Runs.seq g5 (Runs.seq g6
+              (Runs.seq hr3 (Runs.seq g7 hS))))))))
+          by_cases hm : rest = maxpage + 1
+          · rw [if_pos hm] at hs
+            simp only [Option.some.injEq, Prod.mk.injEq] at hs; obtain ⟨hdF, hrF⟩ := hs
+            rw [hd3, hdF] at hM3
+            have g8 : Runs (rprimsA εR c) (.assign "r" (.var "rs")) σ4 l3 (σ4.set "r" (BitVec.ofNat 32 rest)) l3 :=
+              asg_run _ _ (by show σ4 "rs" = _; simp [σ4])
+            refine ⟨_, l3, b3, dF, hpre (Runs.seq (Runs.ite_true (eq_true (by simp [σ4, hm])) Runs.skip) g8),
+              hcs3, hM3, ?_, fun k hk => hf3 k (fun h => hk (Or.inl h)), maxpage + 1, by rw [hs0, hrF], ?_, ?_,
+              ?_, ?_⟩
+            · simp [Locals.set, σ4, hlk3, τ6, τ5, τ4, τ3, τ2, τ1, σ1]
+            · simp [hm]
+            · simp [Locals.set, σ4, fr3]
+            · simp [Locals.set, σ4, fr3]
+            · simp [Locals.set, σ4, fr3]
+          · rw [if_neg hm] at hs
+            simp only [Option.some.injEq, Prod.mk.injEq] at hs; obtain ⟨hdF, hrF⟩ := hs
+            obtain ⟨-, -, hrb⟩ := ptResv2_keeps hI hR
+            have hne : σ4 "rs" ≠ BitVec.ofNat 32 (maxpage + 1) := by
+              have h : (BitVec.ofNat 32 rest : Val) ≠ BitVec.ofNat 32 (maxpage + 1) :=
+                KernPAlloc.ofNat_ne (a := rest) (b := maxpage + 1) (by omega) hmagic hm
+              simpa [σ4] using h
+            obtain ⟨l5, b5, hr5, hcs5, hM5, hf5⟩ := both_run εR hL hcs3 hlk4 hM3 (p1 := p1) (p2 := p2)
+              (by simp [σ4, Locals.set, fr3, hp1]) (by simp [σ4, Locals.set, fr3, hp2]) h1 h2 .SHRDREADY
+            rw [hd3] at hM5
+            have hM5' : MatchS maxpage num_id cb num_proc pb ib fb ida sb dF b5 := by rw [← hdF]; exact hM5
+            have g8 : Runs (rprimsA εR c) (.assign "r" (.var "rs")) (σ4.set "_" 0) l5
+                ((σ4.set "_" 0).set "r" (BitVec.ofNat 32 rest)) l5 :=
+              asg_run _ _ (by show (σ4.set "_" 0) "rs" = _; simp [σ4, Locals.set])
+            refine ⟨_, l5, b5, dF, hpre (Runs.seq (Runs.ite_false (eq_false hne) hr5) g8), hcs5, hM5', ?_,
+              fun k hk => ?_, rest, by rw [hs0, hrF], ?_, ?_, ?_, ?_⟩
+            · simp [Locals.set, σ4, hlk3, τ6, τ5, τ4, τ3, τ2, τ1, σ1]
+            · rw [hf5 k (fun h => hk (Or.inr h)), hf3 k (fun h => hk (Or.inl h))]
+            · simp
+            · simp [Locals.set, σ4, fr3]
+            · simp [Locals.set, σ4, fr3]
+            · simp [Locals.set, σ4, fr3]
+  · rw [if_neg hc] at hs; cases hs
+
 end Proofs
 
 end MShare
