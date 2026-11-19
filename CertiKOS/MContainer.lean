@@ -391,4 +391,142 @@ theorem container_alloc_refines {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvEras
   obtain ⟨g1, g2, g3⟩ := alloc_ref hmax hnum hC hA hI hlt hu hs
   rw [hm, hr, hsid]; exact ⟨g1, g2, g3⟩
 
+/-! ## The getters (`MALTCSource.v`) -/
+
+/-- `return container_LOC[id].field;` for field `f`: 0 quota, 1 usage, 2 parent, 3 nchildren. -/
+def getterCS (f : Val) : Stmt APrim := .call "r" .pull [lkE, cellE "id" f]
+
+def getter (f : Val) : Stmt APrim := .seq acquireA (.seq (getterCS f) relA)
+
+/-- **A getter returns the field** of the table the previous holder released,
+and releases the table unchanged. With `get_quota_ref`, `get_usage_ref`,
+`get_parent_ref` and `get_nchildren_ref` this is refinement of
+`container_get_quota_spec` and the other three. -/
+theorem getter_guarantee {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε) (hRR : RelyR εR c)
+    (hc : c < NCPU) (hRA : LockArray.RelyA ε c) {l : RLog} {S : RState} {H : HLogR}
+    (hl : rreplay l = some (S, H)) {iv : Val} (hidle : (S.lk iv.toNat).phase c = .idle)
+    (bound : ALog → Nat) (K : Nat) (hK : ∀ l, bound l ≤ K)
+    (hF : LockArray.FairA ε c iv.toNat (ticket (LockArray.projL iv.toNat (apull ε c (erase l)))) bound)
+    (σ : Locals) (hσ : σ "lk" = iv) (f : Val) :
+    ∃ (σ' : Locals) (rb : RLog) (S3 : RState) (H1 H3 : HLogR),
+      Star (rprimsA εR c) ⟨getter f, .stop, σ, l⟩ ⟨.skip, .stop, σ', rb⟩ ∧
+      rreplay rb = some (S3, H3) ∧ (S3.lk iv.toNat).phase c = .idle ∧
+      hmemR iv.toNat H3 = hmemR iv.toNat H1 ∧ σ' "r" = hmemR iv.toNat H1 (cell (σ "id") f) := by
+  obtain ⟨σ1, σ2, rb, S3, H1, H3, hrun, hl3, hid, hfr, hR1, hR2⟩ :=
+    cs_guarantee1 hE hRR hc hRA hl hidle bound K hK hF σ hσ (getterCS f)
+      (fun b σ b' σ' => b' = b ∧ σ' "r" = b (cell (σ "id") f))
+      (fun σ l b hlk hcs => ⟨σ.set "r" (b (cell (σ "id") f)), l, b,
+        cs1_rd hcs (by rw [hlk]) "r" (cellE "id" f), hcs,
+        by rw [Locals.set_other _ _ (by decide)]; exact hlk, rfl, by simp⟩)
+  refine ⟨σ2.set "_" 0, rb, S3, H1, H3, hrun, hl3, hid, hR1, ?_⟩
+  rw [Locals.set_other _ _ (by decide), hR2, hfr "id" (by decide) (by decide) (by decide) (by decide)]
+
+/-! ## `container_split` -/
+
+/-- The child slot: `id * MAX_CHILDREN + 1 + nc`. -/
+def childC (mc : Val) (b : Region) (id : Val) : Val := id * mc + 1 + b (cell id 3)
+
+/-- What `container_split(id, q)` does to the table, and the child it returns. -/
+def ctSplitC (mc : Val) (b : Region) (id q : Val) : Region × Val :=
+  let ch := childC mc b id
+  let b5 := setCell (setCell (setCell (setCell (setCell b (cell ch 4) 1) (cell ch 0) q) (cell ch 1) 0)
+    (cell ch 2) id) (cell ch 3) 0
+  (setCell (setCell b5 (cell id 1) (b5 (cell id 1) + q)) (cell id 3) (b (cell id 3) + 1), ch)
+
+/-- ```
+nc = CT[id].nchildren; ch = id * MAX_CHILDREN + 1 + nc;
+CT[ch].used = 1; CT[ch].quota = quota; CT[ch].usage = 0; CT[ch].parent = id; CT[ch].nchildren = 0;
+CT[id].usage += quota; CT[id].nchildren = nc + 1; return ch;
+``` -/
+def ctSplitCS (mcv : Val) : Stmt APrim :=
+  .seq (.call "nc" .pull [lkE, cellE "id" 3])
+  (.seq (.assign "ch" (.bin .add (.bin .add (.bin .mul (.var "id") (.const mcv)) (.const 1)) (.var "nc")))
+  (.seq (.call "_" .push [lkE, cellE "ch" 4, .const 1])
+  (.seq (.call "_" .push [lkE, cellE "ch" 0, .var "amt"])
+  (.seq (.call "_" .push [lkE, cellE "ch" 1, .const 0])
+  (.seq (.call "_" .push [lkE, cellE "ch" 2, .var "id"])
+  (.seq (.call "_" .push [lkE, cellE "ch" 3, .const 0])
+  (.seq (.call "u" .pull [lkE, cellE "id" 1])
+  (.seq (.call "_" .push [lkE, cellE "id" 1, .bin .add (.var "u") (.var "amt")])
+  (.seq (.call "_" .push [lkE, cellE "id" 3, .bin .add (.var "nc") (.const 1)])
+    (.assign "r" (.var "ch")))))))))))
+
+def container_split (mcv : Val) : Stmt APrim := .seq acquireA (.seq (ctSplitCS mcv) relA)
+
+theorem wr1 {εR : REnv} {c : CPU} {i : Nat} {l : RLog} {b : Region} (h : CS1 c i l b) {σ : Locals}
+    (hlk : (σ "lk").toNat = i) (y : Ident) (f : Val) (ve : Expr) {id v : Val} (hy : σ y = id)
+    (hv : ve.eval σ = v) :
+    ∃ l', Runs (rprimsA εR c) (.call "_" .push [lkE, cellE y f, ve]) σ l (σ.set "_" 0) l' ∧
+      CS1 c i l' (setCell b (cell id f) v) := by
+  subst hy hv; exact cs1_wr h hlk (cellE y f) ve
+
+theorem set_self {σ : Locals} {x : Ident} {v : Val} (h : σ x = v) : σ.set x v = σ := by
+  funext y; by_cases e : y = x
+  · subst e; simp [h]
+  · simp [Locals.set, e]
+
+/-- **The body of `container_split` computes `ctSplitC`.** -/
+theorem ctSplitCS_run (εR : REnv) {c : CPU} {i : Nat} (mcv : Val) (σ : Locals) (l : RLog) (b : Region)
+    (hlk : (σ "lk").toNat = i) (hcs : CS1 c i l b) :
+    ∃ σ' l', Runs (rprimsA εR c) (ctSplitCS mcv) σ l σ' l' ∧
+      CS1 c i l' (ctSplitC mcv b (σ "id") (σ "amt")).1 ∧ σ' "lk" = σ "lk" ∧
+      σ' "r" = (ctSplitC mcv b (σ "id") (σ "amt")).2 := by
+  let ID := σ "id"
+  let Q := σ "amt"
+  let NC := b (cell ID 3)
+  let CH := childC mcv b ID
+  let σ0 := σ.set "nc" NC
+  let σ1 := σ0.set "ch" CH
+  let σ2 := σ1.set "_" 0
+  have h0 : Runs (rprimsA εR c) (.call "nc" .pull [lkE, cellE "id" 3]) σ l σ0 l :=
+    cs1_rd hcs hlk "nc" (cellE "id" 3)
+  have h1 : Runs (rprimsA εR c) (.assign "ch" (.bin .add (.bin .add (.bin .mul (.var "id") (.const mcv))
+      (.const 1)) (.var "nc"))) σ0 l σ1 l := by
+    have h := Runs.assign (P := rprimsA εR c) (σ := σ0) (l := l) "ch"
+      (.bin .add (.bin .add (.bin .mul (.var "id") (.const mcv)) (.const 1)) (.var "nc"))
+    have e : (Expr.bin .add (.bin .add (.bin .mul (.var "id") (.const mcv)) (.const 1)) (.var "nc")).eval σ0
+        = CH := by simp [Expr.eval, BinOp.eval, σ0, Locals.set, CH, childC, NC, ID]
+    rw [e] at h; exact h
+  have hlk1 : (σ1 "lk").toNat = i := by simpa [σ1, σ0, Locals.set] using hlk
+  have hlk2 : (σ2 "lk").toNat = i := by simpa [σ2, σ1, σ0, Locals.set] using hlk
+  have hch1 : σ1 "ch" = CH := by simp [σ1]
+  have hch2 : σ2 "ch" = CH := by simp [σ2, σ1, Locals.set]
+  have hid2 : σ2 "id" = ID := by simp [σ2, σ1, σ0, Locals.set, ID]
+  have hs2 : σ2.set "_" 0 = σ2 := set_self (by simp [σ2])
+  obtain ⟨l1, w1, c1⟩ := wr1 (εR := εR) hcs hlk1 "ch" 4 (.const 1) hch1 (v := 1) rfl
+  obtain ⟨l2, w2, c2⟩ := wr1 (εR := εR) c1 hlk2 "ch" 0 (.var "amt") hch2 (v := Q)
+    (by show σ2 "amt" = Q; simp [σ2, σ1, σ0, Locals.set, Q])
+  rw [hs2] at w2
+  obtain ⟨l3, w3, c3⟩ := wr1 (εR := εR) c2 hlk2 "ch" 1 (.const 0) hch2 (v := 0) rfl
+  rw [hs2] at w3
+  obtain ⟨l4, w4, c4⟩ := wr1 (εR := εR) c3 hlk2 "ch" 2 (.var "id") hch2 (v := ID) hid2
+  rw [hs2] at w4
+  obtain ⟨l5, w5, c5⟩ := wr1 (εR := εR) c4 hlk2 "ch" 3 (.const 0) hch2 (v := 0) rfl
+  rw [hs2] at w5
+  let B5 := setCell (setCell (setCell (setCell (setCell b (cell CH 4) 1) (cell CH 0) Q) (cell CH 1) 0)
+    (cell CH 2) ID) (cell CH 3) 0
+  let σ3 := σ2.set "u" (B5 (cell ID 1))
+  have h6 : Runs (rprimsA εR c) (.call "u" .pull [lkE, cellE "id" 1]) σ2 l5 σ3 l5 := by
+    have h := cs1_rd (εR := εR) c5 hlk2 "u" (cellE "id" 1)
+    have e : ((cellE "id" 1).eval σ2).toNat = cell ID 1 := by show cell (σ2 "id") 1 = _; rw [hid2]
+    rw [e] at h; exact h
+  have hlk3 : (σ3 "lk").toNat = i := by simpa [σ3, Locals.set] using hlk2
+  have hid3 : σ3 "id" = ID := by simp [σ3, Locals.set, hid2]
+  obtain ⟨l7, w7, c7⟩ := wr1 (εR := εR) c5 hlk3 "id" 1 (.bin .add (.var "u") (.var "amt")) hid3
+    (v := B5 (cell ID 1) + Q) (by simp [Expr.eval, BinOp.eval, σ3, σ2, σ1, σ0, Locals.set, Q])
+  let σ4 := σ3.set "_" 0
+  have hlk4 : (σ4 "lk").toNat = i := by simpa [σ4, Locals.set] using hlk3
+  have hid4 : σ4 "id" = ID := by simp [σ4, Locals.set, hid3]
+  have hs4 : σ4.set "_" 0 = σ4 := set_self (by simp [σ4])
+  obtain ⟨l8, w8, c8⟩ := wr1 (εR := εR) c7 hlk4 "id" 3 (.bin .add (.var "nc") (.const 1)) hid4
+    (v := NC + 1) (by simp [Expr.eval, BinOp.eval, σ4, σ3, σ2, σ1, σ0, Locals.set])
+  rw [hs4] at w8
+  have h9 : Runs (rprimsA εR c) (.assign "r" (.var "ch")) σ4 l8 (σ4.set "r" CH) l8 := by
+    have h := Runs.assign (P := rprimsA εR c) (σ := σ4) (l := l8) "r" (.var "ch")
+    have e : (Expr.var "ch").eval σ4 = CH := by show σ4 "ch" = _; simp [σ4, σ3, Locals.set, hch2]
+    rw [e] at h; exact h
+  refine ⟨σ4.set "r" CH, l8, Runs.seq h0 (Runs.seq h1 (Runs.seq w1 (Runs.seq w2 (Runs.seq w3 (Runs.seq w4
+    (Runs.seq w5 (Runs.seq h6 (Runs.seq w7 (Runs.seq w8 h9))))))))), c8, ?_, by simp [ctSplitC, CH, ID]⟩
+  simp [σ4, σ3, σ2, σ1, σ0, Locals.set]
+
 end MContainer
