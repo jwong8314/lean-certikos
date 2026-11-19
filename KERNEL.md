@@ -63,7 +63,7 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | `MALInit` | `mem_init` | missing |
 | `MALOp` | `palloc`, `pfree` | **ported**: `MALOp.lean` (`palloc_refines`, `pfree_refines`) |
 | `MALT` | container code: `container_init`, getters, `container_can_consume`, `container_split`, `container_alloc` | **ported** in `MContainer.lean`: the four getters (`getter_guarantee` with `get_*_ref`), `container_split` (`container_split_refines`), `container_alloc` (`container_alloc_refines`). Missing: `container_init`, `container_can_consume` |
-| `MContainer` | page-table pool accessors (`set_pt`, `get_PDE`, `set_PDE`, `rmv_PDE`, `set_PDEU`, `get_PTE`, `set_PTE`, `rmv_PTE`, `set_IDPTE`) | **in progress**: `MPTIntro.lean` has the state, the eight specs (`getPDE_spec` … `setIDPTE_spec`) and the relation to memory (`MatchPT`). C code proved for the two readers: `get_PDE` (`getPDE_triple`) and `get_PTE` (`getPTE_triple`). The six writers and `set_pt` are next |
+| `MContainer` | page-table pool accessors (`set_pt`, `get_PDE`, `set_PDE`, `rmv_PDE`, `set_PDEU`, `get_PTE`, `set_PTE`, `rmv_PTE`, `set_IDPTE`) | **ported**: `MPTIntro.lean`. All eight memory accessors refine their specs (`getPDE_triple`, `setPDE_triple`, `rmvPDE_triple`, `setPDEU_triple`, `getPTE_triple`, `setPTE_triple`, `rmvPTE_triple`, `setIDPTE_triple`). Missing: `set_pt` (loads `CR3`; needs the machine model) |
 | `MPTIntro` | `pt_read`, `pt_read_pde`, `pt_rmv_aux`, `pt_rmv_pde`, `pt_insert_aux`, `pt_insert_pde`, `idpde_init` | prototype only |
 | `MPTOp` | `pt_alloc_pde`, `pt_free_pde`, kernel mappings | missing |
 | `MPTCommon` | `pt_insert`, `pt_rmv` with reference counts | prototype only |
@@ -164,6 +164,23 @@ Each port has the same shape, which is mCertiKOS's own two steps.
 - `container_split_refines`: `container_split(id, q)` refines
   `container_split_spec`. The code makes no checks. The specification's
   conditions are what make the writes land on the right cells.
+
+### `MPTIntro.lean`
+
+- State: `PTPerm`, `PTEInfo`, `PDE`, `PTData` (the page-table pool, the
+  identity map, the current page table, the paging flags, visible flat
+  memory).
+- Relation: `MatchPT` (`match_PDE`, `match_IDPDE`, `relate_PMapPool`). A
+  present directory entry holds `pi * 4096 + 7` and the permission table says
+  page `pi` is hidden and owned by that entry. Its second-level table is the
+  1024 words of page `pi` in flat memory.
+- `Layout`: where the five tables sit in the one region.
+- `pool_update`, `pte_update`, `idp_update`: replacing a directory entry, a
+  second-level entry or an identity-map entry keeps the relation. Two present
+  directory entries never share a page (`pde_unique`), because the permission
+  table names the one owner.
+- The eight triples, one per accessor. Each is the interface the next layer
+  is verified against.
 
 ### `MContainerInv.lean` and the end of `MALOp.lean`: the invariants
 

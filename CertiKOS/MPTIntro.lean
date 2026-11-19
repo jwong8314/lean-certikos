@@ -903,6 +903,91 @@ theorem setPDE_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num
     (by rw [← hs]) (fun k hk => sc_ne _ _ (by omega)), hpt⟩, by simp [Locals.set],
     fun k hk => sc_ne _ _ (by omega), hs0⟩
 
+
+/-- `&IDPMap_LOC[i][vadr]` -/
+def idpE (ib : Nat) : Expr :=
+  .bin .add (.bin .add (.const (BitVec.ofNat 32 ib)) (.bin .mul (.var "i") (.const 1024))) (.var "vadr")
+
+/-- `set_IDPTE(i, vadr, perm)`: `IDPMap_LOC[i][vadr] = (i * 1024 + vadr) * 4096 + perm;` -/
+def setIDPTES (ib : Nat) : Stmt APrim :=
+  .call "_" .push [lkE, idpE ib, .bin .add (.bin .mul (.bin .add (.bin .mul (.var "i") (.const 1024))
+    (.var "vadr")) (.const 4096)) (.var "perm")]
+
+/-- Replacing an entry of the identity map keeps the relation. -/
+theorem idp_update (hL : Layout maxpage num_id cb num_proc pb ib fb) {d : PTData} {b : Region}
+    (hM : MatchPT num_proc pb ib fb ida d b) {i j : Nat} (hi : i < 1024) (hj : j < 1024) (x : IDPTEInfo)
+    (w : Val) (hx : MatchIDPTE x w i j) :
+    MatchPT num_proc pb ib fb ida { d with idpde := setAt d.idpde i (setAt (d.idpde i) j x) }
+      (setCell b (ib + i * 1024 + j) w) := by
+  have := hL.hib; have := hL.hfb
+  refine ⟨fun n' i' hn' hi' => ?_, fun i' j' hi' hj' => ?_, fun n' i' pi' pdx' hn' hi' hp vadr hv => ?_,
+    fun a v hav => ?_, fun n' i' pi' pdx' hn' hi' hp a ha => hM.hid n' i' pi' pdx' hn' hi' hp a ha⟩
+  · show MatchPDE d.pperm ida (d.ptpool n' i') (setCell b (ib + i * 1024 + j) w (pb + n' * 1024 + i')) n' i'
+    rw [sc_ne _ _ (by omega)]; exact hM.pool n' i' hn' hi'
+  · show MatchIDPTE (setAt d.idpde i (setAt (d.idpde i) j x) i' j')
+      (setCell b (ib + i * 1024 + j) w (ib + i' * 1024 + j')) i' j'
+    by_cases h : i' = i ∧ j' = j
+    · obtain ⟨rfl, rfl⟩ := h; rw [sc_eq]; simp only [setAt_eq]; exact hx
+    · rw [sc_ne _ _ (by omega)]
+      have e : setAt d.idpde i (setAt (d.idpde i) j x) i' j' = d.idpde i' j' := by
+        unfold setAt
+        by_cases hi2 : i' = i
+        · subst hi2
+          by_cases hj2 : j' = j
+          · exact absurd ⟨rfl, hj2⟩ h
+          · simp [hj2]
+        · simp [hi2]
+      rw [e]; exact hM.idp i' j' hi' hj'
+  · rw [sc_ne _ _ (by omega)]; exact hM.pte n' i' pi' pdx' hn' hi' hp vadr hv
+  · rw [sc_ne _ _ (by omega)]; exact hM.hp a v hav
+
+/-- **`set_IDPTE` refines `setIDPTE_spec`.** -/
+theorem setIDPTE_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_id cb num_proc pb ib fb)
+    (i vadr perm : Nat) :
+    Triple εR c i0 (MatchAll maxpage num_id cb num_proc pb ib fb ida) (fun k => pb ≤ k)
+      (fun σ d => σ "i" = BitVec.ofNat 32 i ∧ σ "vadr" = BitVec.ofNat 32 vadr ∧
+        σ "perm" = BitVec.ofNat 32 perm ∧ ∃ d1, setIDPTE_spec i vadr perm d = some d1)
+      (setIDPTES ib)
+      (fun _ d _ d' => setIDPTE_spec i vadr perm d = some d') := by
+  intro σ l b d hlk hcs hM ⟨hi, hva, hpe, d1, hs⟩
+  have := hL.hib; have := hL.hfb; have := hL.hend; have := hL.hpb
+  have hs0 := hs
+  unfold setIDPTE_spec at hs
+  have hc : d.pg = false ∧ d.init = true ∧ d.ipt = true ∧ IDPTE_Arg i vadr := by
+    by_cases h : d.pg = false ∧ d.init = true ∧ d.ipt = true ∧ IDPTE_Arg i vadr
+    · exact h
+    · rw [if_neg h] at hs; cases hs
+  rw [if_pos hc] at hs
+  obtain ⟨-, -, -, hi1, hv1⟩ := hc
+  cases hz : ZtoPerm perm with
+  | none => rw [hz] at hs; cases hs
+  | some p =>
+    rw [hz] at hs; simp only [Option.some.injEq] at hs
+    obtain ⟨l', hwr, hc'⟩ := cs1_wr (εR := εR) hcs hlk (idpE ib)
+      (.bin .add (.bin .mul (.bin .add (.bin .mul (.var "i") (.const 1024)) (.var "vadr")) (.const 4096))
+        (.var "perm"))
+    have e1 : ((idpE ib).eval σ).toNat = ib + i * 1024 + vadr := by
+      show (BitVec.ofNat 32 ib + σ "i" * 1024 + σ "vadr").toNat = _
+      rw [hi, hva]; simp [BitVec.toNat_add, BitVec.toNat_mul]; omega
+    have e2 : (Expr.bin .add (.bin .mul (.bin .add (.bin .mul (.var "i") (.const 1024)) (.var "vadr"))
+        (.const 4096)) (.var "perm")).eval σ =
+        (BitVec.ofNat 32 i * 1024 + BitVec.ofNat 32 vadr) * 4096 + BitVec.ofNat 32 perm := by
+      show (σ "i" * 1024 + σ "vadr") * 4096 + σ "perm" = _; rw [hi, hva, hpe]
+    rw [e1, e2] at hc'
+    have hrel : MatchIDPTE (.IDPTEValid p)
+        ((BitVec.ofNat 32 i * 1024 + BitVec.ofNat 32 vadr) * 4096 + BitVec.ofNat 32 perm) i vadr := by
+      show ((BitVec.ofNat 32 i * 1024 + BitVec.ofNat 32 vadr) * 4096 + BitVec.ofNat 32 perm).toNat =
+        (i * 1024 + vadr) * 4096 + PermtoZ p
+      have e := PermZ_eq hz
+      have := perm_le p
+      rw [← e]
+      simp [BitVec.toNat_add, BitVec.toNat_mul]; omega
+    have hpt := idp_update hL hM.pt hi1 hv1 (.IDPTEValid p) _ hrel
+    rw [hs] at hpt
+    exact ⟨_, l', _, d1, hwr, hc', ⟨mm_frame (d' := d1.toRData) hL hM.mm (by rw [← hs]) (by rw [← hs])
+      (by rw [← hs]) (fun k hk => sc_ne _ _ (by omega)), hpt⟩, by simp [Locals.set],
+      fun k hk => sc_ne _ _ (by omega), hs0⟩
+
 end Write
 
 end MPTIntro
