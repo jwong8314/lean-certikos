@@ -529,4 +529,92 @@ theorem ctSplitCS_run (εR : REnv) {c : CPU} {i : Nat} (mcv : Val) (σ : Locals)
     (Runs.seq w5 (Runs.seq h6 (Runs.seq w7 (Runs.seq w8 h9))))))))), c8, ?_, by simp [ctSplitC, CH, ID]⟩
   simp [σ4, σ3, σ2, σ1, σ0, Locals.set]
 
+set_option maxHeartbeats 3200000 in
+/-- **`container_split` refines `container_split_spec`.** The C code makes no
+checks. The specification's conditions (the container is in use, the child
+slot is in range, there is room for another child, the quota is available)
+are what make its writes land on the right cells. -/
+theorem split_ref {num_id mc : Nat} (hnum : 5 * num_id < 2 ^ 32) {d d' : RData} {b : Region} {id q r : Nat}
+    (hC : MatchC num_id d.AC b) (hid : id < num_id)
+    (h : container_split_spec num_id mc id q d = some (d', r)) :
+    MatchC num_id d'.AC (ctSplitC (BitVec.ofNat 32 mc) b (BitVec.ofNat 32 id) (BitVec.ofNat 32 q)).1 ∧
+    (ctSplitC (BitVec.ofNat 32 mc) b (BitVec.ofNat 32 id) (BitVec.ofNat 32 q)).2 = BitVec.ofNat 32 r := by
+  unfold container_split_spec at h
+  simp only at h
+  by_cases hc : (d.AC id).cused = true ∧ id * mc + 1 + (d.AC id).cchildren.length < num_id ∧
+      (d.AC id).cchildren.length < mc ∧ q + (d.AC id).cusage ≤ (d.AC id).cquota
+  · rw [if_pos hc] at h
+    simp only [Option.some.injEq, Prod.mk.injEq] at h; obtain ⟨rfl, rfl⟩ := h
+    obtain ⟨hused, hilt, hLmc, hqu⟩ := hc
+    obtain ⟨hq, hus, hpa, hnc, hud⟩ := hC.used hid hused
+    have hmul : id ≤ id * mc := Nat.le_mul_of_pos_right _ (by omega)
+    have hq32 : q < 2 ^ 32 := by have := (b (5 * id)).isLt; omega
+    have hch : childC (BitVec.ofNat 32 mc) b (BitVec.ofNat 32 id) =
+        BitVec.ofNat 32 (id * mc + 1 + (d.AC id).cchildren.length) := by
+      unfold childC
+      rw [cell3 hnum hid, val_of_toNat hnc (by omega)]
+      simp [BitVec.ofNat_add, BitVec.ofNat_mul]
+    unfold ctSplitC
+    simp only [hch, cell0 hnum hilt, cell1 hnum hilt, cell2 hnum hilt, cell3 hnum hilt, cell4 hnum hilt,
+      cell1 hnum hid, cell3 hnum hid]
+    refine ⟨fun j hj => ?_, trivial⟩
+    by_cases hjI : j = id * mc + 1 + (d.AC id).cchildren.length
+    · rw [hjI, setAt_eq]
+      simp (disch := omega) only [setCell, if_pos, if_neg, ↓reduceIte]
+      unfold MatchCont
+      rw [if_pos rfl]
+      refine ⟨?_, rfl, ?_, rfl, rfl⟩
+      · simp only [BitVec.toNat_ofNat]; exact Nat.mod_eq_of_lt hq32
+      · simp only [BitVec.toNat_ofNat]; exact Nat.mod_eq_of_lt (by omega)
+    · rw [setAt_ne _ _ hjI]
+      by_cases hji : j = id
+      · rw [hji, setAt_eq]
+        simp (disch := omega) only [setCell, if_pos, if_neg, ↓reduceIte]
+        unfold MatchCont
+        simp only
+        rw [if_pos hused]
+        refine ⟨hq, ?_, hpa, ?_, hud⟩
+        · have hb := (b (5 * id)).isLt
+          simp only [BitVec.toNat_add, BitVec.toNat_ofNat, Nat.mod_eq_of_lt hq32]
+          rw [Nat.mod_eq_of_lt (by omega)]; omega
+        · have h1 : (1 : Val).toNat = 1 := rfl
+          simp only [BitVec.toNat_add, List.length_cons, h1]; omega
+      · rw [setAt_ne _ _ hji]
+        simp (disch := omega) only [setCell, if_pos, if_neg, ↓reduceIte]
+        exact hC j hj
+  · rw [if_neg hc] at h; cases h
+
+theorem ctSplitCS_fr (mcv : Val) : frS "lk" (ctSplitCS mcv) = true := by simp [frS, ctSplitCS]
+
+/-- **`container_split(id, amt)` refines `container_split_spec`.** -/
+theorem container_split_refines {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε) (hRR : RelyR εR c)
+    (hc : c < NCPU) (hRA : LockArray.RelyA ε c) {l : RLog} {S : RState} {H : HLogR}
+    (hl : rreplay l = some (S, H)) {iv : Val} (hidle : (S.lk iv.toNat).phase c = .idle)
+    (bound : ALog → Nat) (K : Nat) (hK : ∀ l, bound l ≤ K)
+    (hF : LockArray.FairA ε c iv.toNat (ticket (LockArray.projL iv.toNat (apull ε c (erase l)))) bound)
+    (σ : Locals) (hσ : σ "lk" = iv) {num_id : Nat} (hnum : 5 * num_id < 2 ^ 32) (mc : Nat) :
+    ∃ (σ' : Locals) (rb : RLog) (S3 : RState) (H1 H3 : HLogR),
+      Star (rprimsA εR c) ⟨container_split (BitVec.ofNat 32 mc), .stop, σ, l⟩ ⟨.skip, .stop, σ', rb⟩ ∧
+      rreplay rb = some (S3, H3) ∧ (S3.lk iv.toNat).phase c = .idle ∧
+      hmemR iv.toNat H3 = (ctSplitC (BitVec.ofNat 32 mc) (hmemR iv.toNat H1) (σ "id") (σ "amt")).1 ∧
+      ∀ (d d' : RData) (id q r : Nat), σ "id" = BitVec.ofNat 32 id → σ "amt" = BitVec.ofNat 32 q →
+        id < num_id → MatchC num_id d.AC (hmemR iv.toNat H1) →
+        container_split_spec num_id mc id q d = some (d', r) →
+        MatchC num_id d'.AC (hmemR iv.toNat H3) ∧ σ' "r" = BitVec.ofNat 32 r := by
+  obtain ⟨σ1, σ2, rb, S3, H1, H3, hrun, hl3, hid, hfr, hR1, hR2⟩ :=
+    cs_guarantee1 hE hRR hc hRA hl hidle bound K hK hF σ hσ (ctSplitCS (BitVec.ofNat 32 mc))
+      (fun b σ b' σ' => b' = (ctSplitC (BitVec.ofNat 32 mc) b (σ "id") (σ "amt")).1 ∧
+        σ' "r" = (ctSplitC (BitVec.ofNat 32 mc) b (σ "id") (σ "amt")).2)
+      (fun σ l b hlk hcs => by
+        obtain ⟨σ', l', hr, hc', hlk', hres⟩ := ctSplitCS_run εR (BitVec.ofNat 32 mc) σ l b (by rw [hlk]) hcs
+        exact ⟨σ', l', _, hr, hc', hlk'.trans hlk, rfl, hres⟩)
+  have hd := hfr "id" (by decide) (by decide) (by decide) (by decide)
+  have ha := hfr "amt" (by decide) (by decide) (by decide) (by decide)
+  have hm : hmemR iv.toNat H3 = (ctSplitC (BitVec.ofNat 32 mc) (hmemR iv.toNat H1) (σ "id") (σ "amt")).1 := by
+    rw [hR1, hd, ha]
+  refine ⟨σ2.set "_" 0, rb, S3, H1, H3, hrun, hl3, hid, hm, fun d d' id q r hsid hsq hlt hC hs => ?_⟩
+  obtain ⟨g1, g2⟩ := split_ref hnum hC hlt hs
+  refine ⟨by rw [hm, hsid, hsq]; exact g1, ?_⟩
+  rw [Locals.set_other _ _ (by decide), hR2, hd, ha, hsid, hsq]; exact g2
+
 end MContainer
