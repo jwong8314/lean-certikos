@@ -215,7 +215,7 @@ structure MatchMM (maxpage num_id cb : Nat) (d : RData) (b : Region) : Prop wher
 temporaries and `r`. Callers use this, not `palloc`'s code. -/
 theorem palloc_triple (εR : REnv) (c : CPU) (i : Nat) {maxpage num_id cb kl kh : Nat}
     (hmax : 3 * maxpage < 2 ^ 32) (hcb : 3 * maxpage < cb) :
-    Triple εR c i (MatchMM maxpage num_id cb)
+    Triple εR c i (MatchMM maxpage num_id cb) (fun k => k ≤ 3 * maxpage)
       (fun _ d => ATInv maxpage kl kh d.toPData ∧ d.init = true)
       (pallocCS maxpage)
       (fun σ d σ' d' => ∃ pd r, palloc'_spec d.toPData = some (pd, r) ∧ d' = ⟨pd, d.AC⟩ ∧
@@ -229,7 +229,8 @@ theorem palloc_triple (εR : REnv) (c : CPU) (i : Nat) {maxpage num_id cb kl kh 
   obtain ⟨g1, g2⟩ := palloc_ref hmax hM.mAT hI hs
   have hn : (b (3 * maxpage)).toNat ≤ maxpage := by rw [← hM.mAT.mnps]; exact hI.valid_nps.2
   refine ⟨σ', l', (pallocC maxpage b).1, ⟨pd, d.AC⟩, hr, hc', ⟨g1, fun j hj => ?_⟩,
-    hr.frame (pallocCS_fr maxpage), pd, r, hs, rfl, hres.trans g2,
+    hr.frame (pallocCS_fr maxpage), fun k hk => pallocC_frame hmax b hn (by omega), pd, r, hs, rfl,
+    hres.trans g2,
     fun z h3 h5 h6 h7 h8 h9 h10 => hr.frame (pallocCS_frz maxpage z h3 h5 h6 h7 h8 h9 h10)⟩
   rw [pallocC_frame hmax b hn (show 3 * maxpage < cb + 5 * j by omega),
     pallocC_frame hmax b hn (show 3 * maxpage < cb + 5 * j + 1 by omega),
@@ -256,7 +257,7 @@ because the code tests `u == q` where the specification tests
 theorem container_alloc_triple (εR : REnv) (c : CPU) (i : Nat) {maxpage num_id cb kl kh : Nat}
     (hmax : 3 * maxpage < 2 ^ 32) (hcb : 3 * maxpage < cb) (hnum : cb + 5 * num_id < 2 ^ 32)
     (id : Nat) (hid : id < num_id) :
-    Triple εR c i (MatchMM maxpage num_id cb)
+    Triple εR c i (MatchMM maxpage num_id cb) (fun k => k < cb + 5 * num_id)
       (fun σ d => σ "id" = BitVec.ofNat 32 id ∧ ATInv maxpage kl kh d.toPData ∧
         (d.AC id).cusage ≤ (d.AC id).cquota ∧ ∃ d1 r, container_alloc_spec id d = some (d1, r))
       (ctAllocCS cb maxpage)
@@ -330,7 +331,7 @@ theorem container_alloc_triple (εR : REnv) (c : CPU) (i : Nat) {maxpage num_id 
           · simp only [setAt_ne _ _ hji]
             simp (disch := omega) only [setCell, if_pos, if_neg, ↓reduceIte]
             exact hM.mAC j hj
-      obtain ⟨σ', l', b', d', hrp, hc', hM', hlk', pd, r', hps, rfl, hr', -⟩ :=
+      obtain ⟨σ', l', b', d', hrp, hc', hM', hlk', hfp, pd, r', hps, rfl, hr', -⟩ :=
         palloc_triple εR c i (kl := kl) (kh := kh) hmax hcb (σ1.set "_" 0) l2 _ _
           (by simpa [Locals.set] using hlk1) hc2 hMmid ⟨hI, hinit⟩
       have hpd : palloc'_spec d.toPData = some ({ d.toPData with
@@ -339,13 +340,16 @@ theorem container_alloc_triple (εR : REnv) (c : CPU) (i : Nat) {maxpage num_id 
       rw [hpd] at hps
       simp only [Option.some.injEq, Prod.mk.injEq] at hps; obtain ⟨rfl, rfl⟩ := hps
       refine ⟨σ', l', b', _, Runs.seq hr0 (Runs.seq hr1 (Runs.ite_false
-        (by rw [hgd, hu1, hq1, if_neg hne]) (Runs.seq hw hrp))), hc', hM', ?_, p, hs0, hr'⟩
-      rw [hlk']; simp [σ1, σ0, Locals.set]
+        (by rw [hgd, hu1, hq1, if_neg hne]) (Runs.seq hw hrp))), hc', hM', ?_, ?_, p, hs0, hr'⟩
+      · rw [hlk']; simp [σ1, σ0, Locals.set]
+      · intro k hk
+        rw [hfp k (by omega)]; simp only [setCell]; rw [if_neg (by omega)]
   · rw [if_neg hlt] at hs
     simp only [Option.some.injEq, Prod.mk.injEq] at hs; obtain ⟨rfl, rfl⟩ := hs
     have he : b (cb + 5 * id + 1) = b (cb + 5 * id) := BitVec.eq_of_toNat_eq (by omega)
     refine ⟨σ1.set "r" 0, l, b, d, Runs.seq hr0 (Runs.seq hr1 (Runs.ite_true
-      (by rw [hgd, hu1, hq1, if_pos he]; decide) (Runs.assign _ _))), hcs, hM, ?_, 0, hs0, by simp⟩
+      (by rw [hgd, hu1, hq1, if_pos he]; decide) (Runs.assign _ _))), hcs, hM, ?_, fun _ _ => rfl, 0, hs0,
+      by simp⟩
     simp [σ1, σ0, Locals.set]
 
 /-- **`container_alloc(id)` under the lock refines `container_alloc_spec`.**

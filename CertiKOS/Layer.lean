@@ -6,12 +6,15 @@ import CertiKOS.KernFrame
 mCertiKOS verifies each layer's C code against the *specifications* of the
 primitives it calls, not against their code. This file gives the ports that.
 
-* `Triple εR c i M P s Q`: inside a critical section on lock `i`, whenever the
+* `Triple εR c i M F P s Q`: inside a critical section on lock `i`, whenever the
   region matches abstract data `d` (`M d b`) and the precondition `P` holds,
   the code `s` runs to completion, the region again matches some `d'`, and
   `Q` relates before and after. A primitive's triple is its interface: callers
   use the triple and never look at its code.
-* `Triple.seq`, `Triple.conseq`: sequencing and weakening.
+* A triple also names a footprint `F`: the cells the code may write.
+* `Triple.seq`, `Triple.conseq`, `Triple.widen`: sequencing and weakening.
+* `Triple.lift`: **frame.** A primitive keeps its interface when the abstract
+  state grows, provided what was added survives writes inside the footprint.
 * `acquire_runs`, `release_runs`: `KernFrame.cs_guarantee1` in two halves.
 * `Triple.locked`: **from a triple to the lock.** `acquire(lk); s; release(lk)`
   first acquires, whatever the region. If the region it then finds matches
@@ -86,32 +89,58 @@ theorem release_runs {εR : REnv} {c : CPU} (hRR : RelyR εR c) (hc : c < NCPU) 
 /-- **A primitive's interface.** In a critical section on lock `i`, on a region
 matching `d` with `P`, the code `s` runs to completion and leaves a region
 matching some `d'` with `Q`. -/
-def Triple (εR : REnv) (c : CPU) (i : Nat) {D : Type} (M : D → Region → Prop) (P : Locals → D → Prop)
-    (s : Stmt APrim) (Q : Locals → D → Locals → D → Prop) : Prop :=
+def Triple (εR : REnv) (c : CPU) (i : Nat) {D : Type} (M : D → Region → Prop) (F : Nat → Prop)
+    (P : Locals → D → Prop) (s : Stmt APrim) (Q : Locals → D → Locals → D → Prop) : Prop :=
   ∀ (σ : Locals) (l : RLog) (b : Region) (d : D), (σ "lk").toNat = i → CS1 c i l b → M d b → P σ d →
     ∃ (σ' : Locals) (l' : RLog) (b' : Region) (d' : D), Runs (rprimsA εR c) s σ l σ' l' ∧ CS1 c i l' b' ∧
-      M d' b' ∧ σ' "lk" = σ "lk" ∧ Q σ d σ' d'
+      M d' b' ∧ σ' "lk" = σ "lk" ∧ (∀ k, ¬ F k → b' k = b k) ∧ Q σ d σ' d'
 
 section Rules
-variable {εR : REnv} {c : CPU} {i : Nat} {D : Type} {M : D → Region → Prop}
+variable {εR : REnv} {c : CPU} {i : Nat} {D : Type} {M : D → Region → Prop} {F : Nat → Prop}
 
 theorem Triple.conseq {P P' : Locals → D → Prop} {s : Stmt APrim} {Q Q' : Locals → D → Locals → D → Prop}
-    (h : Triple εR c i M P s Q) (hP : ∀ σ d, P' σ d → P σ d)
-    (hQ : ∀ σ d σ' d', P' σ d → Q σ d σ' d' → Q' σ d σ' d') : Triple εR c i M P' s Q' := by
+    (h : Triple εR c i M F P s Q) (hP : ∀ σ d, P' σ d → P σ d)
+    (hQ : ∀ σ d σ' d', P' σ d → Q σ d σ' d' → Q' σ d σ' d') : Triple εR c i M F P' s Q' := by
   intro σ l b d hlk hcs hM hp
-  obtain ⟨σ', l', b', d', hr, hc', hM', hlk', hq⟩ := h σ l b d hlk hcs hM (hP σ d hp)
-  exact ⟨σ', l', b', d', hr, hc', hM', hlk', hQ σ d σ' d' hp hq⟩
+  obtain ⟨σ', l', b', d', hr, hc', hM', hlk', hf, hq⟩ := h σ l b d hlk hcs hM (hP σ d hp)
+  exact ⟨σ', l', b', d', hr, hc', hM', hlk', hf, hQ σ d σ' d' hp hq⟩
+
+/-- A larger footprint is a weaker claim. -/
+theorem Triple.widen {F' : Nat → Prop} {P : Locals → D → Prop} {s : Stmt APrim}
+    {Q : Locals → D → Locals → D → Prop} (h : Triple εR c i M F P s Q) (hF : ∀ k, F k → F' k) :
+    Triple εR c i M F' P s Q := by
+  intro σ l b d hlk hcs hM hp
+  obtain ⟨σ', l', b', d', hr, hc', hM', hlk', hf, hq⟩ := h σ l b d hlk hcs hM hp
+  exact ⟨σ', l', b', d', hr, hc', hM', hlk', fun k hk => hf k (fun h => hk (hF k h)), hq⟩
 
 /-- Sequencing: the first postcondition gives the second precondition. -/
 theorem Triple.seq {P1 P2 : Locals → D → Prop} {s1 s2 : Stmt APrim} {Q1 Q2 : Locals → D → Locals → D → Prop}
-    (h1 : Triple εR c i M P1 s1 Q1) (h2 : Triple εR c i M P2 s2 Q2)
+    (h1 : Triple εR c i M F P1 s1 Q1) (h2 : Triple εR c i M F P2 s2 Q2)
     (hmid : ∀ σ d σ1 d1, P1 σ d → Q1 σ d σ1 d1 → P2 σ1 d1) :
-    Triple εR c i M P1 (.seq s1 s2) (fun σ d σ' d' => ∃ σ1 d1, Q1 σ d σ1 d1 ∧ Q2 σ1 d1 σ' d') := by
+    Triple εR c i M F P1 (.seq s1 s2) (fun σ d σ' d' => ∃ σ1 d1, Q1 σ d σ1 d1 ∧ Q2 σ1 d1 σ' d') := by
   intro σ l b d hlk hcs hM hp
-  obtain ⟨σ1, l1, b1, d1, hr1, hc1, hM1, hlk1, hq1⟩ := h1 σ l b d hlk hcs hM hp
-  obtain ⟨σ2, l2, b2, d2, hr2, hc2, hM2, hlk2, hq2⟩ :=
+  obtain ⟨σ1, l1, b1, d1, hr1, hc1, hM1, hlk1, hf1, hq1⟩ := h1 σ l b d hlk hcs hM hp
+  obtain ⟨σ2, l2, b2, d2, hr2, hc2, hM2, hlk2, hf2, hq2⟩ :=
     h2 σ1 l1 b1 d1 (by rw [hlk1]; exact hlk) hc1 hM1 (hmid σ d σ1 d1 hp hq1)
-  exact ⟨σ2, l2, b2, d2, Runs.seq hr1 hr2, hc2, hM2, hlk2.trans hlk1, σ1, d1, hq1, hq2⟩
+  exact ⟨σ2, l2, b2, d2, Runs.seq hr1 hr2, hc2, hM2, hlk2.trans hlk1,
+    fun k hk => (hf2 k hk).trans (hf1 k hk), σ1, d1, hq1, hq2⟩
+
+/-- **Frame: a primitive in a larger state.** `D'` extends `D`: `π` projects,
+`put` writes back. `M2` is what the larger state adds. If `M2` survives every
+change of the region inside the footprint `F` that the primitive's
+postcondition allows, the primitive has the same interface in the larger
+state. This is how a layer reuses the primitives below it. -/
+theorem Triple.lift {D' : Type} {π : D' → D} {put : D' → D → D'} {M2 : D' → Region → Prop}
+    {P : Locals → D → Prop} {s : Stmt APrim} {Q : Locals → D → Locals → D → Prop}
+    (h : Triple εR c i M F P s Q) (hput : ∀ d' d1, π (put d' d1) = d1)
+    (hM2 : ∀ d' b σ σ' d1 b', M2 d' b → M (π d') b → P σ (π d') → Q σ (π d') σ' d1 →
+      (∀ k, ¬ F k → b' k = b k) → M2 (put d' d1) b') :
+    Triple εR c i (fun d' b => M (π d') b ∧ M2 d' b) F (fun σ d' => P σ (π d')) s
+      (fun σ d' σ' d'' => ∃ d1, d'' = put d' d1 ∧ Q σ (π d') σ' d1) := by
+  intro σ l b d' hlk hcs ⟨hM, h2⟩ hp
+  obtain ⟨σ', l', b', d1, hr, hc', hM', hlk', hf, hq⟩ := h σ l b (π d') hlk hcs hM hp
+  exact ⟨σ', l', b', put d' d1, hr, hc', ⟨by rw [hput]; exact hM', hM2 d' b σ σ' d1 b' h2 hM hp hq hf⟩,
+    hlk', hf, d1, rfl, hq⟩
 
 end Rules
 
@@ -124,7 +153,8 @@ theorem Triple.locked {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε)
     (bound : ALog → Nat) (K : Nat) (hK : ∀ l, bound l ≤ K)
     (hF : LockArray.FairA ε c iv.toNat (ticket (LockArray.projL iv.toNat (apull ε c (erase l)))) bound)
     (σ : Locals) (hσ : σ "lk" = iv) {D : Type} {M : D → Region → Prop} {P : Locals → D → Prop}
-    {s : Stmt APrim} {Q : Locals → D → Locals → D → Prop} (hT : Triple εR c iv.toNat M P s Q) :
+    {F : Nat → Prop} {s : Stmt APrim} {Q : Locals → D → Locals → D → Prop}
+    (hT : Triple εR c iv.toNat M F P s Q) :
     ∃ (σ1 : Locals) (r1 : RLog) (H1 : HLogR), Runs (rprimsA εR c) acquireA σ l σ1 r1 ∧
       (∀ z, z ≠ "t" → z ≠ "n" → z ≠ "_" → z ≠ "v" → σ1 z = σ z) ∧
       ∀ d, M d (hmemR iv.toNat H1) → P σ1 d →
@@ -135,7 +165,7 @@ theorem Triple.locked {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε)
   obtain ⟨σ1, r1, H1, hacq, hcs, hlk1, hfr⟩ :=
     acquire_runs hE hRR hc hRA hl hidle bound K hK hF σ hσ
   refine ⟨σ1, r1, H1, hacq, hfr, fun d hM hP => ?_⟩
-  obtain ⟨σ2, l2, b2, d', hrun, hcs2, hM2, hlk2, hQ⟩ := hT σ1 r1 _ d (by rw [hlk1]) hcs hM hP
+  obtain ⟨σ2, l2, b2, d', hrun, hcs2, hM2, hlk2, -, hQ⟩ := hT σ1 r1 _ d (by rw [hlk1]) hcs hM hP
   obtain ⟨rb, S3, H3, hrel, hl3, hid, hmem⟩ := release_runs (εR := εR) hRR hc hcs2 (hlk2.trans hlk1)
   exact ⟨σ2, rb, S3, H3, d', (Runs.seq hacq (Runs.seq hrun hrel)) .stop, hl3, hid, by rw [hmem]; exact hM2, hQ⟩
 
