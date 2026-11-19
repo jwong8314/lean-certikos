@@ -58,3 +58,4 @@ import CertiKOS.MPTOp
 import CertiKOS.MPTCommon
 import CertiKOS.MPTKern
 import CertiKOS.MPTNew
+import CertiKOS.PTInitGen
