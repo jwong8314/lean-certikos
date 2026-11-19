@@ -17,6 +17,14 @@ allocates with `palloc`), and `id + 2` when container `id` owns it.
   free page is tagged with the caller's tag `o`.
 * `pfreeOSpec`, `pfreeO_guarantee`: **`pfree` checks the owner.** Page `j` is
   freed only if its tag is `o`. The result says whether it was.
+* `ctAllocO_guarantee`, `ctFreeO_guarantee`: **containers own their pages.**
+  `container_alloc` tags the page with the container, and `container_free`
+  gives the page back and lowers the usage only if the container owns it.
+* `ostep_other`: **nobody touches another owner's pages.** An allocation or
+  free by one owner leaves the set of pages of every other owner as it was.
+* `pt_osteps`: **the rely for page tables.** A page table whose pages are the
+  kernel's (`PTOwn`) keeps its invariant `PTInv` across any allocations and
+  frees by containers. `insert_own`: `pt_insert` keeps `PTOwn`.
 -/
 
 set_option linter.deprecated false
@@ -605,5 +613,122 @@ theorem ctFreeO_guarantee {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR
   refine ⟨σ2.set "_" 0, rb, S3, H1, H3, a, hrun, hl3, hid, hidj, ?_⟩
   rw [hR, hfr "id" (by decide) (by decide) (by decide) (by decide),
     hfr "j" (by decide) (by decide) (by decide) (by decide)]
+
+/-! ## What other owners cannot do -/
+
+/-- One step of the owner with tag `o` on the allocation table. -/
+inductive OStep (np : Nat) (o : Val) (a : Region) : Region → Prop
+  | alloc : OStep np o a (pallocOSpec np o a).1
+  | free (j : Nat) : OStep np o a (pfreeOSpec a o j).1
+
+/-- `pfree` succeeds exactly when the caller owns the page. -/
+theorem pfreeO_ok (a : Region) (o : Val) (j : Nat) : (pfreeOSpec a o j).2 = 1 ↔ a j = o := by
+  unfold pfreeOSpec; by_cases h : a j = o <;> simp [h]
+
+/-- **Nobody touches another owner's pages.** A step of the owner tagged `o'`
+leaves the set of pages tagged `o` exactly as it was. -/
+theorem ostep_other {np : Nat} {o o' : Val} {a a' : Region} (ho : o ≠ 0) (hne : o ≠ o')
+    (h : OStep np o' a a') (k : Nat) : a' k = o ↔ a k = o := by
+  cases h with
+  | alloc =>
+    obtain ⟨h1, h2⟩ := pallocO_fresh np o' a
+    by_cases hlt : (pallocOSpec np o' a).2 < np
+    · obtain ⟨hf, hs, hoth⟩ := h1 hlt
+      by_cases hk : k = (pallocOSpec np o' a).2
+      · subst hk
+        rw [hs, hf]; exact ⟨fun e => absurd e.symm hne, fun e => absurd e.symm ho⟩
+      · rw [hoth k hk]
+    · rw [h2 hlt]
+  | free j =>
+    unfold pfreeOSpec
+    by_cases hj : a j = o'
+    · rw [if_pos hj]; dsimp only
+      by_cases hk : k = j
+      · subst hk; rw [setCell_eq]
+        exact ⟨fun e => absurd e.symm ho, fun e => absurd (e.symm.trans hj) hne⟩
+      · rw [setCell_ne _ _ hk]
+    · rw [if_neg hj]
+
+/-! ## Page tables under other owners -/
+
+open KernPT
+
+variable {nd ne np : Nat}
+
+/-- The pages of a page table are the kernel's: every present directory entry
+is the address of a page tagged 1. -/
+def PTOwn (nd ne np : Nat) (b a : Region) : Prop :=
+  ∀ d, d < nd → b d ≠ 0 → ∃ p, p < np ∧ b d = BitVec.ofNat 32 (nd + p * ne) ∧ a p = 1
+
+/-- **The page-table invariant is stable** under any change of the allocation
+table that keeps the kernel's pages. -/
+theorem pt_stable {b a a' : Region} (hI : PTInv nd ne np b a) (hO : PTOwn nd ne np b a)
+    (h : ∀ k, a k = 1 → a' k = 1) : PTInv nd ne np b a' ∧ PTOwn nd ne np b a' := by
+  have hO' : PTOwn nd ne np b a' := fun d hd hz => by
+    obtain ⟨p, hp, hb, ha⟩ := hO d hd hz; exact ⟨p, hp, hb, h p ha⟩
+  refine ⟨⟨fun d hd hz => ?_, hI.inj⟩, hO'⟩
+  obtain ⟨p, hp, hb, ha⟩ := hO' d hd hz
+  exact ⟨p, hp, hb, by rw [ha]; decide⟩
+
+/-- **A container's `palloc` or `pfree` keeps every page table valid.** -/
+theorem pt_ostep {b a a' : Region} (hI : PTInv nd ne np b a) (hO : PTOwn nd ne np b a) {o : Val}
+    (ho : o ≠ 1) (h : OStep np o a a') : PTInv nd ne np b a' ∧ PTOwn nd ne np b a' :=
+  pt_stable hI hO (fun k hk => (ostep_other (by decide) (Ne.symm ho) h k).2 hk)
+
+/-- Any number of steps by owners other than the kernel. -/
+inductive OSteps (np : Nat) : Region → Region → Prop
+  | refl (a : Region) : OSteps np a a
+  | step {a a' a'' : Region} (o : Val) : o ≠ 1 → OStep np o a a' → OSteps np a' a'' → OSteps np a a''
+
+/-- **The rely for page tables.** Whatever containers allocate and free in
+between, the page table still satisfies its invariant. -/
+theorem pt_osteps {b a a' : Region} (h : OSteps np a a') :
+    PTInv nd ne np b a → PTOwn nd ne np b a → PTInv nd ne np b a' ∧ PTOwn nd ne np b a' := by
+  induction h with
+  | refl => exact fun hI hO => ⟨hI, hO⟩
+  | step o ho hs _ ih =>
+    intro hI hO
+    obtain ⟨hI', hO'⟩ := pt_ostep hI hO ho hs
+    exact ih hI' hO'
+
+theorem shape_own {b b' A' a : Region} {d e v : Val} {p : Nat} (hS : Shape nd ne b b' A' a d e v p)
+    (hp : p < np) (hO : PTOwn nd ne np b a) (hAp : A' p = 1) (hmono : ∀ q, a q = 1 → A' q = 1) :
+    PTOwn nd ne np b' A' := by
+  intro d' hd' hz'
+  by_cases hdd : d' = d.toNat
+  · subst hdd; exact ⟨p, hp, hS.pde, hAp⟩
+  · rw [hS.dir _ hd' hdd] at hz' ⊢
+    obtain ⟨q, hq, hbq, haq⟩ := hO _ hd' hz'
+    exact ⟨q, hq, hbq, hmono q haq⟩
+
+/-- **`pt_insert` keeps its pages the kernel's.** The table it may allocate is
+tagged 1 (`pallocSpec` is `pallocOSpec` with tag 1). -/
+theorem insert_own (hnd : 0 < nd) (hsz : nd + np * ne < 2 ^ 32) {b a : Region}
+    (hI : PTInv nd ne np b a) (hO : PTOwn nd ne np b a) (d e v : Val) (hd : d.toNat < nd)
+    (he : e.toNat < ne) :
+    PTOwn nd ne np (ptInsertSpec np (BitVec.ofNat 32 nd) ne b (pallocSpec np a).2 d e v)
+      (if b d.toNat = 0 then (pallocSpec np a).1 else a) := by
+  obtain ⟨hf1, hf2⟩ := palloc_fresh np a
+  by_cases hz : b d.toNat = 0
+  · by_cases hp : (pallocSpec np a).2 = np
+    · rw [ptInsertSpec, if_pos hz, if_pos hp, if_pos hz, (hf2 (by rw [hp]; exact Nat.lt_irrefl _)).1]
+      exact hO
+    · have hlt : (pallocSpec np a).2 < np := Nat.lt_of_le_of_ne (palloc_le np a) hp
+      obtain ⟨hfree, hset, hoth, -⟩ := hf1 hlt
+      have hS := shape_new (A' := (pallocSpec np a).1) hnd hsz hI d e v hd he hz hlt hfree (by rw [hset]; decide) (fun q hq => by
+        by_cases hqp : q = (pallocSpec np a).2
+        · rw [hqp] at hq; exact absurd hfree hq
+        · rw [hoth q hqp]; exact hq)
+      rw [ptInsertSpec, if_pos hz, if_neg hp, if_pos hz]
+      exact shape_own hS hlt hO hset (fun q hq => by
+        by_cases hqp : q = (pallocSpec np a).2
+        · rw [hqp, hfree] at hq; exact absurd hq (by decide)
+        · rw [hoth q hqp]; exact hq)
+  · obtain ⟨p, hp, hS⟩ := shape_old hsz hI d e v hd he hz
+    rw [ptInsertSpec, if_neg hz, if_neg hz]
+    obtain ⟨q, hq, hbq, haq⟩ := hO _ hd hz
+    have hpq : p = q :=
+      addr_inj (Nat.lt_of_le_of_lt (Nat.zero_le _) he) hsz hp hq ((hS.old hz).symm.trans hbq)
+    exact shape_own hS hp hO (by rw [hpq]; exact haq) (fun q hq => hq)
 
 end KernOwner
