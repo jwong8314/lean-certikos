@@ -580,4 +580,188 @@ theorem fillBody_run (εR : REnv) {c : CPU} {i : Nat} {l : RLog} {b : Region} (h
         obtain ⟨l', hr, c'⟩ := setNorm_run εR hcs hmax hlkσ2 hiσ2 hp 0
         exact hfin 0 hcode ⟨l', Runs.ite_false (by rw [hne, hf, hisn]; decide) hr, c'⟩
 
+/-- The region once the first `m` pages have their type: those entries are
+written, everything from cell `3 * m` on is as in `b0`. -/
+def Filled (kl kh : Nat) (mm : MMTable) (size : Nat) (b0 : Region) (m : Nat) (b : Region) : Prop :=
+  (∀ k, 3 * m ≤ k → b k = b0 k) ∧
+  ∀ p, p < m → b (3 * p) = BitVec.ofNat 32 (entryCode kl kh mm size p) ∧ b (3 * p + 1) = 0 ∧ b (3 * p + 2) = 0
+
+theorem filled_step {kl kh : Nat} {mm : MMTable} {size : Nat} {b0 b : Region} {m : Nat}
+    (h : Filled kl kh mm size b0 m b) :
+    Filled kl kh mm size b0 (m + 1) (set3 b m (BitVec.ofNat 32 (entryCode kl kh mm size m))) := by
+  refine ⟨fun k hk => ?_, fun p hp => ?_⟩
+  · simp only [set3, setCell]
+    rw [if_neg (by omega), if_neg (by omega), if_neg (by omega)]; exact h.1 k (by omega)
+  · by_cases e : p = m
+    · subst e
+      refine ⟨?_, ?_, ?_⟩ <;> simp (disch := omega) only [set3, setCell, if_pos, if_neg, ↓reduceIte]
+    · obtain ⟨h1, h2, h3⟩ := h.2 p (by omega)
+      refine ⟨?_, ?_, ?_⟩
+      · simp only [set3, setCell]; rw [if_neg (by omega), if_neg (by omega), if_neg (by omega)]; exact h1
+      · simp only [set3, setCell]; rw [if_neg (by omega), if_neg (by omega), if_neg (by omega)]; exact h2
+      · simp only [set3, setCell]; rw [if_neg (by omega), if_neg (by omega), if_neg (by omega)]; exact h3
+
+theorem matchMM_of_eq {mmb size : Nat} {mm : MMTable} {b b' : Region} (hM : MatchMM mmb mm size b)
+    (h : ∀ k, mmb ≤ k → b' k = b k) : MatchMM mmb mm size b' := by
+  refine ⟨by rw [h mmb (Nat.le_refl _)]; exact hM.msize, fun j hj => ?_⟩
+  obtain ⟨s, l, p, hm, h1, h2, h3⟩ := hM.mat j hj
+  exact ⟨s, l, p, hm, by rw [h _ (by omega)]; exact h1, by rw [h _ (by omega)]; exact h2,
+    by rw [h _ (by omega)]; exact h3⟩
+
+/-- **The second loop** gives every page below `nps` its type, and writes
+nothing else. -/
+theorem fillLoop_run (εR : REnv) {c : CPU} {i : Nat} {l : RLog} {b0 : Region} (hcs : CS1 c i l b0)
+    {mmb size maxpage kl kh nps : Nat} {mm : MMTable} (hmb : mmb + 1 + 3 * size ≤ 2 ^ 32)
+    (hmax : 3 * maxpage < mmb) (hkl : kl < 2 ^ 32) (hkh : kh < 2 ^ 20) (hM : MatchMM mmb mm size b0)
+    (hv : MM_valid mm size) (hc : MM_correct mm size) (hnps : nps ≤ maxpage) (σ : Locals)
+    (hlk : (σ "lk").toNat = i) (hi : σ "i" = 0) (hsz : σ "size" = BitVec.ofNat 32 size)
+    (hn : σ "nps" = BitVec.ofNat 32 nps) :
+    ∃ σ' l' b', Runs (rprimsA εR c) (fillLoop mmb kl kh) σ l σ' l' ∧ CS1 c i l' b' ∧
+      Filled kl kh mm size b0 nps b' ∧ σ' "lk" = σ "lk" := by
+  have hmax' : 3 * maxpage < 2 ^ 32 := by omega
+  let I : Locals → RLog → Prop := fun τ l' => τ "lk" = σ "lk" ∧ τ "size" = BitVec.ofNat 32 size ∧
+    τ "nps" = BitVec.ofNat 32 nps ∧ ∃ m b', m ≤ nps ∧ τ "i" = BitVec.ofNat 32 m ∧ CS1 c i l' b' ∧
+      Filled kl kh mm size b0 m b'
+  have hbody : ∀ τ l', I τ l' → ¬ (Expr.bin .ltu (.var "i") (.var "nps")).eval τ = 0 →
+      ∃ τ' l'', Runs (rprimsA εR c) (fillBody mmb kl kh) τ l' τ' l'' ∧ I τ' l'' ∧
+        nps - (τ' "i").toNat < nps - (τ "i").toNat := by
+    rintro τ l' ⟨hlkτ, hszτ, hnτ, m, b', hm, hiτ, hcs', hF⟩ hg
+    rw [ltu_eval (σ := τ) (ea := .var "i") (eb := .var "nps") hiτ hnτ (by omega) (by omega)] at hg
+    have hmlt : m < nps := by
+      by_cases h : m < nps
+      · exact h
+      · rw [if_neg h] at hg; exact absurd rfl hg
+    have hM' : MatchMM mmb mm size b' := matchMM_of_eq hM (fun k hk => hF.1 k (by omega))
+    obtain ⟨τ', l'', hr, hcs'', hi', hsz', hn', hlk'⟩ := fillBody_run εR hcs' hmb hmax' hkl hkh hM' hv hc
+      (σ := τ) (by rw [hlkτ]; exact hlk) hiτ (by omega) hszτ
+    refine ⟨τ', l'', hr, ⟨hlk'.trans hlkτ, hsz'.trans hszτ, hn'.trans hnτ, m + 1, _, hmlt, hi', hcs'',
+      filled_step hF⟩, ?_⟩
+    rw [hi', hiτ, tn (show m + 1 < 2 ^ 32 by omega), tn (show m < 2 ^ 32 by omega)]; omega
+  obtain ⟨σ', l', hr, ⟨hlk', hsz', hn', m, b', hm, hi', hcs', hF⟩, h0⟩ :=
+    while_inv (εR := εR) (c := c) I (fun τ => nps - (τ "i").toNat) hbody nps σ l (by omega)
+      ⟨rfl, hsz, hn, 0, b0, by omega, hi, hcs, fun k _ => rfl, fun p hp => by omega⟩
+  rw [ltu_eval (σ := σ') (ea := .var "i") (eb := .var "nps") hi' hn' (by omega) (by omega)] at h0
+  have hme : m = nps := by
+    by_cases h : m < nps
+    · rw [if_pos h] at h0; cases h0
+    · omega
+  subst hme
+  exact ⟨σ', l', b', hr, hcs', hF, hlk'⟩
+
+/-! ## `mem_init` -/
+
+/-- The body of **`mem_init`**. The call to `boot_loader` is not here: its
+effect, the memory map at `mmb`, is the precondition `MatchMM`.
+
+`i = 0; size = get_size(); nps = 0; while (i < size) {...}
+ set_nps(nps); i = 0; while (i < nps) {...}` -/
+def memInitCS (mmb maxpage kl kh : Nat) : Stmt APrim :=
+  .seq (.assign "i" (.const 0)) (.seq (getSizeS mmb "size") (.seq (.assign "nps" (.const 0))
+    (.seq (npsLoop mmb) (.seq (setNpsS maxpage (.var "nps")) (.seq (.assign "i" (.const 0))
+      (fillLoop mmb kl kh))))))
+
+/-- **What `mem_init`'s code does to the region.** -/
+theorem memInitCS_run (εR : REnv) {c : CPU} {i : Nat} {l : RLog} {b : Region} (hcs : CS1 c i l b)
+    {mmb size maxpage kl kh : Nat} {mm : MMTable} (hmb : mmb + 1 + 3 * size ≤ 2 ^ 32)
+    (hmax : 3 * maxpage < mmb) (hmp : 2 ^ 20 ≤ maxpage) (hkl : kl < 2 ^ 32) (hkh : kh < 2 ^ 20)
+    (hM : MatchMM mmb mm size b) (hv : MM_valid mm size) (hc : MM_correct mm size) (σ : Locals)
+    (hlk : (σ "lk").toNat = i) :
+    ∃ σ' l' b', Runs (rprimsA εR c) (memInitCS mmb maxpage kl kh) σ l σ' l' ∧ CS1 c i l' b' ∧
+      Filled kl kh mm size (setCell b (3 * maxpage) (BitVec.ofNat 32 (cnps mm size))) (cnps mm size) b' ∧
+      σ' "lk" = σ "lk" := by
+  let σ1 := σ.set "i" 0
+  let σ2 := σ1.set "size" (BitVec.ofNat 32 size)
+  let σ3 := σ2.set "nps" 0
+  have h1 : Runs (rprimsA εR c) (.assign "i" (.const 0)) σ l σ1 l := Runs.assign _ _
+  have h2 : Runs (rprimsA εR c) (getSizeS mmb "size") σ1 l σ2 l := by
+    have h := rd_run (εR := εR) hcs (σ := σ1) (by simpa [σ1, Locals.set] using hlk) "size"
+      (.const (BitVec.ofNat 32 mmb)) (n := mmb) (tn (by omega))
+    rw [hM.msize] at h; exact h
+  have h3 : Runs (rprimsA εR c) (.assign "nps" (.const 0)) σ2 l σ3 l := Runs.assign _ _
+  obtain ⟨σ4, h4, hn4, hsz4, hlk4⟩ := npsLoop_run εR hcs hmb hM hv σ3
+    (by simpa [σ3, σ2, σ1, Locals.set] using hlk) (by simp [σ3, σ2, σ1, Locals.set])
+    (by simp [σ3, σ2, Locals.set]) (by simp [σ3])
+  have hlkσ4 : (σ4 "lk").toNat = i := by rw [hlk4]; simpa [σ3, σ2, σ1, Locals.set] using hlk
+  obtain ⟨l5, h5, c5⟩ := wr_run (εR := εR) hcs hlkσ4 (.const (BitVec.ofNat 32 (3 * maxpage))) (.var "nps")
+    (n := 3 * maxpage) (v := BitVec.ofNat 32 (cnps mm size)) (tn (by omega)) hn4
+  let σ6 := (σ4.set "_" 0).set "i" 0
+  have h6 : Runs (rprimsA εR c) (.assign "i" (.const 0)) (σ4.set "_" 0) l5 σ6 l5 := Runs.assign _ _
+  have hM0 : MatchMM mmb mm size (setCell b (3 * maxpage) (BitVec.ofNat 32 (cnps mm size))) :=
+    matchMM_of_eq hM (fun k hk => by simp only [setCell]; rw [if_neg (by omega)])
+  have hcl := cnps_le hv size (Nat.le_refl _)
+  obtain ⟨σ7, l7, b7, h7, c7, hF, hlk7⟩ := fillLoop_run εR c5 hmb hmax hkl hkh hM0 hv hc
+    (nps := cnps mm size) (by omega) σ6 (by simpa [σ6, Locals.set] using hlkσ4) (by simp [σ6])
+    (by simp [σ6, Locals.set, hsz4]) (by simp [σ6, Locals.set, hn4])
+  refine ⟨σ7, l7, b7, Runs.seq h1 (Runs.seq h2 (Runs.seq h3 (Runs.seq h4 (Runs.seq h5 (Runs.seq h6 h7))))),
+    c7, hF, ?_⟩
+  rw [hlk7]; simp [σ6, Locals.set, hlk4, σ3, σ2, σ1]
+
+theorem calAT_frame (kl kh nps : Nat) (mm : MMTable) (size : Nat) (At : ATable) :
+    ∀ n i, n < i → Calculate_AT kl kh nps mm size n At i = At i
+  | 0, i, h => by simp only [Calculate_AT]; rw [setAt_ne _ _ (by omega)]
+  | n + 1, i, h => by
+    simp only [Calculate_AT]
+    rw [setAt_ne _ _ (by omega)]; exact calAT_frame kl kh nps mm size At n i (by omega)
+
+theorem atEntry_code (kl kh nps : Nat) (mm : MMTable) (size : Nat) {i : Nat} (hi : i < nps) :
+    ∃ t, atEntry kl kh nps mm size i = .ATValid false t 0 ∧ ZtoATType (entryCode kl kh mm size i) = some t := by
+  unfold atEntry entryCode
+  by_cases h1 : kl ≤ i
+  · by_cases h2 : i < kh
+    · have hk : ¬ (i < kl ∨ kh ≤ i) := by rintro (h | h) <;> omega
+      rw [if_pos h1, if_pos (by simp only [Nat.lt_min]; omega), if_neg hk]
+      cases mmKernValidB mm i size
+      · exact ⟨_, rfl, rfl⟩
+      · exact ⟨_, rfl, rfl⟩
+    · rw [if_pos h1, if_neg (by simp only [Nat.lt_min]; omega), if_pos (Or.inr (by omega))]
+      exact ⟨_, rfl, rfl⟩
+  · rw [if_neg h1, if_pos (Or.inl (by omega))]; exact ⟨_, rfl, rfl⟩
+
+/-- **`mem_init` refines `mem_init_spec`.** In a critical section, on a
+region holding an allocation table and the boot loader's memory map, the C
+code runs to completion and leaves the allocation table of the
+specification. It writes only the allocation table's cells. -/
+theorem mem_init_triple (εR : REnv) (c : CPU) (i : Nat) {mmb size maxpage kl kh : Nat} {mm : MMTable}
+    (hmb : mmb + 1 + 3 * size ≤ 2 ^ 32) (hmax : 3 * maxpage < mmb) (hmp : 2 ^ 20 ≤ maxpage) (hkl : 0 < kl)
+    (hkl' : kl < 2 ^ 32) (hkh : kh < 2 ^ 20) (hsz : 0 < size) (hv : MM_valid mm size)
+    (hc : MM_correct mm size) :
+    Triple εR c i (fun (d : PData) b => MatchD maxpage d b ∧ MatchMM mmb mm size b)
+      (fun k => k ≤ 3 * maxpage) (fun _ d => d.init = false) (memInitCS mmb maxpage kl kh)
+      (fun _ d _ d' => mem_init_spec kl kh mm size d = some d') := by
+  rintro σ l b d hlk hcs ⟨hD, hM⟩ hin
+  obtain ⟨σ', l', b', hr, hcs', hF, hlk'⟩ := memInitCS_run εR hcs hmb hmax hmp hkl' hkh hM hv hc σ hlk
+  rw [cnps_real hsz] at hF
+  have hnb : real_nps mm size ≤ 2 ^ 20 := by rw [← cnps_real hsz]; exact cnps_le hv size (Nat.le_refl _)
+  have hn1 : 0 < real_nps mm size := by
+    obtain ⟨s, ln, q, hm, -, -⟩ := hv 0 hsz
+    have := calnps_ge mm (size - 1) 0 (Nat.zero_le _)
+    unfold maxs_at_i at this; rw [hm] at this
+    have h1 : 1 ≤ (s + ln) / 4096 + 1 := by omega
+    exact Nat.lt_of_lt_of_le h1 this
+  have hb0 : ∀ k, k ≠ 3 * maxpage → 3 * real_nps mm size ≤ k → b' k = b k := by
+    intro k h1 h2
+    rw [hF.1 k h2]; simp only [setCell]; rw [if_neg h1]
+  refine ⟨σ', l', b', { d with AT := real_AT kl kh mm size d.AT, nps := real_nps mm size, init := true },
+    hr, hcs', ⟨⟨fun p hp => ?_, ?_⟩, matchMM_of_eq hM (fun k hk => hb0 k (by omega) (by omega))⟩, hlk',
+    fun k hk => hb0 k (by omega) (by omega), by show mem_init_spec kl kh mm size d = some _; unfold mem_init_spec; rw [if_pos hin]⟩
+  · show MatchInfo (real_AT kl kh mm size d.AT p) _ _ _
+    by_cases hpn : p < real_nps mm size
+    · obtain ⟨h1, h2, h3⟩ := hF.2 p hpn
+      obtain ⟨t, ht, hz⟩ := atEntry_code kl kh (real_nps mm size) mm size hpn
+      unfold real_AT
+      rw [calAT_get kl kh _ mm size d.AT hkl _ p (by omega), ht, h1, h2, h3]
+      have hcb : entryCode kl kh mm size p < 2 ^ 32 := by
+        unfold entryCode; split
+        · decide
+        · split <;> decide
+      exact ⟨by rw [tn hcb]; exact hz, rfl, rfl⟩
+    · unfold real_AT
+      rw [calAT_frame kl kh _ mm size d.AT (real_nps mm size - 1) p (by omega), hb0 (3 * p + 2) (by omega) (by omega),
+        hb0 (3 * p + 1) (by omega) (by omega), hb0 (3 * p) (by omega) (by omega)]
+      exact hD.mat p hp
+  · show real_nps mm size = (b' (3 * maxpage)).toNat
+    rw [hF.1 _ (by omega)]
+    simp only [setCell, if_pos]
+    exact (tn (by omega)).symm
+
 end MALInit
