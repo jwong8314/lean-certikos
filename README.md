@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-56 Lean files, about 25,000 lines. No `sorry`. The main theorems depend only on
+57 Lean files, about 26,000 lines. No `sorry`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-18)
@@ -106,7 +106,10 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
     state, specifications and C code. `palloc`, `pfree`, `container_alloc`,
     `container_split` and the container getters are proved to refine
     `palloc'_spec`, `pfree'_spec`, `container_alloc_spec`,
-    `container_split_spec` and the getter specs. The files above and below
+    `container_split_spec` and the getter specs. mCertiKOS's invariants on
+    these two layers (`Container_valid`, `quota_bounded_AT`, the allocation-table
+    invariant) are ported and proved preserved by the specifications
+    (`MContainerInv.lean`). The files above and below
     this one in the list are earlier prototypes with their own
     specifications; [KERNEL.md](KERNEL.md) says which is which.
   - **Page ownership** (`KernOwner.lean`): the allocation table records who

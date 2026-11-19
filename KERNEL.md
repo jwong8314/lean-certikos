@@ -70,7 +70,7 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | `MPTKern`, `MPTInit` | kernel page table, `pt_init`, paging on | missing |
 | `MPTNew` | `pt_new`, `pt_resv`, `pmap_init` | missing |
 | `MShareIntro`, `MShareOp`, `MShare` | shared memory | missing |
-| abstract ownership | `pperm`, the logical table `LAT` with its owner lists, `consistent_ppage` | `pperm` and `consistent_ppage` stated in `MALOp.lean`; not yet shown preserved. `LAT` missing. `KernOwner.lean` is a prototype with a different design |
+| abstract ownership | `pperm`, the logical table `LAT` with its owner lists, `consistent_ppage` | `pperm` and `consistent_ppage` are in `MALOp.lean` and proved preserved. `LAT` missing. `KernOwner.lean` is a prototype with a different design |
 | **Process management** (`proc`) | | |
 | `PKContext`, `PKContextNew` | kernel contexts, `kctxt_switch`, `kctxt_new` | missing (needs assembly and a machine model) |
 | `PThreadIntro`, `PThreadInit` | thread control blocks | missing |
@@ -93,8 +93,9 @@ Even for the ported layers:
 - `ikern` and `ihost` are dropped from the specifications (no machine model).
 - Indices are `Nat` rather than `Z`.
 - The objects live in lock regions, not in CompCert memory.
-- `high_level_invariant` is stated (`ATInv`) and used as a hypothesis. It is
-  not yet proved to be preserved by each primitive.
+- `high_level_invariant`: the parts about the allocation table and the
+  containers are proved preserved by the specifications
+  (`MContainerInv.lean`). They are not yet carried along the shared log.
 - Boot (`mem_init`, `container_init`) is not ported, so nothing establishes
   the invariant initially.
 
@@ -136,11 +137,38 @@ Each port has the same shape, which is mCertiKOS's own two steps.
   `container_split_spec`. The code makes no checks. The specification's
   conditions are what make the writes land on the right cells.
 
-Not done in the ports: the invariants (`ATInv`, `consistent_ppage`,
-`Container_valid`, `quota_bounded_AT`) are hypotheses or only stated. None is
-proved to be preserved. `container_alloc` takes the allocation table's lock
-inside the container table's, so the allocation table it changes is the one
-`palloc` finds then, not one fixed when `container_alloc` starts.
+### `MContainerInv.lean` and the end of `MALOp.lean`: the invariants
+
+mCertiKOS shows that every primitive of a layer preserves
+`high_level_invariant`. The parts about these two layers are ported and
+proved, on the specifications.
+
+| Invariant (mCertiKOS name) | Preserved by |
+|---|---|
+| `valid_nps`, `AT_kern`, `AT_usr`, `consistent_ppage` (here `ATInv`) | `palloc'_spec` (`palloc_inv`), `pfree'_spec` (`pfree_inv`), `container_alloc_spec` (`alloc_at_inv`) |
+| `Container_valid`, all thirteen fields | `container_alloc_spec` (`alloc_valid`), `container_split_spec` (`split_valid`) |
+| `quota_bounded_AT` | `container_alloc_spec` (`alloc_quota_bounded`), `container_split_spec` (`split_quota_bounded`) |
+
+- `alloc_defined`: under `Container_valid` and `quota_bounded_AT`,
+  `container_alloc_spec` is defined. A container below its quota always finds
+  a free page (mCertiKOS's `quota_bounded_AT_first_free`). So the case where
+  the specification is undefined cannot happen.
+- `split_valid` derives that the child slot is free from the invariant: a
+  used container at that index would have to be in its parent's child list,
+  and the list's index range excludes it.
+
+Not done in the ports:
+
+- The invariants are preserved by the specifications. They are not yet
+  carried along the shared log, where another CPU may run between
+  `container_alloc`'s two critical sections. The `*_refines` theorems still
+  take them as hypotheses.
+- `palloc'_spec` and `pfree'_spec` alone do not preserve `quota_bounded_AT`.
+  In mCertiKOS they are not exported above the container layer.
+- Boot is not ported, so nothing establishes the invariants initially.
+- The getters and the setters of `MBoot` (`set_at_u_spec` and the like) have
+  no invariant lemmas. The setters do not preserve the invariant one at a
+  time.
 
 # Prototype files
 
