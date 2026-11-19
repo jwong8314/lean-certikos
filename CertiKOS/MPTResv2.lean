@@ -203,6 +203,68 @@ theorem ptInsert_keeps {maxpage kl kh num_proc nn vadr padr perm : Nat} {d d' : 
               exact ⟨h1, fun hu => by rw [h2]; exact hu2 hu, by rcases hv with h0 | ⟨-, h3⟩ <;> omega⟩
   · rw [if_neg hc] at h; cases h
 
+/-! ## `pt_insert`'s specification keeps the paging flags -/
+
+theorem insertPTE_flags {nn vadr padr : Nat} {p : PTPerm} {d d' : PTData}
+    (h : ptInsertPTE_spec nn vadr padr p d = some d') : d'.pg = d.pg ∧ d'.ipt = d.ipt := by
+  unfold ptInsertPTE_spec at h
+  repeat' (split at h)
+  all_goals first
+    | (cases h; exact ⟨rfl, rfl⟩)
+    | cases h
+
+theorem allocPDE_flags {num_proc nn vadr : Nat} {d d' : PTData} {v : Nat}
+    (h : ptAllocPDE_spec num_proc nn vadr d = some (d', v)) : d'.pg = d.pg ∧ d'.ipt = d.ipt := by
+  unfold ptAllocPDE_spec at h
+  simp only at h
+  repeat' (split at h)
+  all_goals first
+    | (cases h; exact ⟨rfl, rfl⟩)
+    | cases h
+
+theorem ptInsert_flags {maxpage num_proc nn vadr padr perm : Nat} {d d' : PTData} {r : Nat}
+    (h : ptInsert_spec maxpage num_proc nn vadr padr perm d = some (d', r)) :
+    d'.pg = d.pg ∧ d'.ipt = d.ipt := by
+  unfold ptInsert_spec at h
+  by_cases hc : d.init = true ∧ d.ipt = true ∧ d.pg = true ∧ pt_Arg num_proc nn vadr padr d.nps
+  · rw [if_pos hc] at h
+    cases hz : ZtoPerm perm with
+    | none => rw [hz] at h; cases h
+    | some p =>
+      rw [hz] at h; simp only at h
+      cases hp : d.ptpool nn (PDX vadr) with
+      | PDEID => rw [hp] at h; cases h
+      | PDEUndef => rw [hp] at h; cases h
+      | PDEValid pi pdt =>
+        rw [hp] at h; simp only at h
+        cases hi : ptInsertPTE_spec nn vadr padr p d with
+        | none => rw [hi] at h; cases h
+        | some d1 =>
+          rw [hi] at h
+          simp only [Option.some.injEq, Prod.mk.injEq] at h; obtain ⟨rfl, -⟩ := h
+          exact insertPTE_flags hi
+      | PDEUnPresent =>
+        rw [hp] at h; simp only at h
+        cases ha : ptAllocPDE_spec num_proc nn vadr d with
+        | none => rw [ha] at h; cases h
+        | some pr =>
+          obtain ⟨d2, v⟩ := pr
+          rw [ha] at h; simp only at h
+          obtain ⟨f1, f2⟩ := allocPDE_flags ha
+          by_cases hv0 : v = 0
+          · rw [if_pos hv0] at h
+            simp only [Option.some.injEq, Prod.mk.injEq] at h; obtain ⟨rfl, -⟩ := h
+            exact ⟨f1, f2⟩
+          · rw [if_neg hv0] at h
+            cases hi : ptInsertPTE_spec nn vadr padr p d2 with
+            | none => rw [hi] at h; cases h
+            | some d3 =>
+              rw [hi] at h
+              simp only [Option.some.injEq, Prod.mk.injEq] at h; obtain ⟨rfl, -⟩ := h
+              obtain ⟨g1, g2⟩ := insertPTE_flags hi
+              exact ⟨g1.trans f1, g2.trans f2⟩
+  · rw [if_neg hc] at h; cases h
+
 /-! ## `pt_resv2` -/
 
 /-- **`ptResv2_spec`**: allocate a page from process `n`'s quota, map it at
@@ -252,6 +314,35 @@ theorem ptResv2_keeps {maxpage kl kh num_proc n vadr perm n' vadr' perm' : Nat} 
         · rw [if_neg hvm] at h
           obtain ⟨hI3, hu3, hr⟩ := ptInsert_keeps hI2 h
           exact ⟨hI3, fun hu => hu3 (hu1 hu), hr⟩
+
+/-- **`ptResv2_spec` keeps the paging flags.** -/
+theorem ptResv2_flags {maxpage num_proc n vadr perm n' vadr' perm' : Nat} {d d' : PTData} {r : Nat}
+    (h : ptResv2_spec maxpage num_proc n vadr perm n' vadr' perm' d = some (d', r)) :
+    d'.pg = d.pg ∧ d'.ipt = d.ipt := by
+  unfold ptResv2_spec at h
+  cases hA : container_alloc_spec n d.toRData with
+  | none => rw [hA] at h; cases h
+  | some pr =>
+    obtain ⟨r1, b⟩ := pr
+    rw [hA] at h; simp only at h
+    by_cases hb : b = 0
+    · rw [if_pos hb] at h
+      simp only [Option.some.injEq, Prod.mk.injEq] at h; obtain ⟨rfl, -⟩ := h
+      exact ⟨rfl, rfl⟩
+    · rw [if_neg hb] at h
+      cases h1 : ptInsert_spec maxpage num_proc n vadr b perm { d with toRData := r1 } with
+      | none => rw [h1] at h; cases h
+      | some pr2 =>
+        obtain ⟨d2, v⟩ := pr2
+        rw [h1] at h; simp only at h
+        obtain ⟨f1, f2⟩ := ptInsert_flags h1
+        by_cases hvm : v = maxpage + 1
+        · rw [if_pos hvm] at h
+          simp only [Option.some.injEq, Prod.mk.injEq] at h; obtain ⟨rfl, -⟩ := h
+          exact ⟨f1, f2⟩
+        · rw [if_neg hvm] at h
+          obtain ⟨g1, g2⟩ := ptInsert_flags h
+          exact ⟨g1.trans f1, g2.trans f2⟩
 
 /-- ```
 pi = container_alloc(proc_index);
