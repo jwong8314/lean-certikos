@@ -56,6 +56,7 @@ import CertiKOS.MALInitC
 import CertiKOS.MContainer
 import CertiKOS.MContainerInv
 import CertiKOS.MContainerInit
+import CertiKOS.MContainerInitC
 import CertiKOS.MPTIntro
 import CertiKOS.MPTOp
 import CertiKOS.MPTCommon

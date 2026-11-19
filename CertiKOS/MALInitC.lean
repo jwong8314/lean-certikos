@@ -81,7 +81,7 @@ theorem inc_eval {σ : Locals} {x : Ident} {m : Nat} (h : σ x = BitVec.ofNat 32
 
 /-- The boot loader leaves the memory map at `mmb`: the number of regions,
 then start, length and "usable" of each. -/
-structure MatchMM (mmb : Nat) (mm : MMTable) (size : Nat) (b : Region) : Prop where
+structure MatchMMap (mmb : Nat) (mm : MMTable) (size : Nat) (b : Region) : Prop where
   msize : b mmb = BitVec.ofNat 32 size
   mat : ∀ j, j < size → ∃ s l p, mm j = .MMValid s l p ∧ b (mmb + 1 + 3 * j) = BitVec.ofNat 32 s ∧
     b (mmb + 1 + 3 * j + 1) = BitVec.ofNat 32 l ∧
@@ -176,7 +176,7 @@ def npsLoop (mmb : Nat) : Stmt APrim := .while (.bin .ltu (.var "i") (.var "size
 
 /-- **The first loop computes the page count.** It only reads. -/
 theorem npsLoop_run (εR : REnv) {c : CPU} {i : Nat} {l : RLog} {b : Region} (hcs : CS1 c i l b)
-    {mmb size : Nat} {mm : MMTable} (hmb : mmb + 1 + 3 * size ≤ 2 ^ 32) (hM : MatchMM mmb mm size b)
+    {mmb size : Nat} {mm : MMTable} (hmb : mmb + 1 + 3 * size ≤ 2 ^ 32) (hM : MatchMMap mmb mm size b)
     (hv : MM_valid mm size) (σ : Locals) (hlk : (σ "lk").toNat = i) (hi : σ "i" = 0)
     (hsz : σ "size" = BitVec.ofNat 32 size) (hn : σ "nps" = 0) :
     ∃ σ', Runs (rprimsA εR c) (npsLoop mmb) σ l σ' l ∧ σ' "nps" = BitVec.ofNat 32 (cnps mm size) ∧
@@ -332,7 +332,7 @@ def ScanPost (mm : MMTable) (size p : Nat) (m : Nat) (σ : Locals) : Prop :=
 
 /-- **The inner loop.** It only reads. -/
 theorem scanLoop_run (εR : REnv) {c : CPU} {i : Nat} {l : RLog} {b : Region} (hcs : CS1 c i l b)
-    {mmb size : Nat} {mm : MMTable} (hmb : mmb + 1 + 3 * size ≤ 2 ^ 32) (hM : MatchMM mmb mm size b)
+    {mmb size : Nat} {mm : MMTable} (hmb : mmb + 1 + 3 * size ≤ 2 ^ 32) (hM : MatchMMap mmb mm size b)
     (hv : MM_valid mm size) {p : Nat} (hp : (p + 1) * 4096 < 2 ^ 32) (σ : Locals) (hlk : (σ "lk").toNat = i)
     (hi : σ "i" = BitVec.ofNat 32 p) (hsz : σ "size" = BitVec.ofNat 32 size) (hj : σ "j" = 0)
     (hfl : σ "flag" = 0) :
@@ -521,7 +521,7 @@ def set3 (b : Region) (p : Nat) (v : Val) : Region :=
 /-- **One iteration of the second loop** gives page `i` its type. -/
 theorem fillBody_run (εR : REnv) {c : CPU} {i : Nat} {l : RLog} {b : Region} (hcs : CS1 c i l b)
     {mmb size maxpage kl kh : Nat} {mm : MMTable} (hmb : mmb + 1 + 3 * size ≤ 2 ^ 32)
-    (hmax : 3 * maxpage < 2 ^ 32) (hkl : kl < 2 ^ 32) (hkh : kh < 2 ^ 20) (hM : MatchMM mmb mm size b)
+    (hmax : 3 * maxpage < 2 ^ 32) (hkl : kl < 2 ^ 32) (hkh : kh < 2 ^ 20) (hM : MatchMMap mmb mm size b)
     (hv : MM_valid mm size) (hc : MM_correct mm size) {σ : Locals} (hlk : (σ "lk").toNat = i) {p : Nat}
     (hi : σ "i" = BitVec.ofNat 32 p) (hp : p < maxpage) (hsz : σ "size" = BitVec.ofNat 32 size) :
     ∃ σ' l', Runs (rprimsA εR c) (fillBody mmb kl kh) σ l σ' l' ∧
@@ -601,8 +601,8 @@ theorem filled_step {kl kh : Nat} {mm : MMTable} {size : Nat} {b0 b : Region} {m
       · simp only [set3, setCell]; rw [if_neg (by omega), if_neg (by omega), if_neg (by omega)]; exact h2
       · simp only [set3, setCell]; rw [if_neg (by omega), if_neg (by omega), if_neg (by omega)]; exact h3
 
-theorem matchMM_of_eq {mmb size : Nat} {mm : MMTable} {b b' : Region} (hM : MatchMM mmb mm size b)
-    (h : ∀ k, mmb ≤ k → b' k = b k) : MatchMM mmb mm size b' := by
+theorem matchMM_of_eq {mmb size : Nat} {mm : MMTable} {b b' : Region} (hM : MatchMMap mmb mm size b)
+    (h : ∀ k, mmb ≤ k → b' k = b k) : MatchMMap mmb mm size b' := by
   refine ⟨by rw [h mmb (Nat.le_refl _)]; exact hM.msize, fun j hj => ?_⟩
   obtain ⟨s, l, p, hm, h1, h2, h3⟩ := hM.mat j hj
   exact ⟨s, l, p, hm, by rw [h _ (by omega)]; exact h1, by rw [h _ (by omega)]; exact h2,
@@ -612,7 +612,7 @@ theorem matchMM_of_eq {mmb size : Nat} {mm : MMTable} {b b' : Region} (hM : Matc
 nothing else. -/
 theorem fillLoop_run (εR : REnv) {c : CPU} {i : Nat} {l : RLog} {b0 : Region} (hcs : CS1 c i l b0)
     {mmb size maxpage kl kh nps : Nat} {mm : MMTable} (hmb : mmb + 1 + 3 * size ≤ 2 ^ 32)
-    (hmax : 3 * maxpage < mmb) (hkl : kl < 2 ^ 32) (hkh : kh < 2 ^ 20) (hM : MatchMM mmb mm size b0)
+    (hmax : 3 * maxpage < mmb) (hkl : kl < 2 ^ 32) (hkh : kh < 2 ^ 20) (hM : MatchMMap mmb mm size b0)
     (hv : MM_valid mm size) (hc : MM_correct mm size) (hnps : nps ≤ maxpage) (σ : Locals)
     (hlk : (σ "lk").toNat = i) (hi : σ "i" = 0) (hsz : σ "size" = BitVec.ofNat 32 size)
     (hn : σ "nps" = BitVec.ofNat 32 nps) :
@@ -631,7 +631,7 @@ theorem fillLoop_run (εR : REnv) {c : CPU} {i : Nat} {l : RLog} {b0 : Region} (
       by_cases h : m < nps
       · exact h
       · rw [if_neg h] at hg; exact absurd rfl hg
-    have hM' : MatchMM mmb mm size b' := matchMM_of_eq hM (fun k hk => hF.1 k (by omega))
+    have hM' : MatchMMap mmb mm size b' := matchMM_of_eq hM (fun k hk => hF.1 k (by omega))
     obtain ⟨τ', l'', hr, hcs'', hi', hsz', hn', hlk'⟩ := fillBody_run εR hcs' hmb hmax' hkl hkh hM' hv hc
       (σ := τ) (by rw [hlkτ]; exact hlk) hiτ (by omega) hszτ
     refine ⟨τ', l'', hr, ⟨hlk'.trans hlkτ, hsz'.trans hszτ, hn'.trans hnτ, m + 1, _, hmlt, hi', hcs'',
@@ -651,7 +651,7 @@ theorem fillLoop_run (εR : REnv) {c : CPU} {i : Nat} {l : RLog} {b0 : Region} (
 /-! ## `mem_init` -/
 
 /-- The body of **`mem_init`**. The call to `boot_loader` is not here: its
-effect, the memory map at `mmb`, is the precondition `MatchMM`.
+effect, the memory map at `mmb`, is the precondition `MatchMMap`.
 
 `i = 0; size = get_size(); nps = 0; while (i < size) {...}
  set_nps(nps); i = 0; while (i < nps) {...}` -/
@@ -664,7 +664,7 @@ def memInitCS (mmb maxpage kl kh : Nat) : Stmt APrim :=
 theorem memInitCS_run (εR : REnv) {c : CPU} {i : Nat} {l : RLog} {b : Region} (hcs : CS1 c i l b)
     {mmb size maxpage kl kh : Nat} {mm : MMTable} (hmb : mmb + 1 + 3 * size ≤ 2 ^ 32)
     (hmax : 3 * maxpage < mmb) (hmp : 2 ^ 20 ≤ maxpage) (hkl : kl < 2 ^ 32) (hkh : kh < 2 ^ 20)
-    (hM : MatchMM mmb mm size b) (hv : MM_valid mm size) (hc : MM_correct mm size) (σ : Locals)
+    (hM : MatchMMap mmb mm size b) (hv : MM_valid mm size) (hc : MM_correct mm size) (σ : Locals)
     (hlk : (σ "lk").toNat = i) :
     ∃ σ' l' b', Runs (rprimsA εR c) (memInitCS mmb maxpage kl kh) σ l σ' l' ∧ CS1 c i l' b' ∧
       Filled kl kh mm size (setCell b (3 * maxpage) (BitVec.ofNat 32 (cnps mm size))) (cnps mm size) b' ∧
@@ -686,7 +686,7 @@ theorem memInitCS_run (εR : REnv) {c : CPU} {i : Nat} {l : RLog} {b : Region} (
     (n := 3 * maxpage) (v := BitVec.ofNat 32 (cnps mm size)) (tn (by omega)) hn4
   let σ6 := (σ4.set "_" 0).set "i" 0
   have h6 : Runs (rprimsA εR c) (.assign "i" (.const 0)) (σ4.set "_" 0) l5 σ6 l5 := Runs.assign _ _
-  have hM0 : MatchMM mmb mm size (setCell b (3 * maxpage) (BitVec.ofNat 32 (cnps mm size))) :=
+  have hM0 : MatchMMap mmb mm size (setCell b (3 * maxpage) (BitVec.ofNat 32 (cnps mm size))) :=
     matchMM_of_eq hM (fun k hk => by simp only [setCell]; rw [if_neg (by omega)])
   have hcl := cnps_le hv size (Nat.le_refl _)
   obtain ⟨σ7, l7, b7, h7, c7, hF, hlk7⟩ := fillLoop_run εR c5 hmb hmax hkl hkh hM0 hv hc
@@ -725,7 +725,7 @@ theorem mem_init_triple (εR : REnv) (c : CPU) (i : Nat) {mmb size maxpage kl kh
     (hmb : mmb + 1 + 3 * size ≤ 2 ^ 32) (hmax : 3 * maxpage < mmb) (hmp : 2 ^ 20 ≤ maxpage) (hkl : 0 < kl)
     (hkl' : kl < 2 ^ 32) (hkh : kh < 2 ^ 20) (hsz : 0 < size) (hv : MM_valid mm size)
     (hc : MM_correct mm size) :
-    Triple εR c i (fun (d : PData) b => MatchD maxpage d b ∧ MatchMM mmb mm size b)
+    Triple εR c i (fun (d : PData) b => MatchD maxpage d b ∧ MatchMMap mmb mm size b)
       (fun k => k ≤ 3 * maxpage) (fun _ d => d.init = false) (memInitCS mmb maxpage kl kh)
       (fun _ d _ d' => mem_init_spec kl kh mm size d = some d') := by
   rintro σ l b d hlk hcs ⟨hD, hM⟩ hin
