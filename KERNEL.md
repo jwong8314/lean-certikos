@@ -68,8 +68,10 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | `MPTOp` | `pt_alloc_pde`, `pt_free_pde`, `pt_init_comm` | **ported**: `MPTCommon.lean`. `pt_alloc_pde` refines `ptAllocPDE_spec` (through the specs of `container_alloc`, `pt_insert_pde`, and 1024 calls of `rmv_PTE`); `pt_free_pde` refines `ptFreePDE_spec` (through `pt_read_pde`, `pt_rmv_pde`, `pfree`). `pt_init_comm` is in `MPTInit.lean` (`pt_init_comm_triple`) |
 | `MPTCommon` | `pt_insert`, `pt_rmv` with reference counts, `pt_init_kern` | **ported**: `MPTKern.lean`. `pt_insert` refines `ptInsert_spec` (`ptInsert_triple`) and `pt_rmv` refines `ptRmv_spec` (`ptRmv_triple`), both keeping the page's count in the allocation table. `pt_init_kern` is in `MPTInit.lean` (`pt_init_kern_triple`) |
 | `MPTKern`, `MPTInit` | kernel page table, `pt_init`, paging on (`set_pg`, `set_cr3`) | missing: these are boot, and loading `CR3` needs the machine model |
-| `MPTNew` | `pt_new`, `pt_resv`, `pt_resv2`, `pmap_init` | **ported**: `MPTNew.lean`. `pt_new` refines `pt_new_spec`; `pt_resv` refines `ptResv_spec` (stated over `container_alloc_spec` and `ptInsert_spec`); `ptResv_locked` is `pt_resv` under the lock. Missing: `pt_resv2` (stage 3), `pmap_init` (boot), and the owner-list versions `ptInsert0_spec`, `ptRmv0_spec` |
-| `MShareIntro`, `MShareOp`, `MShare` | shared memory | missing |
+| `MPTNew` | `pt_new`, `pt_resv`, `pt_resv2`, `pmap_init` | **ported**: `MPTNew.lean`. `pt_new` refines `pt_new_spec`; `pt_resv` refines `ptResv_spec` (stated over `container_alloc_spec` and `ptInsert_spec`); `ptResv_locked` is `pt_resv` under the lock. `pt_resv2` is in `MPTResv2.lean` (`ptResv2_triple`). Missing: `pmap_init` (machine model) |
+| `MShareIntro` | the shared-memory table and its seven accessors | **ported**: `MShareIntro.lean`. Each accessor refines its spec (`getState_triple`, `getSeen_triple`, `getLoc_triple`, `setState_triple`, `setSeen_triple`, `setLoc_triple`, `clear_triple`) |
+| `MShareOp` | `shared_mem_to_pending`, `shared_mem_to_dead`, `shared_mem_to_ready`, `get_shared_mem_status_seen`, `shared_mem_init` | **ported**: `MShareOp.lean` (`toPending_triple`, `toDead_triple`, `toReady_triple`, `statusSeen_triple`). `shared_mem_init`: its loop is verified (`smInit_triple` in `MShare.lean`); its call to `pmap_init` waits for the machine model |
+| `MShare` | `shared_mem_status`, `offer_shared_mem` | **ported**: `MShare.lean` (`status_triple`, `offer_triple`) |
 | abstract ownership (`PTInitGen`) | the logical table `LAT` with its owner lists, `consistent_pmap`, `consistent_pmap_domain`; `alloc_spec`, `ptInsert0_spec`, `ptRmv0_spec`, `ptResv_spec` over owner lists | **ported**: `PTInitGen.lean`. The count-based specs refine the owner-list ones: `alloc_exist`, `ptInsertPTE_exist`, `ptAllocPDE_exist`, `ptInsert_exist`, `ptRmv_exist`, `ptResv_exist`. Missing: `ptFreePDE0_spec`, and that the owner-list specs preserve the upper invariant |
 | **Process management** (`proc`) | | |
 | `PKContext`, `PKContextNew` | kernel contexts, `kctxt_switch`, `kctxt_new` | missing (needs assembly and a machine model) |
@@ -105,7 +107,7 @@ Even for the ported layers:
 - **Agreed order** (2026-11-19): 0 calling convention for layers, 1 page
   tables, 2 boot and init, 3 shared memory, 4 invariants along the shared
   log, 5 thread data, 6 machine model and scheduler, 7 IPC, 8 processes and
-  traps, 9 security and virtualization. Stage 0 is done. Stage 1 is done except for what needs boot or `CR3`.
+  traps, 9 security and virtualization. Stages 0 to 3 are done, except for what needs `CR3` (`pt_init`, `pmap_init`, and so the first line of `shared_mem_init`).
 - **`Layer.lean`: a primitive's interface is a triple.**
   `Triple εR c i M F P s Q` says: in a critical section, on a region matching
   abstract data `d` with precondition `P`, the code `s` runs to completion,
@@ -316,6 +318,67 @@ Still missing for boot: `pt_init` (`pt_init_kern(); set_pt(0); set_pg();`)
 and `pmap_init`, which only calls it. They load `CR3` and turn paging on, so
 they wait for the machine model (stage 6).
 
+### `MPTResv2.lean`: one page in two address spaces
+
+- `ptResv2_spec` and the C code of `pt_resv2`: allocate a page, map it in the
+  first process, and if that worked map it in the second.
+- **`ptResv2_triple`: the C code refines `ptResv2_spec`.**
+- `ptInsert_keeps`: **`ptInsert_spec` preserves the allocation-table
+  invariant**, keeps every container within its quota (`UQ`), and returns at
+  most `MagicNumber`. `pt_resv2` needs this between its two calls of
+  `pt_insert`. `ptResv2_keeps` is the same for `ptResv2_spec`.
+- `ptInsert_flags`, `ptResv2_flags`: they do not change the paging flags.
+- **Footprints.** `pt_alloc_pde`, `pt_insert`, `pt_resv` and `pt_resv2` now
+  say which cells they leave alone: everything from `cb + 5 * num_id` up to
+  `pb`. Before, their theorems allowed any cell to change. The shared-memory
+  table sits in that gap and depends on this.
+- The C comment in the sources tests `result == MagicNumber` before the
+  second `pt_insert`. The Clight code they verify tests `!=`, which matches
+  the specification and is what is ported.
+
+### `MShareIntro.lean`, `MShareOp.lean`, `MShare.lean`: shared memory
+
+Two processes share a page by both offering. For each ordered pair of
+processes the kernel keeps a state (ready, pending, dead), whether the first
+has seen it, and the address the first offered.
+
+- **State**: `SData` is `PTData` with `smspool`. **Region**: the table is at
+  `sb`, between the containers and the page-table pool (`SLayout`); entry
+  `(p1, p2)` is three cells at `sb + (p1 * num_proc + p2) * 3`: location,
+  state, seen (`MatchSMS`, `MatchSP`, `MatchS`).
+- `sm_get`, `sm_put`: what the three cells of a valid entry hold, and that
+  rewriting them gives the table with that entry replaced. Every proof in
+  these files goes through these two.
+- **The seven accessors** refine their specifications.
+- **`shared_mem_to_pending`, `shared_mem_to_dead`,
+  `get_shared_mem_status_seen`** refine theirs.
+- **`toReady_triple`: `shared_mem_to_ready` refines its specification.** It
+  reads the address the other process offered, calls `pt_resv2`
+  (`ptResv2_lift`: the page-table theorem in the state with the table, which
+  it leaves alone), and marks both directions ready.
+- **`status_triple`, `offer_triple`: `shared_mem_status` and
+  `offer_shared_mem` refine their specifications.** `offer_triple` uses the
+  theorems of `shared_mem_to_ready`, `shared_mem_to_dead` and
+  `shared_mem_to_pending`, not their code.
+- **`smInit_triple`**: the two loops of `shared_mem_init` clear the table
+  (`real_smspool`).
+
+What differs from the sources:
+
+- All these specifications require paging to be on (`pg = true`). Nothing
+  ported turns it on yet, so the theorems are about states that the ported
+  boot code does not reach. `sharedmem_init_spec` is stated; only its loop
+  is verified.
+- `offer_triple` and `toReady_triple` assume the allocation-table invariant
+  and that every container is within its quota, as `pt_resv2` does.
+- The functions take their arguments in the locals `pid1`, `pid2`, `sva`.
+  Accessors take the two processes as expressions, so `get(pid2, pid1)` needs
+  no argument passing.
+- The Clight of `offer_shared_mem` copies each result into a second
+  temporary. That copy is left out.
+- `sharedmem_init_spec` sets the allocation table (`real_AT`) where the
+  sources set owner lists (`real_LAT`).
+
 ### `MContainerInv.lean` and the end of `MALOp.lean`: the invariants
 
 mCertiKOS shows that every primitive of a layer preserves
@@ -373,19 +436,26 @@ unused by the ports.
 - **No function calls in ClightL.** A call is the callee's statement, inlined.
   Arguments are passed in agreed local variables. Triples make this sound to
   reason about, but the code is not literally the C functions.
-- **Invariants of the page-table layers.** The simulation in `PTInitGen.lean`
-  assumes the upper invariant (`HInvI`). That the owner-list specifications
-  preserve it is not proved, except for `alloc_spec` (`alloc_inv_I`).
+- **Invariants of the page-table layers.** `ptInsert_spec` and
+  `ptResv2_spec` preserve the allocation-table invariant
+  (`ptInsert_keeps`, `ptResv2_keeps`). `ptRmv_spec` and the container
+  invariants under page-table operations are not done. The simulation in
+  `PTInitGen.lean` assumes the upper invariant (`HInvI`). That the owner-list
+  specifications preserve it is not proved, except for `alloc_spec`
+  (`alloc_inv_I`).
 - **Invariants along the shared log** (stage 4). The invariants are proved
   preserved by the specifications. `Triple.locked` assumes them when the lock
   is taken. Nothing yet shows that every release re-establishes them.
 - **No machine model.** `set_pt`, `set_pg`, context switch, traps and
   virtualization are about `CR3`, registers, privilege levels and assembly.
+  Until then nothing establishes `pg = true`, which the shared-memory
+  specifications require.
 - **Boot** (stage 2): `mem_init`, `container_init`, `idpde_init`,
   `pt_init_comm` and `pt_init_kern` are ported, code and specification.
   `pt_init` and `pmap_init` wait for the machine model.
 
 ## Order
 
-See "How the ports are organised" above. Stage 2 is done except for
-`pt_init` and `pmap_init` (machine model). Next: stage 3, shared memory.
+See "How the ports are organised" above. Stages 2 and 3 are done except for
+`pt_init` and `pmap_init` (machine model). Next: stage 4, the invariants
+along the shared log.

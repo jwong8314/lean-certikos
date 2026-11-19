@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-70 Lean files, about 30,200 lines. No `sorry`. The main theorems depend only on
+74 Lean files, about 32,700 lines. No `sorry`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-18)
@@ -99,6 +99,9 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
     other theorems assume. `idpde_init`, `pt_init_comm` and `pt_init_kern`
     (`MPTInit.lean`) fill the identity page table, the kernel part of every
     page table, and the kernel's own page table.
+  - **Shared memory** (`MPTResv2.lean`, `MShareIntro.lean`, `MShareOp.lean`,
+    `MShare.lean`): `pt_resv2` maps one page in two address spaces, and
+    `offer_shared_mem` and `shared_mem_status` refine their specifications.
   - **Page ownership** (`PTInitGen.lean`): mCertiKOS's owner lists. The
     count-based specifications refine the ones that say which page-table
     entries own each page.
@@ -118,9 +121,9 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
   queues, context switch), and no thread liveness.
 - **Thread-safe CompCertX**: not attempted. It needs a verified compiler.
 - **Printers, rest**: turning tokens into text is still trusted.
-- **The rest of the kernel**: the page allocator, page tables and containers
-  are ported. Address-space creation, shared memory, threads and queues, the
-  scheduler, IPC, traps and virtualization are not started. The kernel
+- **The rest of the kernel**: the page allocator, page tables, containers,
+  boot (up to the kernel's page table) and shared memory are ported. Threads
+  and queues, the scheduler, IPC, traps and virtualization are not started. The kernel
   guarantees are per CPU, and `PTInv` is not yet shown to hold across other
   CPUs' operations on the allocation table.
   See [KERNEL.md](KERNEL.md).
