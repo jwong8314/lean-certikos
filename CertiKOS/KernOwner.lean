@@ -19,6 +19,9 @@ allocates with `palloc`), and `id + 2` when container `id` owns it.
   freed only if its tag is `o`. The result says whether it was.
 -/
 
+set_option linter.deprecated false
+set_option linter.unusedSimpArgs false
+
 namespace KernOwner
 
 open ClightL Ticket
@@ -342,5 +345,265 @@ theorem pfreeO_guarantee {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR 
   refine ⟨σ2.set "_" 0, rb, S3, H1, H3, hrun, hl3, hid, ?_, ?_⟩
   · rw [hR1, ho, hj]
   · rw [Locals.set_other _ _ (by decide), hR2, ho, hj]
+
+/-! ## Containers that own their pages -/
+
+open KernContainer (nest nest_run cell cellE rd_cell wr_cell ltu_true ltu_false ctAllocSpec)
+
+/-- The tag of container `id`. Tags 0 and 1 are taken (free, kernel). -/
+def tag (id : Val) : Val := id + 2
+
+theorem pallocO_lk (npv : Val) : LkS (pallocO npv) := by
+  simp [LkS, pallocO, acquireA, loopA, pallocOCS, scanLoopO, scanBodyO, relA]
+
+theorem pallocO_fr (npv : Val) (z : Ident) (h1 : z ≠ "t") (h2 : z ≠ "n") (h3 : z ≠ "_") (h4 : z ≠ "v")
+    (h5 : z ≠ "i") (h6 : z ≠ "r") (h7 : z ≠ "x") : frS z (pallocO npv) = true := by
+  simp [frS, pallocO, acquireA, loopA, pallocOCS, scanLoopO, scanBodyO, relA, Ne.symm h1, Ne.symm h2,
+    Ne.symm h3, Ne.symm h4, Ne.symm h5, Ne.symm h6, Ne.symm h7]
+
+theorem pfreeO_lk : LkS pfreeO := by simp [LkS, pfreeO, pfreeOCS, acquireA, loopA, relA]
+
+theorem pfreeO_fr (z : Ident) (h1 : z ≠ "t") (h2 : z ≠ "n") (h3 : z ≠ "_") (h4 : z ≠ "v")
+    (h6 : z ≠ "r") (h7 : z ≠ "x") : frS z pfreeO = true := by
+  simp [frS, pfreeO, pfreeOCS, acquireA, loopA, relA, Ne.symm h1, Ne.symm h2, Ne.symm h3, Ne.symm h4,
+    Ne.symm h6, Ne.symm h7]
+
+/-- `u = usage; q = quota; if (u < q) { o = id + 2; r = palloc(o); if (r != np) usage = u + 1; } else r = np;` -/
+def ctAllocOCS (atv npv : Val) : Stmt APrim :=
+  .seq (.call "u" .pull [lkE, cellE "id" 1]) (.seq (.call "q" .pull [lkE, cellE "id" 0])
+    (.ite (.bin .ltu (.var "u") (.var "q"))
+      (.seq (.assign "o" (.bin .add (.var "id") (.const 2)))
+        (.seq (nest atv (pallocO npv)) (.ite (.bin .ne (.var "r") (.const npv))
+          (.call "_" .push [lkE, cellE "id" 1, .bin .add (.var "u") (.const 1)]) .skip)))
+      (.assign "r" (.const npv))))
+
+/-- `container_alloc(id)`: the page is tagged with the container. -/
+def ctAllocO (atv npv : Val) : Stmt APrim := .seq acquireA (.seq (ctAllocOCS atv npv) relA)
+
+/-- **The abstract `container_free` with the ownership check.** `ok` is what
+`pfree` returned: the usage goes down only if the page was the container's. -/
+def ctFreeOSpec (b : Region) (id ok : Val) : Region :=
+  if ok = 0 then b else setCell b (cell id 1) (b (cell id 1) - 1)
+
+/-- `o = id + 2; r = pfree(o, j); if (r != 0) { u = usage; usage = u - 1; }` -/
+def ctFreeOCS (atv : Val) : Stmt APrim :=
+  .seq (.assign "o" (.bin .add (.var "id") (.const 2)))
+    (.seq (nest atv pfreeO)
+      (.ite (.bin .ne (.var "r") (.const 0))
+        (.seq (.call "u" .pull [lkE, cellE "id" 1])
+          (.call "_" .push [lkE, cellE "id" 1, .bin .sub (.var "u") (.const 1)]))
+        .skip))
+
+/-- `container_free(id, j)`: frees page `j` only if the container owns it. -/
+def ctFreeO (atv : Val) : Stmt APrim := .seq acquireA (.seq (ctFreeOCS atv) relA)
+
+/-- **The critical section of `container_alloc` computes `ctAllocSpec`**, with
+the page `palloc` tagged for this container. -/
+theorem ctAllocOCS_run {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε) (hRR : RelyR εR c)
+    (hc : c < NCPU) (hRA : LockArray.RelyA ε c) (bound : ALog → Nat) (K : Nat) (hK : ∀ l, bound l ≤ K)
+    {atv : Val} (hF : ∀ tn, LockArray.FairA ε c atv.toNat tn bound) (np : Nat) (hnp : np < 2 ^ 32)
+    {i : Nat} (hi : i ≠ atv.toNat) (σ : Locals) (l : RLog) (b : Region) (hlk : (σ "lk").toNat = i)
+    (hcs : CSt c i atv.toNat l b) :
+    ∃ σ' l' a, Runs (rprimsA εR c) (ctAllocOCS atv (BitVec.ofNat 32 np)) σ l σ' l' ∧
+      CSt c i atv.toNat l' (ctAllocSpec np b (pallocOSpec np (tag (σ "id")) a).2 (σ "id")).1 ∧
+      σ' "lk" = σ "lk" ∧
+      σ' "r" = BitVec.ofNat 32 (ctAllocSpec np b (pallocOSpec np (tag (σ "id")) a).2 (σ "id")).2 := by
+  let U := b (cell (σ "id") 1)
+  let Q := b (cell (σ "id") 0)
+  let σ0 := σ.set "u" U
+  let σ1 := σ0.set "q" Q
+  let σo := σ1.set "o" (tag (σ "id"))
+  have hr0 : Runs (rprimsA εR c) (.call "u" .pull [lkE, cellE "id" 1]) σ l σ0 l := rd_cell hcs hlk "u" "id" 1 rfl
+  have hr1 : Runs (rprimsA εR c) (.call "q" .pull [lkE, cellE "id" 0]) σ0 l σ1 l :=
+    rd_cell hcs (σ := σ0) (by simp [σ0, Locals.set, hlk]) "q" "id" 0 (by simp [σ0, Locals.set])
+  have hao : Runs (rprimsA εR c) (.assign "o" (.bin .add (.var "id") (.const 2))) σ1 l σo l := by
+    have h := Runs.assign (P := rprimsA εR c) (σ := σ1) (l := l) "o" (.bin .add (.var "id") (.const 2))
+    have e : (Expr.bin .add (.var "id") (.const 2)).eval σ1 = tag (σ "id") := by
+      simp [Expr.eval, BinOp.eval, σ1, σ0, Locals.set, tag]
+    rw [e] at h; exact h
+  have hlk1 : σ1 "lk" = σ "lk" := by simp [σ1, σ0, Locals.set]
+  have hu1 : σ1 "u" = U := by simp [σ1, σ0, Locals.set]
+  have hq1 : σ1 "q" = Q := by simp [σ1, σ0, Locals.set]
+  have hlko : σo "lk" = σ "lk" := by simp [σo, σ1, σ0, Locals.set]
+  have huo : σo "u" = U := by simp [σo, σ1, σ0, Locals.set]
+  have hido : σo "id" = σ "id" := by simp [σo, σ1, σ0, Locals.set]
+  by_cases hlt : U.ult Q = true
+  · obtain ⟨S, H, hl, hh, hid, hb⟩ := hcs
+    obtain ⟨σp, rb, S3, H1, H3, hrun, hl3, hid3, -, hr⟩ :=
+      pallocO_guarantee hE hRR hc hRA hl (iv := atv) hid bound K hK (hF _)
+        ((σo.set "plk" (σo "lk")).set "lk" atv) (by simp) np hnp
+    have hot : ((σo.set "plk" (σo "lk")).set "lk" atv) "o" = tag (σ "id") := by simp [σo, Locals.set]
+    rw [hot] at hr
+    obtain ⟨hnest, hc2⟩ := nest_run (pallocO_lk _)
+      (pallocO_fr _ _ (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide))
+      (pallocO_fr _ _ (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide))
+      hi hl hh hb hrun hl3 hid3
+    have hfr : ∀ z : Ident, z ≠ "t" → z ≠ "n" → z ≠ "_" → z ≠ "v" → z ≠ "i" → z ≠ "r" → z ≠ "x" →
+        σp z = ((σo.set "plk" (σo "lk")).set "lk" atv) z := fun z h1 h2 h3 h4 h5 h6 h7 =>
+      (Runs.of_stop hrun).frame (pallocO_fr _ z h1 h2 h3 h4 h5 h6 h7)
+    let σ2 := σp.set "lk" (σo "lk")
+    have hr2 : σ2 "r" = BitVec.ofNat 32 (pallocOSpec np (tag (σ "id")) (hmemR atv.toNat H1)).2 := by
+      simp [σ2, Locals.set, hr]
+    have hlk2 : σ2 "lk" = σ "lk" := by simp [σ2, hlko]
+    have hid2 : σ2 "id" = σ "id" := by
+      simp only [σ2, Locals.set_other _ _ (show ("id" : Ident) ≠ "lk" by decide)]
+      rw [hfr _ (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)]
+      simp [Locals.set, hido]
+    have hu2 : σ2 "u" = U := by
+      simp only [σ2, Locals.set_other _ _ (show ("u" : Ident) ≠ "lk" by decide)]
+      rw [hfr _ (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)]
+      simp [Locals.set, huo]
+    have hguard : ¬ (Expr.bin .ltu (.var "u") (.var "q")).eval σ1 = 0 :=
+      ltu_true (by simp only [Expr.eval]; rw [hu1, hq1]; exact hlt)
+    by_cases hp : (pallocOSpec np (tag (σ "id")) (hmemR atv.toNat H1)).2 = np
+    · have hspec : ctAllocSpec np b (pallocOSpec np (tag (σ "id")) (hmemR atv.toNat H1)).2 (σ "id") =
+          (b, np) := by rw [ctAllocSpec, if_pos hlt, if_pos hp]
+      refine ⟨σ2, rb, hmemR atv.toNat H1, Runs.seq hr0 (Runs.seq hr1 (Runs.ite_true hguard
+        (Runs.seq hao (Runs.seq hnest (Runs.ite_false (ne_false (hr2.trans (by rw [hp]))) Runs.skip))))),
+        ?_, hlk2, ?_⟩
+      · rw [hspec]; exact hc2
+      · rw [hspec, hr2, hp]
+    · have hple := pallocO_le np (tag (σ "id")) (hmemR atv.toNat H1)
+      obtain ⟨l3, hw, hc3⟩ := wr_cell (εR := εR) hc2 (σ := σ2) (by rw [hlk2]; exact hlk) "id" 1
+        (.bin .add (.var "u") (.const 1)) hid2
+      have hev : (Expr.bin .add (.var "u") (.const 1)).eval σ2 = U + 1 := by
+        simp only [Expr.eval, BinOp.eval]; rw [hu2]
+      rw [hev] at hc3
+      have hspec : ctAllocSpec np b (pallocOSpec np (tag (σ "id")) (hmemR atv.toNat H1)).2 (σ "id") =
+          (setCell b (cell (σ "id") 1) (U + 1), (pallocOSpec np (tag (σ "id")) (hmemR atv.toNat H1)).2) := by
+        rw [ctAllocSpec, if_pos hlt, if_neg hp]
+      refine ⟨σ2.set "_" 0, l3, hmemR atv.toNat H1, Runs.seq hr0 (Runs.seq hr1 (Runs.ite_true hguard
+        (Runs.seq hao (Runs.seq hnest (Runs.ite_true (ne_true (fun h => ofNat_ne (by omega) hnp hp
+          (hr2.symm.trans h))) hw))))), ?_, ?_, ?_⟩
+      · rw [hspec]; exact hc3
+      · rw [Locals.set_other _ _ (by decide)]; exact hlk2
+      · rw [hspec, Locals.set_other _ _ (by decide)]; exact hr2
+  · have hguard : (Expr.bin .ltu (.var "u") (.var "q")).eval σ1 = 0 :=
+      ltu_false (by simp only [Expr.eval]; rw [hu1, hq1]; exact hlt)
+    have hspec : ctAllocSpec np b (pallocOSpec np (tag (σ "id")) (fun _ => 0)).2 (σ "id") = (b, np) := by
+      rw [ctAllocSpec, if_neg hlt]
+    refine ⟨σ1.set "r" (BitVec.ofNat 32 np), l, fun _ => 0, Runs.seq hr0 (Runs.seq hr1
+      (Runs.ite_false hguard (Runs.assign _ _))), ?_, ?_, ?_⟩
+    · rw [hspec]; exact hcs
+    · rw [Locals.set_other _ _ (by decide)]; exact hlk1
+    · rw [hspec]; simp
+
+/-- **The critical section of `container_free` computes `ctFreeOSpec`**, with
+what `pfree` returned on the allocation table `a` it found. -/
+theorem ctFreeOCS_run {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε) (hRR : RelyR εR c)
+    (hc : c < NCPU) (hRA : LockArray.RelyA ε c) (bound : ALog → Nat) (K : Nat) (hK : ∀ l, bound l ≤ K)
+    {atv : Val} (hF : ∀ tn, LockArray.FairA ε c atv.toNat tn bound)
+    {i : Nat} (hi : i ≠ atv.toNat) (σ : Locals) (l : RLog) (b : Region) (hlk : (σ "lk").toNat = i)
+    (hcs : CSt c i atv.toNat l b) :
+    ∃ σ' l' a, Runs (rprimsA εR c) (ctFreeOCS atv) σ l σ' l' ∧
+      CSt c i atv.toNat l' (ctFreeOSpec b (σ "id") (pfreeOSpec a (tag (σ "id")) (σ "j").toNat).2) ∧
+      σ' "lk" = σ "lk" := by
+  let σo := σ.set "o" (tag (σ "id"))
+  have hao : Runs (rprimsA εR c) (.assign "o" (.bin .add (.var "id") (.const 2))) σ l σo l := by
+    have h := Runs.assign (P := rprimsA εR c) (σ := σ) (l := l) "o" (.bin .add (.var "id") (.const 2))
+    have e : (Expr.bin .add (.var "id") (.const 2)).eval σ = tag (σ "id") := by
+      simp [Expr.eval, BinOp.eval, tag]
+    rw [e] at h; exact h
+  have hlko : σo "lk" = σ "lk" := by simp [σo, Locals.set]
+  obtain ⟨S, H, hl, hh, hid, hb⟩ := hcs
+  obtain ⟨σp, rb, S3, H1, H3, hrun, hl3, hid3, -, hr⟩ :=
+    pfreeO_guarantee hE hRR hc hRA hl (iv := atv) hid bound K hK (hF _)
+      ((σo.set "plk" (σo "lk")).set "lk" atv) (by simp)
+  have hot : ((σo.set "plk" (σo "lk")).set "lk" atv) "o" = tag (σ "id") := by simp [σo, Locals.set]
+  have hjt : ((σo.set "plk" (σo "lk")).set "lk" atv) "j" = σ "j" := by simp [σo, Locals.set]
+  rw [hot, hjt] at hr
+  obtain ⟨hnest, hc2⟩ := nest_run pfreeO_lk
+    (pfreeO_fr _ (by decide) (by decide) (by decide) (by decide) (by decide) (by decide))
+    (pfreeO_fr _ (by decide) (by decide) (by decide) (by decide) (by decide) (by decide))
+    hi hl hh hb hrun hl3 hid3
+  let σ2 := σp.set "lk" (σo "lk")
+  have hr2 : σ2 "r" = (pfreeOSpec (hmemR atv.toNat H1) (tag (σ "id")) (σ "j").toNat).2 := by
+    simp [σ2, Locals.set, hr]
+  have hlk2 : σ2 "lk" = σ "lk" := by simp [σ2, hlko]
+  have hid2 : σ2 "id" = σ "id" := by
+    simp only [σ2, Locals.set_other _ _ (show ("id" : Ident) ≠ "lk" by decide)]
+    rw [(Runs.of_stop hrun).frame (pfreeO_fr "id" (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide))]
+    simp [σo, Locals.set]
+  by_cases hok : (pfreeOSpec (hmemR atv.toNat H1) (tag (σ "id")) (σ "j").toNat).2 = 0
+  · refine ⟨σ2, rb, hmemR atv.toNat H1, Runs.seq hao (Runs.seq hnest
+      (Runs.ite_false (ne_false (hr2.trans hok)) Runs.skip)), ?_, hlk2⟩
+    have : ctFreeOSpec b (σ "id") (pfreeOSpec (hmemR atv.toNat H1) (tag (σ "id")) (σ "j").toNat).2 = b :=
+      if_pos hok
+    rw [this]; exact hc2
+  · let U := b (cell (σ "id") 1)
+    let σ3 := σ2.set "u" U
+    have hrd : Runs (rprimsA εR c) (.call "u" .pull [lkE, cellE "id" 1]) σ2 rb σ3 rb :=
+      rd_cell hc2 (σ := σ2) (by rw [hlk2]; exact hlk) "u" "id" 1 hid2
+    have hlk3 : σ3 "lk" = σ "lk" := by simp [σ3, Locals.set, hlk2]
+    obtain ⟨l3, hw, hc3⟩ := wr_cell (εR := εR) hc2 (σ := σ3) (by rw [hlk3]; exact hlk) "id" 1
+      (.bin .sub (.var "u") (.const 1)) (id := σ "id") (by simp [σ3, Locals.set, hid2])
+    have hev : (Expr.bin .sub (.var "u") (.const 1)).eval σ3 = U - 1 := by
+      simp [Expr.eval, BinOp.eval, σ3]
+    rw [hev] at hc3
+    refine ⟨σ3.set "_" 0, l3, hmemR atv.toNat H1, Runs.seq hao (Runs.seq hnest
+      (Runs.ite_true (ne_true (fun h => hok (hr2.symm.trans h))) (Runs.seq hrd hw))), ?_, ?_⟩
+    · have : ctFreeOSpec b (σ "id") (pfreeOSpec (hmemR atv.toNat H1) (tag (σ "id")) (σ "j").toNat).2 =
+          setCell b (cell (σ "id") 1) (U - 1) := if_neg hok
+      rw [this]; exact hc3
+    · rw [Locals.set_other _ _ (by decide)]; exact hlk3
+
+/-- **`container_alloc` refines `ctAllocSpec`, and the page is the
+container's.** `a` is the allocation table `palloc` found. -/
+theorem ctAllocO_guarantee {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε) (hRR : RelyR εR c)
+    (hc : c < NCPU) (hRA : LockArray.RelyA ε c) {l : RLog} {S : RState} {H : HLogR}
+    (hl : rreplay l = some (S, H)) {iv : Val} (hidle : (S.lk iv.toNat).phase c = .idle)
+    {atv : Val} (hi : iv.toNat ≠ atv.toNat) (hidat : (S.lk atv.toNat).phase c = .idle)
+    (bound : ALog → Nat) (K : Nat) (hK : ∀ l, bound l ≤ K)
+    (hF : LockArray.FairA ε c iv.toNat (ticket (LockArray.projL iv.toNat (apull ε c (erase l)))) bound)
+    (hFat : ∀ tn, LockArray.FairA ε c atv.toNat tn bound)
+    (σ : Locals) (hσ : σ "lk" = iv) (np : Nat) (hnp : np < 2 ^ 32) :
+    ∃ (σ' : Locals) (rb : RLog) (S3 : RState) (H1 H3 : HLogR) (a : Region),
+      Star (rprimsA εR c) ⟨ctAllocO atv (BitVec.ofNat 32 np), .stop, σ, l⟩ ⟨.skip, .stop, σ', rb⟩ ∧
+      rreplay rb = some (S3, H3) ∧ (S3.lk iv.toNat).phase c = .idle ∧ (S3.lk atv.toNat).phase c = .idle ∧
+      hmemR iv.toNat H3 =
+        (ctAllocSpec np (hmemR iv.toNat H1) (pallocOSpec np (tag (σ "id")) a).2 (σ "id")).1 ∧
+      σ' "r" = BitVec.ofNat 32
+        (ctAllocSpec np (hmemR iv.toNat H1) (pallocOSpec np (tag (σ "id")) a).2 (σ "id")).2 := by
+  obtain ⟨σ1, σ2, rb, S3, H1, H3, hrun, hl3, hid, hidj, hfr, a, hR1, hR2⟩ :=
+    cs_guarantee2 hE hRR hc hRA hl hidle (j := atv.toNat) (fun h => hi h.symm) hidat bound K hK hF σ hσ
+      (ctAllocOCS atv (BitVec.ofNat 32 np))
+      (fun b σ b' σ' => ∃ a, b' = (ctAllocSpec np b (pallocOSpec np (tag (σ "id")) a).2 (σ "id")).1 ∧
+        σ' "r" = BitVec.ofNat 32 (ctAllocSpec np b (pallocOSpec np (tag (σ "id")) a).2 (σ "id")).2)
+      (fun σ l b hlk hcs => by
+        obtain ⟨σ', l', a, hr, hc', hlk', hres⟩ := ctAllocOCS_run hE hRR hc hRA bound K hK hFat np hnp
+          hi σ l b (by rw [hlk]) hcs
+        exact ⟨σ', l', _, hr, hc', hlk'.trans hlk, a, rfl, hres⟩)
+  have hd := hfr "id" (by decide) (by decide) (by decide) (by decide)
+  refine ⟨σ2.set "_" 0, rb, S3, H1, H3, a, hrun, hl3, hid, hidj, ?_, ?_⟩
+  · rw [hR1, hd]
+  · rw [Locals.set_other _ _ (by decide), hR2, hd]
+
+/-- **`container_free` refines `ctFreeOSpec`.** The usage goes down only if
+`pfree` found the container's tag on page `j` in the allocation table `a`. -/
+theorem ctFreeO_guarantee {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε) (hRR : RelyR εR c)
+    (hc : c < NCPU) (hRA : LockArray.RelyA ε c) {l : RLog} {S : RState} {H : HLogR}
+    (hl : rreplay l = some (S, H)) {iv : Val} (hidle : (S.lk iv.toNat).phase c = .idle)
+    {atv : Val} (hi : iv.toNat ≠ atv.toNat) (hidat : (S.lk atv.toNat).phase c = .idle)
+    (bound : ALog → Nat) (K : Nat) (hK : ∀ l, bound l ≤ K)
+    (hF : LockArray.FairA ε c iv.toNat (ticket (LockArray.projL iv.toNat (apull ε c (erase l)))) bound)
+    (hFat : ∀ tn, LockArray.FairA ε c atv.toNat tn bound)
+    (σ : Locals) (hσ : σ "lk" = iv) :
+    ∃ (σ' : Locals) (rb : RLog) (S3 : RState) (H1 H3 : HLogR) (a : Region),
+      Star (rprimsA εR c) ⟨ctFreeO atv, .stop, σ, l⟩ ⟨.skip, .stop, σ', rb⟩ ∧
+      rreplay rb = some (S3, H3) ∧ (S3.lk iv.toNat).phase c = .idle ∧ (S3.lk atv.toNat).phase c = .idle ∧
+      hmemR iv.toNat H3 = ctFreeOSpec (hmemR iv.toNat H1) (σ "id")
+        (pfreeOSpec a (tag (σ "id")) (σ "j").toNat).2 := by
+  obtain ⟨σ1, σ2, rb, S3, H1, H3, hrun, hl3, hid, hidj, hfr, a, hR⟩ :=
+    cs_guarantee2 hE hRR hc hRA hl hidle (j := atv.toNat) (fun h => hi h.symm) hidat bound K hK hF σ hσ
+      (ctFreeOCS atv)
+      (fun b σ b' _ => ∃ a, b' = ctFreeOSpec b (σ "id") (pfreeOSpec a (tag (σ "id")) (σ "j").toNat).2)
+      (fun σ l b hlk hcs => by
+        obtain ⟨σ', l', a, hr, hc', hlk'⟩ := ctFreeOCS_run hE hRR hc hRA bound K hK hFat hi σ l b
+          (by rw [hlk]) hcs
+        exact ⟨σ', l', _, hr, hc', hlk'.trans hlk, a, rfl⟩)
+  refine ⟨σ2.set "_" 0, rb, S3, H1, H3, a, hrun, hl3, hid, hidj, ?_⟩
+  rw [hR, hfr "id" (by decide) (by decide) (by decide) (by decide),
+    hfr "j" (by decide) (by decide) (by decide) (by decide)]
 
 end KernOwner
