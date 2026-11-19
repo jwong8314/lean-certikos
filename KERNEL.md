@@ -44,8 +44,8 @@ any environment that keeps the log valid.
 |---|---|---|
 | **Memory management** | | |
 | `MBoot`, `PreInit` | boot, physical memory map | not started |
-| `MALInit`, `MALOp`, `MALT` | allocation table, `palloc`/`pfree` | **done**: `KernPAlloc.lean` |
-| `MContainer` | per-process memory quotas | **done**: `KernContainer.lean` (alloc, free, split; no getters, no page ownership) |
+| `MALInit`, `MALOp`, `MALT` | allocation table, `palloc`/`pfree` | **done**: `KernPAlloc.lean`, with owners in `KernOwner.lean` |
+| `MContainer` | per-process memory quotas | **done**: `KernContainer.lean` (alloc, free, split; no getters), page ownership in `KernOwner.lean` |
 | `MPTIntro`, `MPTOp`, `MPTCommon` | page-table entries, two-level page tables | **done**: `KernPT.lean` (insert, remove, lookup; no permission bits, tables are never freed) |
 | `MPTKern`, `MPTInit`, `MPTNew` | kernel page table, address-space creation | not started |
 | `MShareIntro`, `MShareOp`, `MShare` | shared memory between processes | not started |
@@ -131,9 +131,37 @@ quota, usage, parent, number of children, in use.
   on the lock in `lk`, run on another lock inside a critical section, leaves
   our lock held and our region unchanged.
 
-Not covered: the getters, and recording which container owns which page.
-`container_free` does not check that page `j` was allocated to this
-container, as CertiKOS's does through the allocation table.
+Not covered: the getters. Page ownership is in `KernOwner.lean`, below.
+
+## What `KernOwner.lean` proves
+
+The allocation table now says who owns each page. A cell is a tag: 0 for a
+free page, 1 for a kernel page (the pages of page tables), `id + 2` for a
+page of container `id`.
+
+- `pallocO_guarantee`: `palloc(o)` refines `pallocOSpec`. It tags the first
+  free page with `o`. `KernPAlloc`'s `palloc` is the case `o = 1`
+  (`pallocO_one`).
+- `pfreeO_guarantee`: `pfree(o, j)` refines `pfreeOSpec`. It frees page `j`
+  only if its tag is `o`, and returns whether it did (`pfreeO_ok`).
+- `ctAllocO_guarantee`: `container_alloc(id)` as before, with the page tagged
+  `id + 2`.
+- `ctFreeO_guarantee`: `container_free(id, j)` calls `pfree(id + 2, j)` and
+  lowers the usage only if the page was freed. A container cannot free a
+  page it does not own, and its usage does not move if it tries.
+- `ostep_other`: a `palloc` or `pfree` by the owner tagged `o'` leaves the set
+  of pages tagged `o` exactly as it was, for every other nonzero `o`.
+- `PTOwn`, `pt_ostep`, `pt_osteps`: if every page of a page table is tagged 1,
+  then `PTInv` and `PTOwn` hold again after any sequence of allocations and
+  frees by owners other than the kernel. This is the rely that `PTInv`
+  needed.
+- `insert_own`: `pt_insert` keeps `PTOwn`.
+
+Not covered: `ostep_other` and `pt_osteps` are about the abstract steps. They
+are not yet joined to the shared log, where one would show that every event
+on the allocation table's lock is such a step. Usage is not shown equal to
+the number of pages a container owns. `pt_insert` still allocates with the
+kernel's tag, not the tag of the process whose address space it is.
 
 ## What stands in the way of the rest
 
@@ -141,11 +169,10 @@ container, as CertiKOS's does through the allocation table.
   32-bit cells indexed by number. That fits tables (allocation table,
   page-table entries, thread control blocks as fixed-size records) but not
   linked structures as CertiKOS writes them.
-- **`PTInv` across CPUs.** The invariant ties a page table to the allocation
-  table, which other CPUs also change. It is proved to be kept by each
-  operation on the abstract state. Showing it holds on the shared log needs a
-  rely on what other CPUs do to the allocation table (they only free pages
-  they own), which is a kernel-wide invariant not stated yet.
+- **`PTInv` across CPUs.** `KernOwner.pt_osteps` shows the invariant survives
+  any allocations and frees by containers, on the abstract allocation table.
+  What is left is to show that the events other CPUs put on the allocation
+  table's lock are exactly such steps: a kernel-wide invariant on the log.
 - **No machine model.** Context switch, traps and virtualization are about
   registers, privilege levels and assembly. None of that exists here, so those
   modules need a machine model first.
@@ -156,8 +183,9 @@ container, as CertiKOS's does through the allocation table.
 
 ## Suggested order
 
-1. Page ownership: record the owning container in the allocation table, so
-   that `container_free` can check it and the `PTInv` rely can be stated.
+1. Tie ownership to the log: every release of the allocation table's lock
+   is an `OStep` of the releasing CPU's current owner, and usage equals the
+   number of pages owned.
 2. Address spaces (`MPTKern`, `MPTInit`, `MPTNew`) and shared memory
    (`MShare*`): built from `pt_insert` and `pt_rmv`.
 3. Thread control blocks and queues (`PThreadIntro` to `PAbQueue`): tables

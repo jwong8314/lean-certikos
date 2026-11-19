@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-53 Lean files, about 23,000 lines. No `sorry`. The main theorems depend only on
+54 Lean files, about 24,000 lines. No `sorry`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-18)
@@ -101,6 +101,12 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
     quota out of its parent's. Each refines its abstract operation
     (`ctAlloc_guarantee`, `ctFree_guarantee`, `ctSplit_guarantee`), and each
     keeps `usage ≤ quota` (`alloc_inv`, `free_inv`, `split_inv`).
+  - **Page ownership** (`KernOwner.lean`): the allocation table records who
+    owns each page. `palloc` tags the page, `pfree` frees it only for its
+    owner, and `container_free` lowers the usage only if the page was the
+    container's. No owner changes another owner's pages (`ostep_other`), so a
+    page table keeps its invariant whatever containers allocate and free
+    (`pt_osteps`).
 
 **Not done yet**
 
