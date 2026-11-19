@@ -48,3 +48,5 @@ import CertiKOS.ThreadLayer
 import CertiKOS.RegionLive
 import CertiKOS.RegionNoLost
 import CertiKOS.KernPAlloc
+import CertiKOS.KernFrame
+import CertiKOS.KernPT

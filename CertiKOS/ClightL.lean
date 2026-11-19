@@ -33,7 +33,7 @@ def Locals.set (σ : Locals) (x : Ident) (v : Val) : Locals :=
     σ.set x v y = σ y := by simp [Locals.set, h]
 
 inductive BinOp
-  | add | sub | eq | ne | ltu
+  | add | sub | mul | eq | ne | ltu
 
 inductive Expr
   | const (v : Val)
@@ -43,6 +43,7 @@ inductive Expr
 def BinOp.eval : BinOp → Val → Val → Val
   | .add, a, b => a + b
   | .sub, a, b => a - b
+  | .mul, a, b => a * b
   | .eq,  a, b => if a = b then 1 else 0
   | .ne,  a, b => if a = b then 0 else 1
   | .ltu, a, b => if a.ult b then 1 else 0

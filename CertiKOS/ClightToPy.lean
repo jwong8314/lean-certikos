@@ -66,6 +66,7 @@ theorem enc_ofNat (n : Nat) : enc (BitVec.ofNat 32 n) = (n : Int) % M := by
 def trOp : ClightL.BinOp → PyL.Expr → PyL.Expr → PyL.Expr
   | .add, a, b => .bin .fmod (.bin .add a b) (.const M)
   | .sub, a, b => .bin .fmod (.bin .sub a b) (.const M)
+  | .mul, a, b => .bin .fmod (.bin .mul a b) (.const M)
   | .eq, a, b => .bin .eq a b
   | .ne, a, b => .bin .ne a b
   | .ltu, a, b => .bin .lt a b
@@ -99,6 +100,11 @@ theorem trOp_eval (op : ClightL.BinOp) (a b : Val) (ea eb : PyL.Expr) (s : Store
     simp only [trOp, PyL.Expr.eval, PyL.BinOp.eval, ha, hb, ClightL.BinOp.eval]
     rw [Int.fmod_eq_emod_of_nonneg _ (by decide)]
     simp only [enc, BitVec.toNat_sub, M]; omega
+  | mul =>
+    simp only [trOp, PyL.Expr.eval, PyL.BinOp.eval, ha, hb, ClightL.BinOp.eval]
+    rw [Int.fmod_eq_emod_of_nonneg _ (by decide)]
+    have h : (a * b).toNat = a.toNat * b.toNat % 2 ^ 32 := BitVec.toNat_mul a b
+    unfold enc; rw [h, Int.natCast_emod, Int.natCast_mul]; rfl
   | eq =>
     simp only [trOp, PyL.Expr.eval, PyL.BinOp.eval, ha, hb, ClightL.BinOp.eval, enc_inj]
     split <;> rfl

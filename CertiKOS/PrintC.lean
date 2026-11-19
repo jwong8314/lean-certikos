@@ -242,7 +242,7 @@ theorem print_injective (hname : ∀ p, ofName (name p) = some p) {s t : Stmt Pn
 /-! ## Rendering (lexical, unverified) -/
 
 def binC : BinOp → String
-  | .add => "+" | .sub => "-" | .eq => "==" | .ne => "!=" | .ltu => "<"
+  | .add => "+" | .sub => "-" | .mul => "*" | .eq => "==" | .ne => "!=" | .ltu => "<"
 
 def Tok.render : Tok → String
   | .id s => s

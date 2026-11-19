@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-50 Lean files, about 21,000 lines. No `sorry`. The main theorems depend only on
+52 Lean files, about 22,000 lines. No `sorry`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-18)
@@ -76,11 +76,25 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
   switching only at yield points, are a special case of the multicore machine,
   so the multicore safety theorems apply to them.
 
-- **Kernel, first module** (`KernPAlloc.lean`): the physical page allocator.
-  `palloc` (acquire, scan the allocation table, release) refines an abstract
-  allocator, and `pfree` clears an entry. `cs_guarantee` is the generic step
-  that every later kernel object reuses. [KERNEL.md](KERNEL.md) tracks the
-  port module by module.
+- **Kernel, memory management** ([KERNEL.md](KERNEL.md) tracks the port module
+  by module):
+  - **Page allocator** (`KernPAlloc.lean`): `palloc` (acquire, scan the
+    allocation table, release) refines an abstract allocator, and `pfree`
+    clears an entry. `cs_guarantee` is the generic step for a critical
+    section on one region.
+  - **Two locks** (`KernFrame.lean`): `cs_guarantee2` covers a critical
+    section that takes a second lock inside. `ext_frame` is the frame: code
+    working on one lock leaves every other lock we hold, and its region,
+    alone.
+  - **Page tables** (`KernPT.lean`): two-level page tables as a region.
+    `pt_insert` reads the directory, calls `palloc` under the page table's
+    lock if the second-level table is missing, zeroes and installs the new
+    table, and writes the entry. It refines `ptInsertSpec`
+    (`ptInsert_guarantee`), with `ptRmv_guarantee` and `ptRead_guarantee`
+    for unmapping and lookup. Under the invariant `PTInv`, the region is a
+    map: an inserted entry reads back, every other entry is unchanged, and
+    the invariant is kept (`insert_lookup_same`, `insert_lookup_other`,
+    `insert_inv`).
 
 **Not done yet**
 
@@ -95,9 +109,12 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
   queues, context switch), and no thread liveness.
 - **Thread-safe CompCertX**: not attempted. It needs a verified compiler.
 - **Printers, rest**: turning tokens into text is still trusted.
-- **The rest of the kernel**: only the page allocator is ported. Page tables,
-  threads and queues, the scheduler, IPC, traps and virtualization are not
-  started. See [KERNEL.md](KERNEL.md).
+- **The rest of the kernel**: the page allocator and page tables are ported.
+  Quotas, address-space creation, shared memory, threads and queues, the
+  scheduler, IPC, traps and virtualization are not started. The kernel
+  guarantees are per CPU, and `PTInv` is not yet shown to hold across other
+  CPUs' operations on the allocation table.
+  See [KERNEL.md](KERNEL.md).
 
 MCS note: Kim et al. also fold the node writes into `SWAP_TAIL` (their Fig. 1,
 lines 5–7), and their `H_CalLock` counter also counts only memory events, so
