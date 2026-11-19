@@ -70,7 +70,7 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | `MPTKern`, `MPTInit` | kernel page table, `pt_init`, paging on (`set_pg`, `set_cr3`) | missing: these are boot, and loading `CR3` needs the machine model |
 | `MPTNew` | `pt_new`, `pt_resv`, `pt_resv2`, `pmap_init` | **ported**: `MPTNew.lean`. `pt_new` refines `pt_new_spec`; `pt_resv` refines `ptResv_spec` (stated over `container_alloc_spec` and `ptInsert_spec`); `ptResv_locked` is `pt_resv` under the lock. Missing: `pt_resv2` (stage 3), `pmap_init` (boot), and the owner-list versions `ptInsert0_spec`, `ptRmv0_spec` |
 | `MShareIntro`, `MShareOp`, `MShare` | shared memory | missing |
-| abstract ownership | `pperm`, the logical table `LAT` with its owner lists, `consistent_ppage`, `consistent_pmap` | `pperm` and `consistent_ppage` are in `MALOp.lean` and proved preserved. `LAT` and `consistent_pmap` missing |
+| abstract ownership (`PTInitGen`) | the logical table `LAT` with its owner lists, `consistent_pmap`, `consistent_pmap_domain`; `alloc_spec`, `ptInsert0_spec`, `ptRmv0_spec`, `ptResv_spec` over owner lists | **ported**: `PTInitGen.lean`. The count-based specs refine the owner-list ones: `alloc_exist`, `ptInsertPTE_exist`, `ptAllocPDE_exist`, `ptInsert_exist`, `ptRmv_exist`, `ptResv_exist`. Missing: `ptFreePDE0_spec`, and that the owner-list specs preserve the upper invariant |
 | **Process management** (`proc`) | | |
 | `PKContext`, `PKContextNew` | kernel contexts, `kctxt_switch`, `kctxt_new` | missing (needs assembly and a machine model) |
 | `PThreadIntro`, `PThreadInit` | thread control blocks | missing |
@@ -104,7 +104,7 @@ Even for the ported layers:
 - **Agreed order** (2026-11-19): 0 calling convention for layers, 1 page
   tables, 2 boot and init, 3 shared memory, 4 invariants along the shared
   log, 5 thread data, 6 machine model and scheduler, 7 IPC, 8 processes and
-  traps, 9 security and virtualization. Stage 0 is done. Stage 1: all C code outside boot is ported; the owner-list abstraction (`LAT`) remains.
+  traps, 9 security and virtualization. Stage 0 is done. Stage 1 is done except for what needs boot or `CR3`.
 - **`Layer.lean`: a primitive's interface is a triple.**
   `Triple εR c i M F P s Q` says: in a critical section, on a region matching
   abstract data `d` with precondition `P`, the code `s` runs to completion,
@@ -212,6 +212,25 @@ Each port has the same shape, which is mCertiKOS's own two steps.
 - `atGetC_lift`, `atSetC_lift`: the count accessors carried to the state with
   page tables.
 
+### `PTInitGen.lean`: who owns a page
+
+Below this step the allocation table counts the mappings of each page. Above
+it, mCertiKOS's state lists them: `LAT` holds, for each page, the entries
+`LATO n pdi pti` that map it. This is mCertiKOS's page ownership. The step
+has no C code: it is a simulation between two abstract states.
+
+- `Relate h d`: the states agree, and each count is the length of the owner
+  list.
+- `ptInsert_exist`, `ptRmv_exist`, `ptResv_exist`, `alloc_exist`: if the
+  specification over owner lists is defined on `h`, the one over counts is
+  defined on any related `d`, returns the same, and ends in related states.
+- `ptRmv_exist` is where the invariant earns its keep:
+  `consistent_pmap_domain` says the entry being removed is among the page's
+  owners exactly once, so the count goes down by exactly one.
+- With `MPTNew.ptResv_triple`, the C code of `pt_resv` is tied to
+  mCertiKOS's top specification of it, through three steps: code to
+  count-based spec, and count-based spec to owner-list spec.
+
 ### `MContainerInv.lean` and the end of `MALOp.lean`: the invariants
 
 mCertiKOS shows that every primitive of a layer preserves
@@ -268,10 +287,9 @@ unused by the ports.
 - **No function calls in ClightL.** A call is the callee's statement, inlined.
   Arguments are passed in agreed local variables. Triples make this sound to
   reason about, but the code is not literally the C functions.
-- **The owner lists (`LAT`).** mCertiKOS abstracts the reference counts into
-  lists of the page-table entries that map each page, and proves
-  `consistent_pmap`. That is a refinement between abstract states with no C
-  code. It is the last part of stage 1 and is not done.
+- **Invariants of the page-table layers.** The simulation in `PTInitGen.lean`
+  assumes the upper invariant (`HInvI`). That the owner-list specifications
+  preserve it is not proved, except for `alloc_spec` (`alloc_inv_I`).
 - **Invariants along the shared log** (stage 4). The invariants are proved
   preserved by the specifications. `Triple.locked` assumes them when the lock
   is taken. Nothing yet shows that every release re-establishes them.
@@ -282,5 +300,4 @@ unused by the ports.
 
 ## Order
 
-See "How the ports are organised" above. Next: the owner lists (`LAT`), then
-stage 2 (boot and init).
+See "How the ports are organised" above. Next: stage 2 (boot and init).

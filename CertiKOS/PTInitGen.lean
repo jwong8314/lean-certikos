@@ -534,4 +534,160 @@ theorem ptInsert_exist {maxpage num_proc : Nat} (hmp : maxpage ≤ 2 ^ 20) {h h'
                 have := hvb.1; have := hvb.2.1; omega) hi
             rw [hd2]; exact ⟨d2, rfl, hR2⟩
 
+/-! ## Unmapping a page -/
+
+/-- `Lremove`: drop every occurrence of an owner. -/
+def Lremove (o : LATOwner) (l : List LATOwner) : List LATOwner := l.filter (fun x => decide (x ≠ o))
+
+theorem remove_len (o : LATOwner) : ∀ l : List LATOwner, (Lremove o l).length + l.count o = l.length
+  | [] => rfl
+  | x :: xs => by
+    have ih := remove_len o xs
+    unfold Lremove at ih ⊢
+    by_cases hx : x = o
+    · subst hx; simp [List.filter_cons, List.count_cons] at ih ⊢; omega
+    · simp [List.filter_cons, List.count_cons, hx] at ih ⊢; omega
+
+/-- **`ptRmv0_spec`**: clear the entry and take it out of the page's owners. -/
+def ptRmv0_spec (num_proc : Nat) (n vadr : Nat) (h : HData) : Option (HData × Nat) :=
+  if h.ipt = true ∧ h.pg = true ∧ pt_Arg' num_proc n vadr then
+    match h.ptpool n (PDX vadr) with
+    | .PDEValid pi pdt =>
+      match pdt (PTX vadr) with
+      | .PTEValid padr _ =>
+        match h.LAT padr with
+        | .LATValid true .ATNorm l =>
+          if l.length ≤ 2 ^ 32 - 1 then
+            let pt' := setAt (h.ptpool n) (PDX vadr) (.PDEValid pi (setAt pdt (PTX vadr) .PTEUnPresent))
+            some ({ h with LAT := setAt h.LAT padr
+                             (.LATValid true .ATNorm (Lremove (.LATO n (PDX vadr) (PTX vadr)) l)),
+                           ptpool := setAt h.ptpool n pt' }, padr)
+          else none
+        | _ => none
+      | .PTEUnPresent => some (h, 0)
+      | .PTEUndef => none
+    | _ => none
+  else none
+
+/-- **`ptRmv_exist`.** `consistent_pmap_domain` says the entry being removed is
+among the page's owners exactly once, so the count goes down by one. -/
+theorem ptRmv_exist {maxpage num_proc : Nat} {h h' : HData} {d : PTData} {n vadr r : Nat} (hR : Relate h d)
+    (hI : HInvI maxpage num_proc h) (hs : ptRmv0_spec num_proc n vadr h = some (h', r)) :
+    ∃ d', ptRmv_spec maxpage num_proc n vadr d = some (d', r) ∧ Relate h' d' := by
+  unfold ptRmv0_spec at hs
+  have hc : h.ipt = true ∧ h.pg = true ∧ pt_Arg' num_proc n vadr := by
+    by_cases hh : h.ipt = true ∧ h.pg = true ∧ pt_Arg' num_proc n vadr
+    · exact hh
+    · rw [if_neg hh] at hs; cases hs
+  rw [if_pos hc] at hs
+  obtain ⟨hipt, hpg, hn0, hnp, hlo, hhi⟩ := hc
+  have hnpsm := hI.valid_nps
+  unfold ptRmv_spec
+  rw [if_pos ⟨by rw [hR.init, ← hI.valid_pg_init]; exact hpg, by rw [hR.ipt]; exact hipt,
+    by rw [hR.pg]; exact hpg, hn0, hnp, hlo, hhi⟩, if_neg (by rw [hR.PT, hI.valid_PT_kern hpg hipt]; omega),
+    hR.ptpool]
+  cases hp : h.ptpool n (PDX vadr) with
+  | PDEID => rw [hp] at hs; cases hs
+  | PDEUnPresent => rw [hp] at hs; cases hs
+  | PDEUndef => rw [hp] at hs; cases hs
+  | PDEValid pi pdt =>
+    rw [hp] at hs; simp only at hs ⊢
+    cases hv : pdt (PTX vadr) with
+    | PTEUndef => rw [hv] at hs; cases hs
+    | PTEUnPresent =>
+      rw [hv] at hs
+      simp only [Option.some.injEq, Prod.mk.injEq] at hs; obtain ⟨rfl, rfl⟩ := hs
+      exact ⟨d, rfl, hR⟩
+    | PTEValid padr p0 =>
+      rw [hv] at hs; simp only at hs ⊢
+      obtain ⟨⟨hpa0, hpan⟩, -, l', hL', hcnt⟩ :=
+        hI.valid_pmap_domain n hnp vadr (by omega) pdt pi hp padr p0 hv
+      rw [hL'] at hs; simp only at hs
+      have hll : l'.length ≤ 2 ^ 32 - 1 := by
+        by_cases hh : l'.length ≤ 2 ^ 32 - 1
+        · exact hh
+        · rw [if_neg hh] at hs; cases hs
+      rw [if_pos hll] at hs
+      simp only [Option.some.injEq, Prod.mk.injEq] at hs; obtain ⟨rfl, rfl⟩ := hs
+      have hrm := remove_len (.LATO n (PDX vadr) (PTX vadr)) l'
+      rw [hcnt] at hrm
+      have hAT : d.AT padr = .ATValid true .ATNorm l'.length := rel_valid (by rw [← hL']; exact hR.lat padr)
+      rw [if_pos ⟨hpa0, by omega⟩, hAT]
+      simp only
+      rw [if_pos ⟨by omega, hll⟩]
+      refine ⟨_, rfl, ⟨fun j => ?_, hR.nps, hR.pperm, hR.init, hR.AC, ?_, hR.idpde, hR.PT, hR.pg, hR.ipt, hR.HP⟩⟩
+      · show RelInfo (setAt d.AT padr (.ATValid true .ATNorm (l'.length - 1)) j)
+          (setAt h.LAT padr (.LATValid true .ATNorm (Lremove (.LATO n (PDX vadr) (PTX vadr)) l')) j)
+        by_cases hj : j = padr
+        · rw [hj, setAt_eq, setAt_eq]; exact ⟨rfl, rfl, by omega⟩
+        · rw [setAt_ne _ _ hj, setAt_ne _ _ hj]; exact hR.lat j
+      · rfl
+
+/-! ## Reserving a page -/
+
+/-- `alloc_spec` keeps the invariant facts. -/
+theorem alloc_inv_I {maxpage num_proc : Nat} {h h' : HData} {id i : Nat} (hI : HInvI maxpage num_proc h)
+    (hs : alloc_spec id h = some (h', i)) : HInvI maxpage num_proc h' := by
+  unfold alloc_spec at hs
+  simp only at hs
+  by_cases hc : h.pg = true ∧ h.ipt = true ∧ (h.AC id).cused = true
+  · rw [if_pos hc] at hs
+    by_cases hlt : (h.AC id).cusage < (h.AC id).cquota
+    · rw [if_pos hlt] at hs
+      cases hL : Lfirst_free h.LAT h.nps with
+      | none => rw [hL] at hs; cases hs
+      | some p =>
+        rw [hL] at hs
+        simp only [Option.some.injEq, Prod.mk.injEq] at hs; obtain ⟨rfl, rfl⟩ := hs
+        obtain ⟨-, -, hLp⟩ := Lfirst_free_some hL
+        refine ⟨hI.valid_pg_init, hI.valid_PT_kern, fun j l hj => ?_, hI.valid_nps,
+          fun i hi j hj pte pi hq => ?_, fun i hi j hj pte pi hq v p0 hv => ?_⟩
+        · have hj' : setAt h.LAT p (.LATValid true .ATNorm []) j = .LATValid false .ATNorm l := hj
+          by_cases e : j = p
+          · rw [e, setAt_eq] at hj'; cases hj'
+          · rw [setAt_ne _ _ e] at hj'; exact hI.valid_LATable_nil j l hj'
+        · obtain ⟨o1, o2, o3⟩ := hI.valid_pperm_pmap i hi j hj pte pi hq
+          have hne : pi ≠ p := fun e => by rw [e, hLp] at o3; cases o3
+          exact ⟨o1, by show setAt h.pperm p .PGAlloc pi = _; rw [setAt_ne _ _ hne]; exact o2,
+            by show setAt h.LAT p _ pi = _; rw [setAt_ne _ _ hne]; exact o3⟩
+        · obtain ⟨o1, o2, l, o3, o4⟩ := hI.valid_pmap_domain i hi j hj pte pi hq v p0 hv
+          have hne : v ≠ p := fun e => by rw [e, hLp] at o3; cases o3
+          exact ⟨o1, by show setAt h.pperm p .PGAlloc v = _; rw [setAt_ne _ _ hne]; exact o2,
+            l, by show setAt h.LAT p _ v = _; rw [setAt_ne _ _ hne]; exact o3, o4⟩
+    · rw [if_neg hlt] at hs
+      simp only [Option.some.injEq, Prod.mk.injEq] at hs; obtain ⟨rfl, rfl⟩ := hs; exact hI
+  · rw [if_neg hc] at hs; cases hs
+
+/-- **`ptResv_spec`** of mCertiKOS, over the owner lists. (`MPTNew.ptResv_spec`
+is the same over counts.) -/
+def ptResv0_spec (maxpage num_proc : Nat) (n vadr perm : Nat) (h : HData) : Option (HData × Nat) :=
+  match alloc_spec n h with
+  | some (h', b) =>
+    if b = 0 then some (h, maxpage + 1)
+    else ptInsert0_spec maxpage num_proc n vadr b perm h'
+  | none => none
+
+/-- **`ptResv_exist`.** `pt_resv` over owner lists is refined by `pt_resv` over
+counts. With `MPTNew.ptResv_triple` this ties the C code of `pt_resv` to
+mCertiKOS's top specification of it. -/
+theorem ptResv_exist {maxpage num_proc : Nat} (hmp : maxpage ≤ 2 ^ 20) {h h' : HData} {d : PTData}
+    {n vadr perm r : Nat} (hR : Relate h d) (hI : HInvI maxpage num_proc h)
+    (hs : ptResv0_spec maxpage num_proc n vadr perm h = some (h', r)) :
+    ∃ d', ptResv_spec maxpage num_proc n vadr perm d = some (d', r) ∧ Relate h' d' := by
+  unfold ptResv0_spec at hs
+  cases ha : alloc_spec n h with
+  | none => rw [ha] at hs; cases hs
+  | some pr =>
+    obtain ⟨h1, b⟩ := pr
+    rw [ha] at hs; simp only at hs
+    obtain ⟨r1, hr1, hR1⟩ := alloc_exist hR hI ha
+    unfold ptResv_spec
+    rw [hr1]; simp only
+    by_cases hb : b = 0
+    · rw [if_pos hb] at hs ⊢
+      simp only [Option.some.injEq, Prod.mk.injEq] at hs; obtain ⟨rfl, rfl⟩ := hs
+      exact ⟨d, rfl, hR⟩
+    · rw [if_neg hb] at hs ⊢
+      exact ptInsert_exist hmp hR1 (alloc_inv_I hI ha) hs
+
 end PTInitGen

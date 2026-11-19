@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-64 Lean files, about 27,000 lines. No `sorry`. The main theorems depend only on
+65 Lean files, about 28,000 lines. No `sorry`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-18)
@@ -93,6 +93,9 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
     `MPTKern.lean`, `MPTNew.lean`): the eight accessors of the page-table
     pool, the operations by virtual address, `pt_alloc_pde`, `pt_free_pde`,
     `pt_insert` and `pt_rmv` with reference counts, `pt_new` and `pt_resv`.
+  - **Page ownership** (`PTInitGen.lean`): mCertiKOS's owner lists. The
+    count-based specifications refine the ones that say which page-table
+    entries own each page.
   - **Lock rules** (`KernPAlloc.lean`, `KernFrame.lean`): `cs_guarantee`,
     `Runs`, and the frame lemmas for regions.
 
