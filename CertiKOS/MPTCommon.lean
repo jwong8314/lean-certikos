@@ -125,6 +125,52 @@ theorem pfree_lift (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_id
   refine matchpt_transfer hL h2 (fun k hk => hf k (by omega)) rfl rfl rfl (fun pi n i hh => ?_)
   exact pfree_pperm hs pi (by rw [hh]; intro e; cases e)
 
+/-- `container_alloc` gives a permission only to the page it allocates, which
+had none. So hidden pages keep theirs. -/
+theorem alloc_pperm {kl kh : Nat} {d d1 : RData} {id r : Nat} (hI : ATInv maxpage kl kh d.toPData)
+    (h : container_alloc_spec id d = some (d1, r)) (pi n i : Nat) (hh : d.pperm pi = .PGHide n i) :
+    d1.pperm pi = d.pperm pi := by
+  unfold container_alloc_spec at h
+  simp only at h
+  by_cases hiu : d.init = true ∧ (d.AC id).cused = true
+  · rw [if_pos hiu] at h
+    by_cases hlt : (d.AC id).cusage < (d.AC id).cquota
+    · rw [if_pos hlt] at h
+      cases hff : first_free d.AT d.nps with
+      | none => rw [hff] at h; cases h
+      | some p =>
+        rw [hff] at h
+        simp only [Option.some.injEq, Prod.mk.injEq] at h; obtain ⟨rfl, -⟩ := h
+        obtain ⟨hp0, hpn, ⟨cnt, hfree⟩, -⟩ := first_free_some hff
+        refine setAt_ne _ _ (fun e => ?_)
+        have hc := (hI.valid_pperm p hpn).1 (by rw [← e, hh]; intro x; cases x)
+        obtain ⟨m, hm⟩ := hc
+        rw [hfree] at hm; cases hm
+    · rw [if_neg hlt] at h
+      simp only [Option.some.injEq, Prod.mk.injEq] at h; obtain ⟨rfl, -⟩ := h; rfl
+  · rw [if_neg hiu] at h; cases h
+
+/-- **`container_alloc` in the state with page tables.** -/
+theorem container_alloc_lift (εR : REnv) (c : CPU) (i0 : Nat)
+    (hL : Layout maxpage num_id cb num_proc pb ib fb) (hmax : 3 * maxpage < 2 ^ 32)
+    (hnum : cb + 5 * num_id < 2 ^ 32) {kl kh : Nat} (id : Nat) (hid : id < num_id) :
+    Triple εR c i0 (MatchAll maxpage num_id cb num_proc pb ib fb ida) (fun k => k < cb + 5 * num_id)
+      (fun σ d => σ "id" = BitVec.ofNat 32 id ∧ ATInv maxpage kl kh d.toPData ∧
+        (d.AC id).cusage ≤ (d.AC id).cquota ∧ ∃ d1 r, container_alloc_spec id d.toRData = some (d1, r))
+      (ctAllocCS cb maxpage)
+      (fun _ d σ' d' => ∃ r1 : RData, d' = { d with toRData := r1 } ∧
+        ∃ r, container_alloc_spec id d.toRData = some (r1, r) ∧ σ' "r" = BitVec.ofNat 32 r) := by
+  have := hL.hcb; have := hL.hpb
+  refine ((container_alloc_triple εR c i0 (kl := kl) (kh := kh) hmax hL.hcb hnum id hid).lift
+    (π := PTData.toRData)
+    (put := fun (d' : PTData) (r1 : RData) => ({ d' with toRData := r1 } : PTData))
+    (M2 := MatchPT num_proc pb ib fb ida) (fun _ _ => rfl) ?_).iffM
+    (fun d b => ⟨fun h => ⟨h.mm, h.pt⟩, fun h => ⟨h.1, h.2⟩⟩)
+  intro d' b σ σ' d1 b' h2 hM hP hQ hf
+  obtain ⟨r, hs, -⟩ := hQ
+  exact matchpt_transfer hL h2 (fun k hk => hf k (by omega)) rfl rfl rfl
+    (fun pi n i hh => alloc_pperm hP.2.1 hs pi n i hh)
+
 end Lift
 
 /-! ## `pt_free_pde` -/
