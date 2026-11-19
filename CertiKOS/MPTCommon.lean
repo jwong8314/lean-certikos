@@ -403,6 +403,190 @@ theorem rmvLoop_run (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_i
     · rw [hlk']; simp [σ2, Locals.set, hlk1]
     · rw [hfr z h1 h2 h3]; simp [σ2, Locals.set, h3, fr1 z h1 h2]
 
+
+/-- ```
+pi = container_alloc(n);
+if (pi != 0) {
+  pt_insert_pde(n, vadr, pi);
+  pde_index = vadr / (4096 * 1024);
+  i = 0;
+  while (i < 1024) { rmv_PTE(n, pde_index, i); i++; }
+}
+return pi;
+``` -/
+def ptAllocPDES (cb maxpage pb fb : Nat) : Stmt APrim :=
+  .seq (.assign "id" (.var "n")) (.seq (ctAllocCS cb maxpage) (.seq (.assign "pi" (.var "r"))
+    (.seq (.ite (.bin .ne (.var "pi") (.const 0))
+        (.seq (ptInsertPDES pb) (.seq (.assign "i" pdxE) (.seq (.assign "vadr" (.const 0)) (rmvLoop pb fb))))
+        .skip)
+      (.assign "r" (.var "pi")))))
+
+/-- **`pt_alloc_pde` refines `ptAllocPDE_spec`.** The proof goes through the
+specifications of `container_alloc`, `pt_insert_pde` and `rmv_PTE`. -/
+theorem ptAllocPDE_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_id cb num_proc pb ib fb)
+    (hmax : 3 * maxpage < 2 ^ 32) (hnum : cb + 5 * num_id < 2 ^ 32) (hmp : maxpage ≤ 2 ^ 20)
+    (hnn : num_proc ≤ num_id) {kl kh : Nat} (nn vadr : Nat) :
+    Triple εR c i0 (MatchAll maxpage num_id cb num_proc pb ib fb ida) (fun _ => True)
+      (fun σ d => σ "n" = BitVec.ofNat 32 nn ∧ σ "vaddr" = BitVec.ofNat 32 vadr ∧
+        ATInv maxpage kl kh d.toPData ∧ (d.AC nn).cusage ≤ (d.AC nn).cquota ∧
+        ∃ d1 r, ptAllocPDE_spec num_proc nn vadr d = some (d1, r))
+      (ptAllocPDES cb maxpage pb fb)
+      (fun _ d σ' d' => ∃ r, ptAllocPDE_spec num_proc nn vadr d = some (d', r) ∧
+        σ' "r" = BitVec.ofNat 32 r) := by
+  intro σ l b d hlk hcs hM ⟨hn, hva, hI, hu, dF, rF, hs⟩
+  have := hL.hib; have := hL.hfb; have := hL.hend; have := hL.hpb; have := hL.hcb
+  have hs0 := hs
+  unfold ptAllocPDE_spec at hs
+  simp only at hs
+  have hc : d.init = true ∧ d.ipt = true ∧ (d.AC nn).cused = true ∧ pt_Arg' num_proc nn vadr := by
+    by_cases h : d.init = true ∧ d.ipt = true ∧ (d.AC nn).cused = true ∧ pt_Arg' num_proc nn vadr
+    · exact h
+    · rw [if_neg h] at hs; cases hs
+  rw [if_pos hc] at hs
+  obtain ⟨hinit, hipt, hused, hn0, hnp, hlo, hhi⟩ := hc
+  have hv : vadr < 2 ^ 32 := by omega
+  have hpdx : PDX vadr < 1024 := by unfold PDX; omega
+  have hPT : ¬ nn = d.PT := by
+    intro h; rw [if_pos h] at hs; cases hs
+  rw [if_neg hPT] at hs
+  have hnps : d.nps ≤ 2 ^ 20 := Nat.le_trans hI.valid_nps.2 hmp
+  -- id = n; pi = container_alloc(id)
+  let σa := σ.set "id" (BitVec.ofNat 32 nn)
+  have ha0 : Runs (rprimsA εR c) (.assign "id" (.var "n")) σ l σa l := by
+    have h := Runs.assign (P := rprimsA εR c) (σ := σ) (l := l) "id" (.var "n")
+    have e : (Expr.var "n").eval σ = BitVec.ofNat 32 nn := hn
+    rw [e] at h; exact h
+  have hlka : (σa "lk").toNat = i0 := by simpa [σa, Locals.set] using hlk
+  have frA : ∀ (τ : Locals) (lb : RLog), Runs (rprimsA εR c) (ctAllocCS cb maxpage) σa l τ lb →
+      τ "n" = BitVec.ofNat 32 nn ∧ τ "vaddr" = BitVec.ofNat 32 vadr := fun τ lb hr =>
+    ⟨by rw [hr.frame (by simp [frS, ctAllocCS, pallocCS, getNpsS, pallocLoop, loopBody, isNormS, atGetS,
+            atSetS, atSetCS])]; simp [σa, Locals.set, hn],
+     by rw [hr.frame (by simp [frS, ctAllocCS, pallocCS, getNpsS, pallocLoop, loopBody, isNormS, atGetS,
+            atSetS, atSetCS])]; simp [σa, Locals.set, hva]⟩
+  cases hp : d.ptpool nn (PDX vadr) with
+  | PDEID => rw [hp] at hs; cases hs
+  | PDEUndef => rw [hp] at hs; cases hs
+  | PDEValid pi0 pdt0 => rw [hp] at hs; cases hs
+  | PDEUnPresent =>
+    rw [hp] at hs; simp only at hs
+    by_cases hlt : (d.AC nn).cusage < (d.AC nn).cquota
+    · rw [if_pos hlt] at hs
+      cases hff : first_free d.AT d.nps with
+      | none => rw [hff] at hs; cases hs
+      | some p =>
+        rw [hff] at hs
+        simp only [Option.some.injEq, Prod.mk.injEq] at hs; obtain ⟨hdF, rfl⟩ := hs
+        obtain ⟨hp0, hpn, -, -⟩ := first_free_some hff
+        have eA : container_alloc_spec nn d.toRData = some ({ d.toRData with
+            AT := setAt d.AT p (.ATValid true .ATNorm 0), pperm := setAt d.pperm p .PGAlloc,
+            AC := setAt d.AC nn ⟨(d.AC nn).cquota, (d.AC nn).cusage + 1, (d.AC nn).cparent,
+              (d.AC nn).cchildren, (d.AC nn).cused⟩ }, p) := by
+          unfold container_alloc_spec
+          simp only
+          rw [if_pos ⟨hinit, hused⟩, if_pos hlt, hff]
+        obtain ⟨σb, lb, bb, db, hrb, hcsb, hMb, hlkb, -, r1, hdb, r, hsr, hrr⟩ :=
+          container_alloc_lift εR c i0 hL hmax hnum (kl := kl) (kh := kh) nn (by omega) σa l b d hlka hcs hM
+            ⟨by simp [σa], hI, hu, _, _, eA⟩
+        rw [eA] at hsr
+        simp only [Option.some.injEq, Prod.mk.injEq] at hsr; obtain ⟨hr1, hrp⟩ := hsr
+        rw [← hr1] at hdb; rw [← hrp] at hrr
+        obtain ⟨hnb, hvab⟩ := frA σb lb hrb
+        have hdbi : db.init = true := by rw [hdb]; exact hinit
+        have hdbipt : db.ipt = true := by rw [hdb]; exact hipt
+        have hdbPT : ¬ nn = db.PT := by rw [hdb]; exact hPT
+        have hdbnps : db.nps = d.nps := by rw [hdb]
+        have hdbpp : db.pperm p = .PGAlloc := by rw [hdb]; exact setAt_eq _ _ _
+        -- pi = r
+        let σc := σb.set "pi" (BitVec.ofNat 32 p)
+        have hac : Runs (rprimsA εR c) (.assign "pi" (.var "r")) σb lb σc lb := by
+          have h := Runs.assign (P := rprimsA εR c) (σ := σb) (l := lb) "pi" (.var "r")
+          have e : (Expr.var "r").eval σb = BitVec.ofNat 32 p := hrr
+          rw [e] at h; exact h
+        have hlkc : (σc "lk").toNat = i0 := by simp [σc, Locals.set, hlkb, hlka]
+        have hpne : σc "pi" ≠ 0 := by
+          have : (BitVec.ofNat 32 p : Val) ≠ BitVec.ofNat 32 0 := KernPAlloc.ofNat_ne (by omega) (by decide) (by omega)
+          simpa [σc] using this
+        -- pt_insert_pde
+        obtain ⟨DE, hDE⟩ : ∃ DE : PTData, DE = { db with
+            HP := free_page p db.HP, pperm := setAt db.pperm p (.PGHide nn (PDX vadr)),
+            ptpool := setAt db.ptpool nn (setAt (db.ptpool nn) (PDX vadr) (.PDEValid p (fun _ => .PTEUndef))) } :=
+          ⟨_, rfl⟩
+        have eE : ptInsertPDE_spec num_proc nn vadr p db = some DE := by
+          rw [hDE]
+          unfold ptInsertPDE_spec setPDEU_spec
+          rw [if_pos ⟨hdbi, hdbipt, hnp, hpdx⟩, if_neg hdbPT, if_pos ⟨hp0, by rw [hdbnps]; exact hpn⟩, hdbpp]
+        obtain ⟨σd, ld, bd, dd, hrd, hcsd, hMd, hlkd, -, hqd⟩ :=
+          ptInsertPDE_triple εR c i0 hL nn vadr p hv σc lb bb db hlkc hcsb hMb
+            ⟨by simp [σc, Locals.set, hnb], by simp [σc, Locals.set, hvab], by simp [σc],
+              by rw [hdbnps]; exact hnps, _, eE⟩
+        rw [eE] at hqd; simp only [Option.some.injEq] at hqd
+        rw [← hqd] at hMd
+        have frD : ∀ z : Ident, z ≠ "i" → z ≠ "_" → σd z = σc z := fun z h1 h2 =>
+          hrd.frame (by simp [frS, ptInsertPDES, withPDX, setPDEUS, Ne.symm h1, Ne.symm h2])
+        -- pde_index, i = 0
+        let σe := σd.set "i" (BitVec.ofNat 32 (PDX vadr))
+        have hae : Runs (rprimsA εR c) (.assign "i" pdxE) σd ld σe ld := by
+          have h := Runs.assign (P := rprimsA εR c) (σ := σd) (l := ld) "i" pdxE
+          rw [pdx_eval (σ := σd) (v := vadr) (by rw [frD _ (by decide) (by decide)]; simp [σc, Locals.set, hvab])
+            hv] at h
+          exact h
+        let σf := σe.set "vadr" 0
+        have haf : Runs (rprimsA εR c) (.assign "vadr" (.const 0)) σe ld σf ld := Runs.assign _ _
+        have hDEi : DE.init = true := by rw [hDE]; exact hdbi
+        have hDEipt : DE.ipt = true := by rw [hDE]; exact hdbipt
+        have hDEPT : ¬ nn = DE.PT := by rw [hDE]; exact hdbPT
+        have e0 : Dk DE nn (PDX vadr) p 0 = DE := by
+          rw [hDE]; unfold Dk; simp only [pool2, initPTE_zero]
+        rw [← e0] at hMd
+        obtain ⟨σg, lg, bg, hrg, hcsg, hMg, hlkg, hfrg⟩ :=
+          rmvLoop_run εR c i0 hL hDEi hDEipt hnp hpdx hDEPT 1024 0 rfl σf ld bd
+            (by simp [σf, σe, Locals.set, hlkd, hlkc]) hcsd hMd
+            (by simp [σf, σe, Locals.set, frD, σc, hnb]) (by simp [σf, σe, Locals.set]) (by simp [σf])
+        -- return pi
+        have hpig : σg "pi" = BitVec.ofNat 32 p := by
+          rw [hfrg _ (by decide) (by decide) (by decide)]
+          simp [σf, σe, Locals.set, frD, σc]
+        have hah : Runs (rprimsA εR c) (.assign "r" (.var "pi")) σg lg (σg.set "r" (BitVec.ofNat 32 p)) lg := by
+          have h := Runs.assign (P := rprimsA εR c) (σ := σg) (l := lg) "r" (.var "pi")
+          have e : (Expr.var "pi").eval σg = BitVec.ofNat 32 p := hpig
+          rw [e] at h; exact h
+        have efin : Dk DE nn (PDX vadr) p 1024 = dF := by
+          rw [← hdF, hDE, hdb]; unfold Dk real_init_PTE; simp only [pool2, setAt_setAt, setAt_eq]
+        rw [efin] at hMg
+        refine ⟨_, lg, bg, dF, Runs.seq ha0 (Runs.seq hrb (Runs.seq hac (Runs.seq (Runs.ite_true (ne_true hpne)
+          (Runs.seq hrd (Runs.seq hae (Runs.seq haf hrg)))) hah))), hcsg, hMg, ?_,
+          fun k hk => absurd trivial hk, p, hs0, by simp⟩
+        rw [Locals.set_other _ _ (by decide), hlkg]
+        simp [σf, σe, Locals.set, hlkd, σc, hlkb, σa]
+    · rw [if_neg hlt] at hs
+      simp only [Option.some.injEq, Prod.mk.injEq] at hs; obtain ⟨rfl, rfl⟩ := hs
+      have eA : container_alloc_spec nn d.toRData = some (d.toRData, 0) := by
+        unfold container_alloc_spec
+        simp only
+        rw [if_pos ⟨hinit, hused⟩, if_neg hlt]
+      obtain ⟨σb, lb, bb, db, hrb, hcsb, hMb, hlkb, -, r1, hdb, r, hsr, hrr⟩ :=
+        container_alloc_lift εR c i0 hL hmax hnum (kl := kl) (kh := kh) nn (by omega) σa l b d hlka hcs hM
+          ⟨by simp [σa], hI, hu, _, _, eA⟩
+      rw [eA] at hsr
+      simp only [Option.some.injEq, Prod.mk.injEq] at hsr; obtain ⟨hr1, hrp⟩ := hsr
+      rw [← hr1] at hdb; rw [← hrp] at hrr
+      have hdbd : db = d := hdb
+      rw [hdbd] at hMb
+      let σc := σb.set "pi" (BitVec.ofNat 32 0)
+      have hac : Runs (rprimsA εR c) (.assign "pi" (.var "r")) σb lb σc lb := by
+        have h := Runs.assign (P := rprimsA εR c) (σ := σb) (l := lb) "pi" (.var "r")
+        have e : (Expr.var "r").eval σb = BitVec.ofNat 32 0 := hrr
+        rw [e] at h; exact h
+      have hah : Runs (rprimsA εR c) (.assign "r" (.var "pi")) σc lb (σc.set "r" (BitVec.ofNat 32 0)) lb := by
+        have h := Runs.assign (P := rprimsA εR c) (σ := σc) (l := lb) "r" (.var "pi")
+        have e : (Expr.var "pi").eval σc = BitVec.ofNat 32 0 := by show σc "pi" = _; simp [σc]
+        rw [e] at h; exact h
+      refine ⟨_, lb, bb, d, Runs.seq ha0 (Runs.seq hrb (Runs.seq hac (Runs.seq (Runs.ite_false
+        (ne_false (by simp [σc])) Runs.skip) hah))), hcsb, hMb, ?_, fun k hk => absurd trivial hk, 0, hs0,
+        by simp⟩
+      rw [Locals.set_other _ _ (by decide)]
+      simp [σc, Locals.set, hlkb, σa]
+
 end Alloc
 
 end MPTCommon

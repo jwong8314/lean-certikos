@@ -65,7 +65,7 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | `MALT` | container code: `container_init`, getters, `container_can_consume`, `container_split`, `container_alloc` | **ported** in `MContainer.lean`: the four getters (`getter_guarantee` with `get_*_ref`), `container_split` (`container_split_refines`), `container_alloc` (`container_alloc_refines`). Missing: `container_init`, `container_can_consume` |
 | `MContainer` | page-table pool accessors (`set_pt`, `get_PDE`, `set_PDE`, `rmv_PDE`, `set_PDEU`, `get_PTE`, `set_PTE`, `rmv_PTE`, `set_IDPTE`) | **ported**: `MPTIntro.lean`. All eight memory accessors refine their specs (`getPDE_triple`, `setPDE_triple`, `rmvPDE_triple`, `setPDEU_triple`, `getPTE_triple`, `setPTE_triple`, `rmvPTE_triple`, `setIDPTE_triple`). Missing: `set_pt` (loads `CR3`; needs the machine model) |
 | `MPTIntro` | `pt_read`, `pt_read_pde`, `pt_rmv_aux`, `pt_rmv_pde`, `pt_insert_aux`, `pt_insert_pde`, `idpde_init` | **ported**: `MPTOp.lean`. The six operations refine `ptRead_spec` … `ptInsertPDE_spec`, each verified against the accessor's triple. Missing: `idpde_init` (boot) |
-| `MPTOp` | `pt_alloc_pde`, `pt_free_pde`, `pt_init_comm` | **in progress**: `MPTCommon.lean`. `pt_free_pde` refines `ptFreePDE_spec` (`ptFreePDE_triple`), composed from the triples of `pt_read_pde`, `pt_rmv_pde` and `pfree`. Missing: `pt_alloc_pde`, `pt_init_comm` (boot) |
+| `MPTOp` | `pt_alloc_pde`, `pt_free_pde`, `pt_init_comm` | **ported**: `MPTCommon.lean`. `pt_alloc_pde` refines `ptAllocPDE_spec` (through the specs of `container_alloc`, `pt_insert_pde`, and 1024 calls of `rmv_PTE`); `pt_free_pde` refines `ptFreePDE_spec` (through `pt_read_pde`, `pt_rmv_pde`, `pfree`). Missing: `pt_init_comm` (boot) |
 | `MPTCommon` | `pt_insert`, `pt_rmv` with reference counts | prototype only |
 | `MPTKern`, `MPTInit` | kernel page table, `pt_init`, paging on | missing |
 | `MPTNew` | `pt_new`, `pt_resv`, `pmap_init` | missing |
@@ -181,6 +181,22 @@ Each port has the same shape, which is mCertiKOS's own two steps.
   table names the one owner.
 - The eight triples, one per accessor. Each is the interface the next layer
   is verified against.
+
+### `MPTOp.lean` and `MPTCommon.lean`
+
+- `MPTOp.lean`: the six operations by virtual address. Each is one accessor
+  after computing `PDX` and `PTX`, so each proof is the accessor's triple and
+  `Triple.assign_pre`.
+- `MPTCommon.lean`: the first primitives that span the whole memory manager.
+  - `pfree_lift`, `container_alloc_lift`: `pfree` and `container_alloc` were
+    verified on the allocation table and containers alone. `Triple.lift`
+    carries them to the state with page tables. What has to be shown is that
+    they leave hidden pages' permissions alone (`pfree_pperm`, `alloc_pperm`;
+    the second uses `consistent_ppage`).
+  - `ptFreePDE_triple`: `pt_free_pde` refines `ptFreePDE_spec`.
+  - `ptAllocPDE_triple`: `pt_alloc_pde` refines `ptAllocPDE_spec`. The loop
+    that clears the new table is verified against `rmv_PTE`'s specification,
+    1024 times (`rmvLoop_run`), and ends with `real_init_PTE`.
 
 ### `MContainerInv.lean` and the end of `MALOp.lean`: the invariants
 
