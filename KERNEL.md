@@ -40,28 +40,63 @@ any environment that keeps the log valid.
 
 ## Status
 
-| Module (mCertiKOS layers) | What it is | Status |
+Two kinds of files exist, and they should not be confused.
+
+- **Ported**: follows the mCertiKOS sources (public mirror `npe9/certikos`,
+  the sequential PLDI'16 kernel). The abstract state, the specifications and
+  the C code are transcribed, and the C code is proved to refine the
+  specifications. The sources were read, not run.
+- **Prototype**: written before the sources were checked. Verified, but its
+  state and specifications are this project's own and differ from
+  mCertiKOS's. To be replaced by ports.
+
+The concurrent kernel (mC2) is not public. Where a lock protects an object
+here, that part follows the papers, not sources.
+
+Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
+
+| Layer | What it adds | Status |
 |---|---|---|
-| **Memory management** | | |
-| `MBoot`, `PreInit` | boot, physical memory map | not started |
-| `MALInit`, `MALOp`, `MALT` | allocation table, `palloc`/`pfree` | **done**: `KernPAlloc.lean`, with owners in `KernOwner.lean` |
-| `MContainer` | per-process memory quotas | **done**: `KernContainer.lean` (alloc, free, split; no getters), page ownership in `KernOwner.lean` |
-| `MPTIntro`, `MPTOp`, `MPTCommon` | page-table entries, two-level page tables | **done**: `KernPT.lean` (insert, remove, lookup; no permission bits, tables are never freed) |
-| `MPTKern`, `MPTInit`, `MPTNew` | kernel page table, address-space creation | not started |
-| `MShareIntro`, `MShareOp`, `MShare` | shared memory between processes | not started |
-| **Process management** | | |
-| `PKContext`, `PKContextNew` | kernel contexts, context switch | not started |
-| `PThreadIntro`, `PThreadInit` | thread control blocks | not started |
-| `PQueueIntro`, `PQueueInit`, `PAbQueue` | thread queues | not started |
-| `PCurID`, `PThreadSched`, `PThread` | current thread, scheduler, `yield`/`sleep`/`wakeup` | minimal: `ThreadLayer.lean` (threads as virtual CPUs, safety only) |
-| `PIPCIntro`, `PIPC` | synchronous IPC | not started |
-| `PUCtxtIntro`, `PProc` | user contexts, process creation | not started |
-| **Trap handling** | | |
-| `TTrapArg`, `TTrap`, `TDispatch`, `TSysCall` | system-call arguments, handlers, dispatch | not started |
+| **Memory management** (`mm`) | | |
+| `PreInit` | boot loader, memory map (`get_size`, `get_mms`, `get_mml`, `is_usable`) | missing |
+| `MBoot` | allocation-table accessors over memory | **ported** in `MALOp.lean`: `is_norm`, `at_get`, `at_set`, `at_set_c`, `get_nps`. Missing: `set_norm`, `set_nps`, `at_get_c` |
+| `MALInit` | `mem_init` | missing |
+| `MALOp` | `palloc`, `pfree` | **ported**: `MALOp.lean` (`palloc_refines`, `pfree_refines`) |
+| `MALT` | container code: `container_init`, getters, `container_can_consume`, `container_split`, `container_alloc` | prototype only (`KernContainer.lean`); port is next |
+| `MContainer` | page-table pool accessors (`set_pt`, `get_PDE`, `set_PDE`, `rmv_PDE`, `set_PDEU`, `get_PTE`, `set_PTE`, `rmv_PTE`, `set_IDPTE`) | missing (`KernPT.lean` is a prototype with a different layout) |
+| `MPTIntro` | `pt_read`, `pt_read_pde`, `pt_rmv_aux`, `pt_rmv_pde`, `pt_insert_aux`, `pt_insert_pde`, `idpde_init` | prototype only |
+| `MPTOp` | `pt_alloc_pde`, `pt_free_pde`, kernel mappings | missing |
+| `MPTCommon` | `pt_insert`, `pt_rmv` with reference counts | prototype only |
+| `MPTKern`, `MPTInit` | kernel page table, `pt_init`, paging on | missing |
+| `MPTNew` | `pt_new`, `pt_resv`, `pmap_init` | missing |
+| `MShareIntro`, `MShareOp`, `MShare` | shared memory | missing |
+| abstract ownership | `pperm`, the logical table `LAT` with its owner lists, `consistent_ppage` | `pperm` and `consistent_ppage` stated in `MALOp.lean`; not yet shown preserved. `LAT` missing. `KernOwner.lean` is a prototype with a different design |
+| **Process management** (`proc`) | | |
+| `PKContext`, `PKContextNew` | kernel contexts, `kctxt_switch`, `kctxt_new` | missing (needs assembly and a machine model) |
+| `PThreadIntro`, `PThreadInit` | thread control blocks | missing |
+| `PQueueIntro`, `PQueueInit`, `PAbQueue` | thread queues, then abstract queues | missing |
+| `PCurID`, `PThreadSched`, `PThread` | current thread, `thread_spawn`, `thread_yield`, `thread_sleep`, `thread_wakeup` | missing (`ThreadLayer.lean` is a prototype of a different thing) |
+| `PIPCIntro`, `PIPC` | synchronous IPC | missing |
+| `PUCtxtIntro`, `PProc` | user contexts, `proc_create` | missing |
+| **Trap handling** (`trap`) | | |
+| `TTrapArg`, `TTrap`, `TDispatch`, `TSysCall` | system-call arguments, handlers, dispatch | missing |
 | **Other** | | |
-| virtualization (`VMX`, `VMCS`, `EPT`) | guest VMs | not started |
-| device drivers, interrupts | | not started |
-| security (noninterference) | process isolation | not started |
+| `objects/ObjVMX`, `ObjVMCS`, `ObjEPT` | virtualization | missing |
+| `security` | noninterference (`Integrity`, `Confidentiality`, `Security`) | missing |
+| `layerlib`: `LAsm`, `CompCertiKOS` | layered assembly, the compiler | missing: no machine model, no verified compiler |
+| layer calculus | linking layers vertically with `high_level_invariant` | partial: each port states refinement to the spec; invariant preservation and layer linking are not done per layer |
+
+### What a port still leaves out
+
+Even for the ported layers:
+
+- `ikern` and `ihost` are dropped from the specifications (no machine model).
+- Indices are `Nat` rather than `Z`.
+- The objects live in lock regions, not in CompCert memory.
+- `high_level_invariant` is stated (`ATInv`) and used as a hypothesis. It is
+  not yet proved to be preserved by each primitive.
+- Boot (`mem_init`, `container_init`) is not ported, so nothing establishes
+  the invariant initially.
 
 ## What `KernPAlloc.lean` proves
 
