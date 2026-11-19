@@ -239,6 +239,87 @@ theorem palloc_triple (εR : REnv) (c : CPU) (i : Nat) {maxpage num_id cb kl kh 
     pallocC_frame hmax b hn (show 3 * maxpage < cb + 5 * j + 4 by omega)]
   exact hM.mAC j hj
 
+/-- `x = at_get_c(i)`: `x = AT[i].c;` -/
+def atGetCS (x : Ident) (ie : Expr) : Stmt APrim := .call x .pull [lkE, ixE ie 2]
+
+/-- **`at_get_c` refines `get_at_c_spec`.** -/
+theorem atGetC_triple (εR : REnv) (c : CPU) (i0 : Nat) {maxpage num_id cb : Nat}
+    (hmax : 3 * maxpage < 2 ^ 32) (x : Ident) (hx : x ≠ "lk") (ie : Expr) (i : Nat) :
+    Triple εR c i0 (MatchMM maxpage num_id cb) (fun _ => False)
+      (fun σ d => ie.eval σ = BitVec.ofNat 32 i ∧ ∃ v, get_at_c_spec maxpage i d.toPData = some v)
+      (atGetCS x ie)
+      (fun σ d σ' d' => d' = d ∧ ∃ v, get_at_c_spec maxpage i d.toPData = some v ∧
+        σ' = σ.set x (BitVec.ofNat 32 v)) := by
+  intro σ l b d hlk hcs hM ⟨hi, v, hs⟩
+  have hs0 := hs
+  unfold get_at_c_spec at hs
+  have hilt : i < maxpage := by
+    by_cases h : i < maxpage
+    · exact h
+    · rw [if_neg h] at hs; cases hs
+  rw [if_pos hilt] at hs
+  have hm := hM.mAT.mat i hilt
+  have hrd := cs1_rd (εR := εR) hcs hlk x (ixE ie 2)
+  have e : ((ixE ie 2).eval σ).toNat = 3 * i + 2 := by
+    show ix (ie.eval σ) 2 = _; rw [hi]; exact ix2 hmax hilt
+  rw [e] at hrd
+  cases hA : d.AT i with
+  | ATUndef => rw [hA] at hs; cases hs
+  | ATValid b0 t n =>
+    rw [hA] at hs hm; simp only [Option.some.injEq] at hs; subst hs
+    have hv : b (3 * i + 2) = BitVec.ofNat 32 n :=
+      val_of_toNat hm.2.2.symm (by rw [hm.2.2]; exact (b _).isLt)
+    rw [hv] at hrd
+    exact ⟨_, l, b, d, hrd, hcs, hM, Locals.set_other _ _ (Ne.symm hx), fun _ _ => rfl, rfl, n, hs0, rfl⟩
+
+/-- **`at_set_c` refines `set_at_c_spec`.** -/
+theorem atSetC_triple (εR : REnv) (c : CPU) (i0 : Nat) {maxpage num_id cb : Nat}
+    (hmax : 3 * maxpage < 2 ^ 32) (hcb : 3 * maxpage < cb) (ie ve : Expr) (i n : Nat) :
+    Triple εR c i0 (MatchMM maxpage num_id cb) (fun k => k ≤ 3 * maxpage)
+      (fun σ d => ie.eval σ = BitVec.ofNat 32 i ∧ ve.eval σ = BitVec.ofNat 32 n ∧ n < 2 ^ 32 ∧
+        ∃ pd, set_at_c_spec maxpage i n d.toPData = some pd)
+      (atSetCS ie ve)
+      (fun σ d σ' d' => (∃ pd, set_at_c_spec maxpage i n d.toPData = some pd ∧ d' = ⟨pd, d.AC⟩) ∧
+        σ' = σ.set "_" 0) := by
+  intro σ l b d hlk hcs hM ⟨hi, hv, hn, pd, hs⟩
+  have hs0 := hs
+  unfold set_at_c_spec at hs
+  have hilt : i < maxpage := by
+    by_cases h : i < maxpage
+    · exact h
+    · rw [if_neg h] at hs; cases hs
+  rw [if_pos hilt] at hs
+  have hm := hM.mAT.mat i hilt
+  obtain ⟨l', hw, hc'⟩ := cs1_wr (εR := εR) hcs hlk (ixE ie 2) ve
+  have e : ((ixE ie 2).eval σ).toNat = 3 * i + 2 := by
+    show ix (ie.eval σ) 2 = _; rw [hi]; exact ix2 hmax hilt
+  rw [e, hv] at hc'
+  cases hA : d.AT i with
+  | ATUndef => rw [hA] at hs; cases hs
+  | ATValid b0 t c0 =>
+    rw [hA] at hs hm
+    cases t with
+    | ATKern => cases hs
+    | ATResv => cases hs
+    | ATNorm =>
+      simp only [Option.some.injEq] at hs
+      refine ⟨_, l', _, ⟨pd, d.AC⟩, hw, hc', ⟨⟨fun j hj => ?_, ?_⟩, fun j hj => ?_⟩, by simp [Locals.set],
+        fun k hk => by simp only [setCell]; rw [if_neg (by omega)], ⟨pd, hs0, rfl⟩, rfl⟩
+      · rw [← hs]
+        by_cases hji : j = i
+        · rw [hji]
+          simp only [setAt_eq]
+          simp (disch := omega) only [setCell, if_pos, if_neg, ↓reduceIte]
+          exact ⟨hm.1, hm.2.1, by simp only [BitVec.toNat_ofNat]; exact (Nat.mod_eq_of_lt hn).symm⟩
+        · simp only [setAt_ne _ _ hji]
+          simp (disch := omega) only [setCell, if_pos, if_neg, ↓reduceIte]
+          exact hM.mAT.mat j hj
+      · rw [← hs]
+        simp (disch := omega) only [setCell, if_pos, if_neg, ↓reduceIte]
+        exact hM.mAT.mnps
+      · simp (disch := omega) only [setCell, if_pos, if_neg, ↓reduceIte]
+        exact hM.mAC j hj
+
 /-- **`pfree`'s interface for the layers above.** -/
 theorem pfree_triple (εR : REnv) (c : CPU) (i : Nat) {maxpage num_id cb : Nat}
     (hmax : 3 * maxpage < 2 ^ 32) (hcb : 3 * maxpage < cb) (j : Nat) :
