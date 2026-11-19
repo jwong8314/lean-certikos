@@ -252,4 +252,143 @@ theorem alloc_ref {maxpage num_id : Nat} (hmax : 3 * maxpage < 2 ^ 32) (hnum : 5
       exact ⟨hC, hA, rfl⟩
   · rw [if_neg hiu] at h; cases h
 
+/-! ## The C code of `container_alloc` (`MALTCSource.v`) -/
+
+/-- `u = CT[id].usage; q = CT[id].quota; if (u == q) return 0; CT[id].usage = u + 1; return palloc();` -/
+def ctAllocCS (atv : Val) (maxpage : Nat) : Stmt APrim :=
+  .seq (.call "u" .pull [lkE, cellE "id" 1]) (.seq (.call "q" .pull [lkE, cellE "id" 0])
+    (.ite (.bin .eq (.var "u") (.var "q")) (.assign "r" (.const 0))
+      (.seq (.call "_" .push [lkE, cellE "id" 1, .bin .add (.var "u") (.const 1)])
+        (nest atv (palloc maxpage)))))
+
+/-- `container_alloc(id)` under the container table's lock. The result is in `r`. -/
+def container_alloc (atv : Val) (maxpage : Nat) : Stmt APrim :=
+  .seq acquireA (.seq (ctAllocCS atv maxpage) relA)
+
+theorem palloc_lk (maxpage : Nat) : LkS (palloc maxpage) := by
+  simp [LkS, palloc, acquireA, loopA, pallocCS, getNpsS, pallocLoop, loopBody, isNormS, atGetS, atSetS,
+    atSetCS, relA]
+
+theorem palloc_fr (maxpage : Nat) (z : Ident) (h1 : z ≠ "t") (h2 : z ≠ "n") (h3 : z ≠ "_") (h4 : z ≠ "v")
+    (h5 : z ≠ "tnps") (h6 : z ≠ "pi") (h7 : z ≠ "fi") (h8 : z ≠ "isn") (h9 : z ≠ "cur") (h10 : z ≠ "r") :
+    frS z (palloc maxpage) = true := by
+  simp [frS, palloc, acquireA, loopA, pallocCS, getNpsS, pallocLoop, loopBody, isNormS, atGetS, atSetS,
+    atSetCS, relA, Ne.symm h1, Ne.symm h2, Ne.symm h3, Ne.symm h4, Ne.symm h5, Ne.symm h6, Ne.symm h7,
+    Ne.symm h8, Ne.symm h9, Ne.symm h10]
+
+/-- **The body of `container_alloc` computes `ctAllocC`.** `a` is the
+allocation table `palloc` found when it took its lock. -/
+theorem ctAllocCS_run {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε) (hRR : RelyR εR c)
+    (hc : c < NCPU) (hRA : LockArray.RelyA ε c) (bound : ALog → Nat) (K : Nat) (hK : ∀ l, bound l ≤ K)
+    {atv : Val} (hF : ∀ tn, LockArray.FairA ε c atv.toNat tn bound) {maxpage : Nat}
+    (hmax : 3 * maxpage < 2 ^ 32) {i : Nat} (hi : i ≠ atv.toNat) (σ : Locals) (l : RLog) (b : Region)
+    (hlk : (σ "lk").toNat = i) (hcs : CSt c i atv.toNat l b) :
+    ∃ σ' l' a, Runs (rprimsA εR c) (ctAllocCS atv maxpage) σ l σ' l' ∧
+      CSt c i atv.toNat l' (ctAllocC maxpage b a (σ "id")).1 ∧ σ' "lk" = σ "lk" ∧
+      σ' "r" = (ctAllocC maxpage b a (σ "id")).2.2 := by
+  let U := b (cell (σ "id") 1)
+  let Q := b (cell (σ "id") 0)
+  let σ0 := σ.set "u" U
+  let σ1 := σ0.set "q" Q
+  have hr0 : Runs (rprimsA εR c) (.call "u" .pull [lkE, cellE "id" 1]) σ l σ0 l := rd_cell hcs hlk "u" "id" 1 rfl
+  have hr1 : Runs (rprimsA εR c) (.call "q" .pull [lkE, cellE "id" 0]) σ0 l σ1 l :=
+    rd_cell hcs (σ := σ0) (by simp [σ0, Locals.set, hlk]) "q" "id" 0 (by simp [σ0, Locals.set])
+  have hlk1 : σ1 "lk" = σ "lk" := by simp [σ1, σ0, Locals.set]
+  have hu1 : σ1 "u" = U := by simp [σ1, σ0, Locals.set]
+  have hq1 : σ1 "q" = Q := by simp [σ1, σ0, Locals.set]
+  have hid1 : σ1 "id" = σ "id" := by simp [σ1, σ0, Locals.set]
+  have hgd : (Expr.bin .eq (.var "u") (.var "q")).eval σ1 = if σ1 "u" = σ1 "q" then 1 else 0 := rfl
+  by_cases he : U = Q
+  · have hsp : ∀ a, ctAllocC maxpage b a (σ "id") = (b, a, 0) := fun a => if_pos he
+    refine ⟨σ1.set "r" 0, l, fun _ => 0, Runs.seq hr0 (Runs.seq hr1 (Runs.ite_true
+      (by rw [hgd, hu1, hq1, if_pos he]; decide) (Runs.assign _ _))), ?_, ?_, ?_⟩
+    · rw [hsp]; exact hcs
+    · rw [Locals.set_other _ _ (by decide)]; exact hlk1
+    · rw [hsp]; simp
+  · obtain ⟨l2, hw, hc2⟩ := wr_cell (εR := εR) hcs (σ := σ1) (by rw [hlk1]; exact hlk) "id" 1
+      (.bin .add (.var "u") (.const 1)) hid1
+    have hev : (Expr.bin .add (.var "u") (.const 1)).eval σ1 = U + 1 := by
+      simp only [Expr.eval, BinOp.eval]; rw [hu1]
+    rw [hev] at hc2
+    let σ2 := σ1.set "_" 0
+    have hlk2 : σ2 "lk" = σ "lk" := by simp [σ2, Locals.set, hlk1]
+    obtain ⟨S, H, hl, hh, hid, hb⟩ := hc2
+    obtain ⟨σp, rb, S3, H1, H3, hrun, hl3, hid3, -, hr⟩ :=
+      palloc_guarantee hE hRR hc hRA hl (iv := atv) hid bound K hK (hF _)
+        ((σ2.set "plk" (σ2 "lk")).set "lk" atv) (by simp) hmax
+    obtain ⟨hnest, hc3⟩ := nest_run (palloc_lk _)
+      (palloc_fr _ _ (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide))
+      (palloc_fr _ _ (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide))
+      hi hl hh hb hrun hl3 hid3
+    have hsp : ctAllocC maxpage b (hmemR atv.toNat H1) (σ "id") =
+        (setCell b (cell (σ "id") 1) (U + 1), (pallocC maxpage (hmemR atv.toNat H1)).1,
+          (pallocC maxpage (hmemR atv.toNat H1)).2) := if_neg he
+    refine ⟨σp.set "lk" (σ2 "lk"), rb, hmemR atv.toNat H1, Runs.seq hr0 (Runs.seq hr1 (Runs.ite_false
+      (by rw [hgd, hu1, hq1, if_neg he]) (Runs.seq hw hnest))), ?_, ?_, ?_⟩
+    · rw [hsp]; exact hc3
+    · simp [hlk2]
+    · rw [hsp, Locals.set_other _ _ (by decide)]; exact hr
+
+/-- **`container_alloc(id)` computes `ctAllocC`** of the container table the
+previous holder released. -/
+theorem container_alloc_guarantee {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε) (hRR : RelyR εR c)
+    (hc : c < NCPU) (hRA : LockArray.RelyA ε c) {l : RLog} {S : RState} {H : HLogR}
+    (hl : rreplay l = some (S, H)) {iv : Val} (hidle : (S.lk iv.toNat).phase c = .idle)
+    {atv : Val} (hi : iv.toNat ≠ atv.toNat) (hidat : (S.lk atv.toNat).phase c = .idle)
+    (bound : ALog → Nat) (K : Nat) (hK : ∀ l, bound l ≤ K)
+    (hF : LockArray.FairA ε c iv.toNat (ticket (LockArray.projL iv.toNat (apull ε c (erase l)))) bound)
+    (hFat : ∀ tn, LockArray.FairA ε c atv.toNat tn bound)
+    (σ : Locals) (hσ : σ "lk" = iv) {maxpage : Nat} (hmax : 3 * maxpage < 2 ^ 32) :
+    ∃ (σ' : Locals) (rb : RLog) (S3 : RState) (H1 H3 : HLogR) (a : Region),
+      Star (rprimsA εR c) ⟨container_alloc atv maxpage, .stop, σ, l⟩ ⟨.skip, .stop, σ', rb⟩ ∧
+      rreplay rb = some (S3, H3) ∧ (S3.lk iv.toNat).phase c = .idle ∧ (S3.lk atv.toNat).phase c = .idle ∧
+      hmemR iv.toNat H3 = (ctAllocC maxpage (hmemR iv.toNat H1) a (σ "id")).1 ∧
+      σ' "r" = (ctAllocC maxpage (hmemR iv.toNat H1) a (σ "id")).2.2 := by
+  obtain ⟨σ1, σ2, rb, S3, H1, H3, hrun, hl3, hid, hidj, hfr, a, hR1, hR2⟩ :=
+    cs_guarantee2 hE hRR hc hRA hl hidle (j := atv.toNat) (fun h => hi h.symm) hidat bound K hK hF σ hσ
+      (ctAllocCS atv maxpage)
+      (fun b σ b' σ' => ∃ a, b' = (ctAllocC maxpage b a (σ "id")).1 ∧
+        σ' "r" = (ctAllocC maxpage b a (σ "id")).2.2)
+      (fun σ l b hlk hcs => by
+        obtain ⟨σ', l', a, hr, hc', hlk', hres⟩ := ctAllocCS_run hE hRR hc hRA bound K hK hFat hmax
+          hi σ l b (by rw [hlk]) hcs
+        exact ⟨σ', l', _, hr, hc', hlk'.trans hlk, a, rfl, hres⟩)
+  have hd := hfr "id" (by decide) (by decide) (by decide) (by decide)
+  refine ⟨σ2.set "_" 0, rb, S3, H1, H3, a, hrun, hl3, hid, hidj, ?_, ?_⟩
+  · rw [hR1, hd]
+  · rw [Locals.set_other _ _ (by decide), hR2, hd]
+
+/-- **`container_alloc(id)` refines `container_alloc_spec`.** Suppose the
+container table the previous holder released matches `d.AC`, the allocation
+table `a` that `palloc` found matches `d`'s, the invariants hold, and the
+specification is defined. Then the container table released matches the
+specification's result, so does the allocation table `palloc` left, and `r`
+is the page. -/
+theorem container_alloc_refines {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε) (hRR : RelyR εR c)
+    (hc : c < NCPU) (hRA : LockArray.RelyA ε c) {l : RLog} {S : RState} {H : HLogR}
+    (hl : rreplay l = some (S, H)) {iv : Val} (hidle : (S.lk iv.toNat).phase c = .idle)
+    {atv : Val} (hi : iv.toNat ≠ atv.toNat) (hidat : (S.lk atv.toNat).phase c = .idle)
+    (bound : ALog → Nat) (K : Nat) (hK : ∀ l, bound l ≤ K)
+    (hF : LockArray.FairA ε c iv.toNat (ticket (LockArray.projL iv.toNat (apull ε c (erase l)))) bound)
+    (hFat : ∀ tn, LockArray.FairA ε c atv.toNat tn bound)
+    (σ : Locals) (hσ : σ "lk" = iv) {maxpage num_id : Nat} (hmax : 3 * maxpage < 2 ^ 32)
+    (hnum : 5 * num_id < 2 ^ 32) :
+    ∃ (σ' : Locals) (rb : RLog) (S3 : RState) (H1 H3 : HLogR) (a a' : Region),
+      Star (rprimsA εR c) ⟨container_alloc atv maxpage, .stop, σ, l⟩ ⟨.skip, .stop, σ', rb⟩ ∧
+      rreplay rb = some (S3, H3) ∧ (S3.lk iv.toNat).phase c = .idle ∧ (S3.lk atv.toNat).phase c = .idle ∧
+      ∀ (kl kh : Nat) (d d' : RData) (id r : Nat), σ "id" = BitVec.ofNat 32 id → id < num_id →
+        MatchC num_id d.AC (hmemR iv.toNat H1) → MatchD maxpage d.toPData a →
+        ATInv maxpage kl kh d.toPData → (d.AC id).cusage ≤ (d.AC id).cquota →
+        container_alloc_spec id d = some (d', r) →
+        MatchC num_id d'.AC (hmemR iv.toNat H3) ∧ MatchD maxpage d'.toPData a' ∧
+          σ' "r" = BitVec.ofNat 32 r := by
+  obtain ⟨σ', rb, S3, H1, H3, a, hrun, hl3, hid, hidj, hm, hr⟩ :=
+    container_alloc_guarantee hE hRR hc hRA hl hidle hi hidat bound K hK hF hFat σ hσ hmax
+  refine ⟨σ', rb, S3, H1, H3, a, (ctAllocC maxpage (hmemR iv.toNat H1) a (σ "id")).2.1, hrun, hl3, hid, hidj,
+    fun kl kh d d' id r hsid hlt hC hA hI hu hs => ?_⟩
+  obtain ⟨g1, g2, g3⟩ := alloc_ref hmax hnum hC hA hI hlt hu hs
+  rw [hm, hr, hsid]; exact ⟨g1, g2, g3⟩
+
 end MContainer
