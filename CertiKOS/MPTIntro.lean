@@ -751,6 +751,158 @@ theorem rmvPTE_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num
         (by rw [← hs]) (fun k hk => sc_ne _ _ (by omega)), hpt⟩, hlk',
         fun k hk => sc_ne _ _ (by omega), hs0⟩
 
+
+/-- The run of a directory store. -/
+theorem pdeStore_run (εR : REnv) {c : CPU} {i0 : Nat} (hL : Layout maxpage num_id cb num_proc pb ib fb)
+    {l : RLog} {b : Region} (hcs : CS1 c i0 l b) {σ : Locals} (hlk : (σ "lk").toNat = i0) {n i : Nat}
+    (hnp : n < num_proc) (hi1 : i < 1024) (hn : σ "n" = BitVec.ofNat 32 n) (hi : σ "i" = BitVec.ofNat 32 i)
+    (we : Expr) {w : Val} (hw : we.eval σ = w) :
+    ∃ l', Runs (rprimsA εR c) (.call "_" .push [lkE, pdeE pb, we]) σ l (σ.set "_" 0) l' ∧
+      CS1 c i0 l' (setCell b (pb + n * 1024 + i) w) := by
+  have := hL.hib; have := hL.hfb; have := hL.hend
+  obtain ⟨l', hwr, hc'⟩ := cs1_wr (εR := εR) hcs hlk (pdeE pb) we
+  rw [pde_ix (pb := pb) (num_proc := num_proc) (by omega) hnp hi1 hn hi, hw] at hc'
+  exact ⟨l', hwr, hc'⟩
+
+/-- **`set_PDEU` refines `setPDEU_spec`.** Page `pi` becomes the second-level
+table of entry `(n, i)`: hidden, and owned by that entry. -/
+theorem setPDEU_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_id cb num_proc pb ib fb)
+    (n i pi : Nat) :
+    Triple εR c i0 (MatchAll maxpage num_id cb num_proc pb ib fb ida) (fun k => pb ≤ k)
+      (fun σ d => σ "n" = BitVec.ofNat 32 n ∧ σ "i" = BitVec.ofNat 32 i ∧ σ "pi" = BitVec.ofNat 32 pi ∧
+        d.nps ≤ 2 ^ 20 ∧ ∃ d1, setPDEU_spec num_proc n i pi d = some d1)
+      (setPDEUS pb)
+      (fun _ d _ d' => setPDEU_spec num_proc n i pi d = some d') := by
+  intro σ l b d hlk hcs hM ⟨hn, hi, hpi, hnps, d1, hs⟩
+  have := hL.hib; have := hL.hfb; have := hL.hend; have := hL.hpb
+  have hs0 := hs
+  unfold setPDEU_spec at hs
+  have hc : d.init = true ∧ d.ipt = true ∧ PDE_Arg num_proc n i := by
+    by_cases h : d.init = true ∧ d.ipt = true ∧ PDE_Arg num_proc n i
+    · exact h
+    · rw [if_neg h] at hs; cases hs
+  rw [if_pos hc] at hs
+  obtain ⟨-, -, hnp, hi1⟩ := hc
+  by_cases hPT : n = d.PT
+  · rw [if_pos hPT] at hs; cases hs
+  · rw [if_neg hPT] at hs
+    by_cases hpr : 0 < pi ∧ pi < d.nps
+    · rw [if_pos hpr] at hs
+      cases hpp : d.pperm pi with
+      | PGUndef => rw [hpp] at hs; cases hs
+      | PGHide a1 a2 => rw [hpp] at hs; cases hs
+      | PGAlloc =>
+        rw [hpp] at hs; simp only [Option.some.injEq] at hs
+        obtain ⟨l', hwr, hc'⟩ := pdeStore_run εR hL hcs hlk hnp hi1 hn hi
+          (.bin .add (.bin .mul (.var "pi") (.const 4096)) (.const 7)) (w := BitVec.ofNat 32 pi * 4096 + 7)
+          (by show σ "pi" * 4096 + 7 = _; rw [hpi])
+        have hpt := pool_update hL hM.pt hnp hi1 (.PDEValid pi (fun _ => .PTEUndef))
+          (BitVec.ofNat 32 pi * 4096 + 7) (setAt d.pperm pi (.PGHide n i)) (free_page pi d.HP)
+          ⟨by simp [BitVec.toNat_add, BitVec.toNat_mul]; omega, setAt_eq _ _ _⟩
+          (fun pi' pdx' e vadr _ => by cases e; simp [RelPTE])
+          (fun pi' pdx' e a ha => by cases e; simp [free_page, ha])
+          (fun n' i' pi' pdx' _ hn' hi' hq => by
+            have h := hM.pt.pool n' i' hn' hi'; rw [hq] at h
+            exact setAt_ne _ _ (fun e => by rw [e] at h; have h2 := h.2; rw [hpp] at h2; cases h2))
+          (fun a v h => by unfold free_page at h; split at h; cases h; exact h)
+        rw [hs] at hpt
+        exact ⟨_, l', _, d1, hwr, hc', ⟨mm_frame (d' := d1.toRData) hL hM.mm (by rw [← hs]) (by rw [← hs])
+          (by rw [← hs]) (fun k hk => sc_ne _ _ (by omega)), hpt⟩, by simp [Locals.set],
+          fun k hk => sc_ne _ _ (by omega), hs0⟩
+    · rw [if_neg hpr] at hs; cases hs
+
+/-- **`rmv_PDE` refines `rmvPDE_spec`.** If the entry held a table, its page is
+no longer hidden. -/
+theorem rmvPDE_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_id cb num_proc pb ib fb)
+    (n i : Nat) :
+    Triple εR c i0 (MatchAll maxpage num_id cb num_proc pb ib fb ida) (fun k => pb ≤ k)
+      (fun σ d => σ "n" = BitVec.ofNat 32 n ∧ σ "i" = BitVec.ofNat 32 i ∧
+        ∃ d1, rmvPDE_spec num_proc n i d = some d1)
+      (rmvPDES pb)
+      (fun _ d _ d' => rmvPDE_spec num_proc n i d = some d') := by
+  intro σ l b d hlk hcs hM ⟨hn, hi, d1, hs⟩
+  have := hL.hib; have := hL.hfb; have := hL.hend; have := hL.hpb
+  have hs0 := hs
+  unfold rmvPDE_spec at hs
+  have hc : d.init = true ∧ d.ipt = true ∧ PDE_Arg num_proc n i := by
+    by_cases h : d.init = true ∧ d.ipt = true ∧ PDE_Arg num_proc n i
+    · exact h
+    · rw [if_neg h] at hs; cases hs
+  rw [if_pos hc] at hs
+  obtain ⟨-, -, hnp, hi1⟩ := hc
+  simp only at hs
+  obtain ⟨l', hwr, hc'⟩ := pdeStore_run εR hL hcs hlk hnp hi1 hn hi (.const 0) (w := 0) rfl
+  have hfin : ∀ (pperm' : Nat → PPgInfo),
+      (∀ n' i' pi' pdx', ¬ (n' = n ∧ i' = i) → n' < num_proc → i' < 1024 →
+        d.ptpool n' i' = .PDEValid pi' pdx' → pperm' pi' = d.pperm pi') →
+      ({ d with pperm := pperm', ptpool := setAt d.ptpool n (setAt (d.ptpool n) i .PDEUnPresent) } : PTData)
+        = d1 →
+      ∃ σ' l' b' d', Runs (rprimsA εR c) (rmvPDES pb) σ l σ' l' ∧ CS1 c i0 l' b' ∧
+        MatchAll maxpage num_id cb num_proc pb ib fb ida d' b' ∧ σ' "lk" = σ "lk" ∧
+        (∀ k, ¬ pb ≤ k → b' k = b k) ∧ rmvPDE_spec num_proc n i d = some d' := by
+    intro pperm' hpp he
+    have hpt := pool_update hL hM.pt hnp hi1 .PDEUnPresent 0 pperm' d.HP rfl
+      (fun pi' pdx' e => by cases e) (fun pi' pdx' e => by cases e) hpp (fun _ _ h => h)
+    rw [he] at hpt
+    exact ⟨_, l', _, d1, hwr, hc', ⟨mm_frame (d' := d1.toRData) hL hM.mm (by rw [← he]) (by rw [← he])
+      (by rw [← he]) (fun k hk => sc_ne _ _ (by omega)), hpt⟩, by simp [Locals.set],
+      fun k hk => sc_ne _ _ (by omega), hs0⟩
+  by_cases hcur : n = d.PT ∧ d.pg = true
+  · rw [if_pos hcur] at hs; cases hs
+  · rw [if_neg hcur] at hs
+    cases hp : d.ptpool n i with
+    | PDEValid pi pdt =>
+      rw [hp] at hs; simp only at hs
+      cases hpp : d.pperm pi with
+      | PGUndef => rw [hpp] at hs; cases hs
+      | PGAlloc => rw [hpp] at hs; cases hs
+      | PGHide a1 a2 =>
+        rw [hpp] at hs; simp only [Option.some.injEq] at hs
+        exact hfin (setAt d.pperm pi .PGAlloc) (fun n' i' pi' pdx' hne hn' hi' hq =>
+          setAt_ne _ _ (fun e => hne (pde_unique hM.pt hnp hi1 hn' hi' hp (e ▸ hq)))) hs
+    | PDEID =>
+      rw [hp] at hs; simp only [Option.some.injEq] at hs
+      exact hfin d.pperm (fun _ _ _ _ _ _ _ _ => rfl) hs
+    | PDEUnPresent =>
+      rw [hp] at hs; simp only [Option.some.injEq] at hs
+      exact hfin d.pperm (fun _ _ _ _ _ _ _ _ => rfl) hs
+    | PDEUndef =>
+      rw [hp] at hs; simp only [Option.some.injEq] at hs
+      exact hfin d.pperm (fun _ _ _ _ _ _ _ _ => rfl) hs
+
+/-- **`set_PDE` refines `setPDE_spec`.** The entry points to the identity map. -/
+theorem setPDE_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_id cb num_proc pb ib fb)
+    (hida : ida + 2 ^ 22 + 7 ≤ 2 ^ 32) (n i : Nat) :
+    Triple εR c i0 (MatchAll maxpage num_id cb num_proc pb ib fb ida) (fun k => pb ≤ k)
+      (fun σ d => σ "n" = BitVec.ofNat 32 n ∧ σ "i" = BitVec.ofNat 32 i ∧
+        ∃ d1, setPDE_spec num_proc n i d = some d1)
+      (setPDES pb ida)
+      (fun _ d _ d' => setPDE_spec num_proc n i d = some d') := by
+  intro σ l b d hlk hcs hM ⟨hn, hi, d1, hs⟩
+  have := hL.hib; have := hL.hfb; have := hL.hend; have := hL.hpb
+  have hs0 := hs
+  unfold setPDE_spec at hs
+  have hc : d.pg = false ∧ d.init = true ∧ d.ipt = true ∧ PDE_Arg num_proc n i := by
+    by_cases h : d.pg = false ∧ d.init = true ∧ d.ipt = true ∧ PDE_Arg num_proc n i
+    · exact h
+    · rw [if_neg h] at hs; cases hs
+  rw [if_pos hc] at hs
+  obtain ⟨-, -, -, hnp, hi1⟩ := hc
+  simp only [Option.some.injEq] at hs
+  obtain ⟨l', hwr, hc'⟩ := pdeStore_run εR hL hcs hlk hnp hi1 hn hi
+    (.bin .add (.bin .add (.const (BitVec.ofNat 32 ida)) (.bin .mul (.var "i") (.const 4096))) (.const 7))
+    (w := BitVec.ofNat 32 ida + BitVec.ofNat 32 i * 4096 + 7)
+    (by show BitVec.ofNat 32 ida + σ "i" * 4096 + 7 = _; rw [hi])
+  have hpt := pool_update hL hM.pt hnp hi1 .PDEID (BitVec.ofNat 32 ida + BitVec.ofNat 32 i * 4096 + 7)
+    d.pperm d.HP (by show (BitVec.ofNat 32 ida + BitVec.ofNat 32 i * 4096 + 7).toNat = ida + i * 4096 + 7
+                     simp [BitVec.toNat_add, BitVec.toNat_mul]; omega)
+    (fun pi' pdx' e => by cases e) (fun pi' pdx' e => by cases e) (fun _ _ _ _ _ _ _ _ => rfl)
+    (fun _ _ h => h)
+  rw [hs] at hpt
+  exact ⟨_, l', _, d1, hwr, hc', ⟨mm_frame (d' := d1.toRData) hL hM.mm (by rw [← hs]) (by rw [← hs])
+    (by rw [← hs]) (fun k hk => sc_ne _ _ (by omega)), hpt⟩, by simp [Locals.set],
+    fun k hk => sc_ne _ _ (by omega), hs0⟩
+
 end Write
 
 end MPTIntro
