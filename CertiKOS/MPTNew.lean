@@ -11,12 +11,11 @@ against: `container_alloc_spec` followed by `ptInsert_spec`.
 
 Ported from `mm/MPTInitCSource.v`: `pt_new`, `pt_resv`.
 
-What is not here: mCertiKOS then abstracts the reference counts of the
-allocation table into lists of owners (`LAT`, `ptInsert0_spec`,
-`ptRmv0_spec`, `consistent_pmap`). That step is a refinement between two
-abstract states, with no C code. It is not ported yet. Also not ported:
-`pt_resv2` (shared memory, stage 3), `pmap_init` and `pt_init` (boot), and
-`pt_free`, which the sources leave unused.
+Elsewhere: the owner lists that mCertiKOS then puts above the reference
+counts are in `PTInitGen.lean`; `pt_resv2` is in `MPTResv2.lean`; `pt_resv`
+under the lock, with the invariant carried by the log, is
+`MMInv.ptResv_locked_inv`. Not ported: `pmap_init` and `pt_init` (they need
+the machine model), and `pt_free`, which the sources leave unused.
 -/
 
 set_option linter.deprecated false
@@ -227,37 +226,6 @@ theorem ptResv_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num
       refine ⟨σd, ld, bd, dF, Runs.seq ha0 (Runs.seq hrb (Runs.seq hac (Runs.ite_false (eq_false hne) hrd))),
         hcsd, hMd, ?_, fun k hk => by rw [hfd k hk, hfb k (fun h => hk (Or.inl h))], rF, hs0, hrr'⟩
       rw [hlkd]; simp [σc, Locals.set, hlkb, σa]
-
-/-- **`pt_resv` under the memory-management lock.** `acquire; pt_resv; release`
-acquires on any log. If the region it finds matches `d`, the invariants hold
-and `ptResv_spec` is defined, the call finishes on a valid log, idle, and the
-region it releases matches the specification's result. -/
-theorem ptResv_locked {εR : REnv} {ε : LockArray.AEnv} {c : CPU} (hE : EnvErases εR ε) (hRR : RelyR εR c)
-    (hc : c < NCPU) (hRA : LockArray.RelyA ε c) {l : RLog} {S : LockRegion.RState} {H : LockRegion.HLogR}
-    (hl : LockRegion.rreplay l = some (S, H)) {iv : Val} (hidle : (S.lk iv.toNat).phase c = .idle)
-    (bound : LockArray.ALog → Nat) (K : Nat) (hK : ∀ l, bound l ≤ K)
-    (hF : LockArray.FairA ε c iv.toNat
-      (ticket (LockArray.projL iv.toNat (LockArray.apull ε c (erase l)))) bound)
-    (σ : Locals) (hσ : σ "lk" = iv) (hL : Layout maxpage num_id cb num_proc pb ib fb)
-    (hmax : 3 * maxpage < 2 ^ 32) (hnum : cb + 5 * num_id < 2 ^ 32) (hmp : maxpage ≤ 2 ^ 20)
-    (hnn : num_proc ≤ num_id) {kl kh : Nat} (nn vadr perm : Nat) (hnid : nn < num_id) :
-    ∃ (σ1 : Locals) (r1 : RLog) (H1 : LockRegion.HLogR),
-      Runs (rprimsA εR c) LockArray.acquireA σ l σ1 r1 ∧
-      (∀ z, z ≠ "t" → z ≠ "n" → z ≠ "_" → z ≠ "v" → σ1 z = σ z) ∧
-      ∀ d, MatchAll maxpage num_id cb num_proc pb ib fb ida d (LockRegion.hmemR iv.toNat H1) →
-        (σ1 "n" = BitVec.ofNat 32 nn ∧ σ1 "vaddr" = BitVec.ofNat 32 vadr ∧
-          σ1 "perm" = BitVec.ofNat 32 perm ∧ ATInv maxpage kl kh d.toPData ∧
-          (d.AC nn).cusage ≤ (d.AC nn).cquota ∧
-          ∃ d1 r, ptResv_spec maxpage num_proc nn vadr perm d = some (d1, r)) →
-        ∃ (σ2 : Locals) (rb : RLog) (S3 : LockRegion.RState) (H3 : LockRegion.HLogR) (d' : PTData),
-          Star (rprimsA εR c)
-            ⟨.seq LockArray.acquireA (.seq (ptResvS cb maxpage pb fb) relA), .stop, σ, l⟩
-            ⟨.skip, .stop, σ2.set "_" 0, rb⟩ ∧
-          LockRegion.rreplay rb = some (S3, H3) ∧ (S3.lk iv.toNat).phase c = .idle ∧
-          MatchAll maxpage num_id cb num_proc pb ib fb ida d' (LockRegion.hmemR iv.toNat H3) ∧
-          ∃ r, ptResv_spec maxpage num_proc nn vadr perm d = some (d', r) ∧ σ2 "r" = BitVec.ofNat 32 r :=
-  Triple.locked hE hRR hc hRA hl hidle bound K hK hF σ hσ
-    (ptResv_triple εR c iv.toNat hL hmax hnum hmp hnn (kl := kl) (kh := kh) nn vadr perm hnid)
 
 end Resv
 

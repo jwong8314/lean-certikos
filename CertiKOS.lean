@@ -67,5 +67,6 @@ import CertiKOS.MPTResv2
 import CertiKOS.MShareIntro
 import CertiKOS.MShareOp
 import CertiKOS.MShare
+import CertiKOS.MMInv
 import CertiKOS.PTInitGen
 import CertiKOS.MPTInit
