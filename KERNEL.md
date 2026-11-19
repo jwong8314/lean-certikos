@@ -63,7 +63,7 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | `MALInit` | `mem_init` | missing |
 | `MALOp` | `palloc`, `pfree` | **ported**: `MALOp.lean` (`palloc_refines`, `pfree_refines`) |
 | `MALT` | container code: `container_init`, getters, `container_can_consume`, `container_split`, `container_alloc` | **ported** in `MContainer.lean`: the four getters (`getter_guarantee` with `get_*_ref`), `container_split` (`container_split_refines`), `container_alloc` (`container_alloc_refines`). Missing: `container_init`, `container_can_consume` |
-| `MContainer` | page-table pool accessors (`set_pt`, `get_PDE`, `set_PDE`, `rmv_PDE`, `set_PDEU`, `get_PTE`, `set_PTE`, `rmv_PTE`, `set_IDPTE`) | missing (`KernPT.lean` is a prototype with a different layout) |
+| `MContainer` | page-table pool accessors (`set_pt`, `get_PDE`, `set_PDE`, `rmv_PDE`, `set_PDEU`, `get_PTE`, `set_PTE`, `rmv_PTE`, `set_IDPTE`) | **in progress**: `MPTIntro.lean` has the state, the eight specs (`getPDE_spec` … `setIDPTE_spec`) and the relation to memory (`MatchPT`). The C code and its proofs are next. `setPT'_spec` not yet |
 | `MPTIntro` | `pt_read`, `pt_read_pde`, `pt_rmv_aux`, `pt_rmv_pde`, `pt_insert_aux`, `pt_insert_pde`, `idpde_init` | prototype only |
 | `MPTOp` | `pt_alloc_pde`, `pt_free_pde`, kernel mappings | missing |
 | `MPTCommon` | `pt_insert`, `pt_rmv` with reference counts | prototype only |
@@ -99,6 +99,33 @@ Even for the ported layers:
 - Boot (`mem_init`, `container_init`) is not ported, so nothing establishes
   the invariant initially.
 
+## How the ports are organised
+
+- **Agreed order** (2026-11-19): 0 calling convention for layers, 1 page
+  tables, 2 boot and init, 3 shared memory, 4 invariants along the shared
+  log, 5 thread data, 6 machine model and scheduler, 7 IPC, 8 processes and
+  traps, 9 security and virtualization. Stage 0 is done. Stage 1 has started.
+- **`Layer.lean`: a primitive's interface is a triple.**
+  `Triple εR c i M F P s Q` says: in a critical section, on a region matching
+  abstract data `d` with precondition `P`, the code `s` runs to completion,
+  writes only cells in the footprint `F`, and leaves a region matching a `d'`
+  with `Q`. A layer's code is verified against the triples of the layer
+  below, never against its code. `container_alloc` calls `palloc` this way
+  (`palloc_triple`).
+- **`Triple.lift`** is the frame rule. When a layer adds state, the triples
+  below keep working, provided what was added survives writes inside their
+  footprints.
+- **`Triple.locked`** turns a triple into a statement about
+  `acquire; s; release`: acquiring always succeeds, and if the region found
+  matches `d` with `P`, the call finishes and releases a region matching
+  `d'` with `Q`.
+- **One memory-management region, one lock.** The allocation table, the
+  container table, and next the page-table pool, the identity map and flat
+  memory, are all in one region (`MatchMM`, `MatchPT`). A primitive is one
+  critical section and the sequential specifications apply as they are.
+  mC2 uses finer locks. Its sources are not public, so that is not ported.
+  It is the subject of stage 4.
+
 ## What the ported files prove
 
 Each port has the same shape, which is mCertiKOS's own two steps.
@@ -129,8 +156,9 @@ Each port has the same shape, which is mCertiKOS's own two steps.
   matches any words whose "used" word is 0.
 - `getter_guarantee`, `get_quota_ref`, `get_usage_ref`, `get_parent_ref`,
   `get_nchildren_ref`: the four getters.
-- `container_alloc_refines`: `container_alloc(id)` refines
-  `container_alloc_spec`. The code tests `usage == quota` where the
+- `container_alloc_triple`, `container_alloc_refines`: `container_alloc(id)`
+  refines `container_alloc_spec`, in one critical section, calling `palloc`
+  through its specification. The code tests `usage == quota` where the
   specification tests `usage < quota`, so the proof needs `usage ≤ quota`
   (`cvalid_usage`).
 - `container_split_refines`: `container_split(id, q)` refines
@@ -160,9 +188,8 @@ proved, on the specifications.
 Not done in the ports:
 
 - The invariants are preserved by the specifications. They are not yet
-  carried along the shared log, where another CPU may run between
-  `container_alloc`'s two critical sections. The `*_refines` theorems still
-  take them as hypotheses.
+  carried along the shared log. The `*_refines` theorems still take them as
+  hypotheses.
 - `palloc'_spec` and `pfree'_spec` alone do not preserve `quota_bounded_AT`.
   In mCertiKOS they are not exported above the container layer.
 - Boot is not ported, so nothing establishes the invariants initially.
