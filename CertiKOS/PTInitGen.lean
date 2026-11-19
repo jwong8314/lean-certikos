@@ -160,6 +160,7 @@ structure HInvI (maxpage num_proc : Nat) (h : HData) : Prop where
   valid_LATable_nil : LATable_nil h.LAT
   valid_nps : h.nps ≤ maxpage
   valid_pperm_pmap : consistent_pmap num_proc h.ptpool h.pperm h.LAT h.nps
+  valid_pmap_domain : consistent_pmap_domain num_proc h.ptpool h.pperm h.LAT h.nps
 
 /-! ## Upper specifications (`ObjLMM0.v`, `ObjLMM1.v`) -/
 
@@ -219,5 +220,198 @@ theorem alloc_exist {maxpage num_proc : Nat} {h h' : HData} {d : PTData} {id i :
     rw [if_neg (by rw [hACd]; exact hlt)]
     simp only [Option.some.injEq, Prod.mk.injEq] at hs; obtain ⟨rfl, rfl⟩ := hs
     exact ⟨_, rfl, hR⟩
+
+theorem LffFrom_some {L : LATable} : ∀ {k m n : Nat}, LffFrom L m k = some n →
+    m ≤ n ∧ n < m + k ∧ isLFree (L n) = true
+  | 0, _, _, h => by simp [LffFrom] at h
+  | k + 1, m, n, h => by
+    simp only [LffFrom] at h
+    split at h
+    · rename_i hf
+      simp only [Option.some.injEq] at h; subst h
+      exact ⟨Nat.le_refl _, by omega, hf⟩
+    · obtain ⟨h1, h2, h3⟩ := LffFrom_some h
+      exact ⟨by omega, by omega, h3⟩
+
+theorem Lfirst_free_some {L : LATable} {size n : Nat} (h : Lfirst_free L size = some n) :
+    0 < n ∧ n < size ∧ L n = .LATValid false .ATNorm [] := by
+  obtain ⟨h1, h2, h3⟩ := LffFrom_some h
+  refine ⟨by omega, by omega, ?_⟩
+  cases hL : L n with
+  | LATUndef => rw [hL] at h3; simp [isLFree] at h3
+  | LATValid b t l =>
+    rw [hL] at h3
+    cases b <;> cases t <;> cases l <;> simp [isLFree] at h3
+    rfl
+
+theorem rel_valid {a : ATInfo} {b : Bool} {t : ATType} {l : List LATOwner}
+    (h : RelInfo a (.LATValid b t l)) : a = .ATValid b t l.length := by
+  cases a with
+  | ATUndef => exact absurd h (by simp [RelInfo])
+  | ATValid b' t' n => obtain ⟨rfl, rfl, rfl⟩ := h; rfl
+
+/-! ## Mapping a page -/
+
+/-- **`ptInsertPTE0_spec`**: write the entry and add it to the page's owners.
+The page must be allocated and not hidden, and the entry not already present. -/
+def ptInsertPTE0_spec (num_proc : Nat) (nn vadr padr : Nat) (p : PTPerm) (h : HData) : Option HData :=
+  if h.pg = true ∧ h.ipt = true ∧ pt_Arg num_proc nn vadr padr h.nps then
+    match h.ptpool nn (PDX vadr) with
+    | .PDEValid pi pdt =>
+      match h.LAT padr with
+      | .LATValid true .ATNorm l =>
+        match h.pperm padr with
+        | .PGAlloc =>
+          match pdt (PTX vadr) with
+          | .PTEValid _ _ => none
+          | _ =>
+            if l.length < 2 ^ 32 - 1 then
+              let pt' := setAt (h.ptpool nn) (PDX vadr) (.PDEValid pi (setAt pdt (PTX vadr) (.PTEValid padr p)))
+              some { h with LAT := setAt h.LAT padr (.LATValid true .ATNorm (.LATO nn (PDX vadr) (PTX vadr) :: l)),
+                            ptpool := setAt h.ptpool nn pt' }
+            else none
+        | _ => none
+      | _ => none
+    | _ => none
+  else none
+
+/-- **`ptInsertPTE_exist`.** -/
+theorem ptInsertPTE_exist {num_proc : Nat} {h h' : HData} {d : PTData} {nn vadr padr : Nat} {p : PTPerm}
+    (hR : Relate h d) (hpgi : h.pg = h.init) (hPT0 : h.pg = true → h.ipt = true → h.PT = 0)
+    (hpib : ∀ pi pdt, h.ptpool nn (PDX vadr) = .PDEValid pi pdt → 0 < pi ∧ pi < 2 ^ 32 - 1)
+    (hs : ptInsertPTE0_spec num_proc nn vadr padr p h = some h') :
+    ∃ d', ptInsertPTE_spec nn vadr padr p d = some d' ∧ Relate h' d' := by
+  unfold ptInsertPTE0_spec at hs
+  have hc : h.pg = true ∧ h.ipt = true ∧ pt_Arg num_proc nn vadr padr h.nps := by
+    by_cases hh : h.pg = true ∧ h.ipt = true ∧ pt_Arg num_proc nn vadr padr h.nps
+    · exact hh
+    · rw [if_neg hh] at hs; cases hs
+  rw [if_pos hc] at hs
+  obtain ⟨hpg, hipt, ⟨hn0, hnp, hlo, hhi⟩, hpa0, hpan⟩ := hc
+  cases hp : h.ptpool nn (PDX vadr) with
+  | PDEID => rw [hp] at hs; cases hs
+  | PDEUnPresent => rw [hp] at hs; cases hs
+  | PDEUndef => rw [hp] at hs; cases hs
+  | PDEValid pi pdt =>
+    rw [hp] at hs; simp only at hs
+    cases hL : h.LAT padr with
+    | LATUndef => rw [hL] at hs; cases hs
+    | LATValid b t l =>
+      rw [hL] at hs
+      cases b <;> cases t <;> simp only at hs <;> try (cases hs)
+      cases hq : h.pperm padr with
+      | PGUndef => rw [hq] at hs; cases hs
+      | PGHide a1 a2 => rw [hq] at hs; cases hs
+      | PGAlloc =>
+        rw [hq] at hs; simp only at hs
+        have hfin : (if l.length < 2 ^ 32 - 1 then
+            some ({ h with LAT := setAt h.LAT padr (.LATValid true .ATNorm (.LATO nn (PDX vadr) (PTX vadr) :: l)),
+                           ptpool := setAt h.ptpool nn (setAt (h.ptpool nn) (PDX vadr)
+                             (.PDEValid pi (setAt pdt (PTX vadr) (.PTEValid padr p)))) } : HData)
+            else none) = some h' := by
+          cases hv : pdt (PTX vadr) with
+          | PTEValid a1 a2 => rw [hv] at hs; cases hs
+          | PTEUnPresent => rw [hv] at hs; exact hs
+          | PTEUndef => rw [hv] at hs; exact hs
+        have hll : l.length < 2 ^ 32 - 1 := by
+          by_cases hh : l.length < 2 ^ 32 - 1
+          · exact hh
+          · rw [if_neg hh] at hfin; cases hfin
+        rw [if_pos hll] at hfin
+        simp only [Option.some.injEq] at hfin
+        have hAT : d.AT padr = .ATValid true .ATNorm l.length := rel_valid (by rw [← hL]; exact hR.lat padr)
+        have hdp : d.ptpool nn (PDX vadr) = .PDEValid pi pdt := by rw [hR.ptpool]; exact hp
+        unfold ptInsertPTE_spec
+        rw [if_pos (by rw [hR.init, ← hpgi]; exact hpg),
+          if_neg (by rw [hR.PT, hPT0 hpg hipt]; omega), hdp]
+        simp only
+        rw [if_pos (hpib pi pdt hp), hAT]
+        simp only
+        rw [if_pos hll]
+        refine ⟨_, rfl, ?_⟩
+        rw [← hfin]
+        refine ⟨fun j => ?_, hR.nps, hR.pperm, hR.init, hR.AC, ?_, hR.idpde, hR.PT, hR.pg, hR.ipt, hR.HP⟩
+        · show RelInfo (setAt d.AT padr (.ATValid true .ATNorm (l.length + 1)) j)
+            (setAt h.LAT padr (.LATValid true .ATNorm (.LATO nn (PDX vadr) (PTX vadr) :: l)) j)
+          by_cases hj : j = padr
+          · rw [hj, setAt_eq, setAt_eq]; exact ⟨rfl, rfl, rfl⟩
+          · rw [setAt_ne _ _ hj, setAt_ne _ _ hj]; exact hR.lat j
+        · show setAt d.ptpool nn (setAt (d.ptpool nn) (PDX vadr) _) = setAt h.ptpool nn _
+          rw [hR.ptpool]
+
+/-! ## Allocating a second-level table -/
+
+/-- **`ptAllocPDE0_spec`**. -/
+def ptAllocPDE0_spec (num_proc : Nat) (nn vadr : Nat) (h : HData) : Option (HData × Nat) :=
+  let c := h.AC nn
+  if h.pg = true ∧ h.ipt = true ∧ c.cused = true ∧ pt_Arg' num_proc nn vadr then
+    match h.ptpool nn (PDX vadr) with
+    | .PDEUnPresent =>
+      if c.cusage < c.cquota then
+        match Lfirst_free h.LAT h.nps with
+        | some pi =>
+          let pt' := setAt (h.ptpool nn) (PDX vadr) (.PDEValid pi real_init_PTE)
+          some ({ h with HP := free_page pi h.HP, LAT := setAt h.LAT pi (.LATValid true .ATNorm []),
+                         pperm := setAt h.pperm pi (.PGHide nn (PDX vadr)),
+                         ptpool := setAt h.ptpool nn pt',
+                         AC := setAt h.AC nn ⟨c.cquota, c.cusage + 1, c.cparent, c.cchildren, c.cused⟩ }, pi)
+        | none => none
+      else some (h, 0)
+    | _ => none
+  else none
+
+/-- **`ptAllocPDE_exist`.** -/
+theorem ptAllocPDE_exist {num_proc : Nat} {h h' : HData} {d : PTData} {nn vadr v : Nat} (hR : Relate h d)
+    (hpgi : h.pg = h.init) (hPT0 : h.pg = true → h.ipt = true → h.PT = 0) (hnil : LATable_nil h.LAT)
+    (hs : ptAllocPDE0_spec num_proc nn vadr h = some (h', v)) :
+    ∃ d', ptAllocPDE_spec num_proc nn vadr d = some (d', v) ∧ Relate h' d' := by
+  unfold ptAllocPDE0_spec at hs
+  simp only at hs
+  have hc : h.pg = true ∧ h.ipt = true ∧ (h.AC nn).cused = true ∧ pt_Arg' num_proc nn vadr := by
+    by_cases hh : h.pg = true ∧ h.ipt = true ∧ (h.AC nn).cused = true ∧ pt_Arg' num_proc nn vadr
+    · exact hh
+    · rw [if_neg hh] at hs; cases hs
+  rw [if_pos hc] at hs
+  obtain ⟨hpg, hipt, hused, hn0, hnp, hlo, hhi⟩ := hc
+  have hACd : d.AC = h.AC := hR.AC
+  unfold ptAllocPDE_spec
+  simp only
+  rw [if_pos ⟨by rw [hR.init, ← hpgi]; exact hpg, by rw [hR.ipt]; exact hipt, by rw [hACd]; exact hused,
+    hn0, hnp, hlo, hhi⟩, if_neg (by rw [hR.PT, hPT0 hpg hipt]; omega), hR.ptpool]
+  cases hp : h.ptpool nn (PDX vadr) with
+  | PDEID => rw [hp] at hs; cases hs
+  | PDEValid a1 a2 => rw [hp] at hs; cases hs
+  | PDEUndef => rw [hp] at hs; cases hs
+  | PDEUnPresent =>
+    rw [hp] at hs; simp only at hs ⊢
+    by_cases hlt : (h.AC nn).cusage < (h.AC nn).cquota
+    · rw [if_pos hlt] at hs
+      rw [if_pos (by rw [hACd]; exact hlt)]
+      have hff : first_free d.AT d.nps = Lfirst_free h.LAT h.nps := by
+        unfold first_free Lfirst_free; rw [hR.nps]
+        exact ff_relate hR.lat hnil _ _
+      cases hL : Lfirst_free h.LAT h.nps with
+      | none => rw [hL] at hs; cases hs
+      | some pi =>
+        rw [hL] at hs
+        simp only [Option.some.injEq, Prod.mk.injEq] at hs; obtain ⟨rfl, rfl⟩ := hs
+        rw [show first_free d.AT d.nps = some pi from hff.trans hL]
+        refine ⟨_, rfl, ⟨fun j => ?_, hR.nps, ?_, hR.init, ?_, ?_, hR.idpde, hR.PT, hR.pg, hR.ipt, ?_⟩⟩
+        · show RelInfo (setAt d.AT pi (.ATValid true .ATNorm 0) j) (setAt h.LAT pi (.LATValid true .ATNorm []) j)
+          by_cases hj : j = pi
+          · rw [hj, setAt_eq, setAt_eq]; exact ⟨rfl, rfl, rfl⟩
+          · rw [setAt_ne _ _ hj, setAt_ne _ _ hj]; exact hR.lat j
+        · show setAt d.pperm pi _ = setAt h.pperm pi _
+          rw [hR.pperm]
+        · show setAt d.AC nn _ = setAt h.AC nn _
+          rw [hACd]
+        · show setAt h.ptpool nn _ = setAt h.ptpool nn _
+          rfl
+        · show free_page pi d.HP = free_page pi h.HP
+          rw [hR.HP]
+    · rw [if_neg hlt] at hs
+      rw [if_neg (by rw [hACd]; exact hlt)]
+      simp only [Option.some.injEq, Prod.mk.injEq] at hs; obtain ⟨rfl, rfl⟩ := hs
+      exact ⟨_, rfl, hR⟩
 
 end PTInitGen
