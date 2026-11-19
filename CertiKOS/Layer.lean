@@ -125,6 +125,14 @@ theorem Triple.seq {P1 P2 : Locals → D → Prop} {s1 s2 : Stmt APrim} {Q1 Q2 :
   exact ⟨σ2, l2, b2, d2, Runs.seq hr1 hr2, hc2, hM2, hlk2.trans hlk1,
     fun k hk => (hf2 k hk).trans (hf1 k hk), σ1, d1, hq1, hq2⟩
 
+/-- The same relation, stated another way. -/
+theorem Triple.iffM {M' : D → Region → Prop} {P : Locals → D → Prop} {s : Stmt APrim}
+    {Q : Locals → D → Locals → D → Prop} (h : Triple εR c i M F P s Q) (hM : ∀ d b, M' d b ↔ M d b) :
+    Triple εR c i M' F P s Q := by
+  intro σ l b d hlk hcs hm hp
+  obtain ⟨σ', l', b', d', hr, hc', hM', hlk', hf, hq⟩ := h σ l b d hlk hcs ((hM d b).1 hm) hp
+  exact ⟨σ', l', b', d', hr, hc', (hM d' b').2 hM', hlk', hf, hq⟩
+
 /-- An assignment in front of a primitive: the primitive sees the updated locals. -/
 theorem Triple.assign_pre {P : Locals → D → Prop} {s : Stmt APrim} {Q : Locals → D → Locals → D → Prop}
     (h : Triple εR c i M F P s Q) (x : Ident) (hx : x ≠ "lk") (e : Expr) :

@@ -239,6 +239,38 @@ theorem palloc_triple (εR : REnv) (c : CPU) (i : Nat) {maxpage num_id cb kl kh 
     pallocC_frame hmax b hn (show 3 * maxpage < cb + 5 * j + 4 by omega)]
   exact hM.mAC j hj
 
+/-- **`pfree`'s interface for the layers above.** -/
+theorem pfree_triple (εR : REnv) (c : CPU) (i : Nat) {maxpage num_id cb : Nat}
+    (hmax : 3 * maxpage < 2 ^ 32) (hcb : 3 * maxpage < cb) (j : Nat) :
+    Triple εR c i (MatchMM maxpage num_id cb) (fun k => k ≤ 3 * maxpage)
+      (fun σ d => σ "j" = BitVec.ofNat 32 j ∧ ∃ pd, pfree'_spec maxpage j d.toPData = some pd)
+      pfreeCS
+      (fun σ d σ' d' => (∃ pd, pfree'_spec maxpage j d.toPData = some pd ∧ d' = ⟨pd, d.AC⟩) ∧
+        ∀ z, z ≠ "_" → σ' z = σ z) := by
+  intro σ l b d hlk hcs hM ⟨hj, pd, hs⟩
+  have hjlt : j < maxpage := by
+    unfold pfree'_spec at hs
+    by_cases h1 : d.init = true
+    · rw [if_pos h1] at hs
+      by_cases h2 : j < maxpage
+      · exact h2
+      · rw [if_neg h2] at hs; cases hs
+    · rw [if_neg h1] at hs; cases hs
+  obtain ⟨l', hw, hc'⟩ := cs1_wr (εR := εR) hcs hlk (ixE (.var "j") 1) (.const 0)
+  have e : setCell b ((ixE (.var "j") 1).eval σ).toNat ((Expr.const 0).eval σ) =
+      pfreeC b (BitVec.ofNat 32 j) := by
+    show setCell b (ix (σ "j") 1) 0 = _; rw [hj]; rfl
+  rw [e] at hc'
+  refine ⟨σ.set "_" 0, l', _, ⟨pd, d.AC⟩, hw, hc', ⟨pfree_ref hmax hM.mAT hs, fun k hk => ?_⟩,
+    by simp [Locals.set], fun k hk => pfreeC_frame hmax b hjlt (by omega), ⟨pd, hs, rfl⟩,
+    fun z hz => Locals.set_other _ _ hz⟩
+  rw [pfreeC_frame hmax b hjlt (show 3 * maxpage < cb + 5 * k by omega),
+    pfreeC_frame hmax b hjlt (show 3 * maxpage < cb + 5 * k + 1 by omega),
+    pfreeC_frame hmax b hjlt (show 3 * maxpage < cb + 5 * k + 2 by omega),
+    pfreeC_frame hmax b hjlt (show 3 * maxpage < cb + 5 * k + 3 by omega),
+    pfreeC_frame hmax b hjlt (show 3 * maxpage < cb + 5 * k + 4 by omega)]
+  exact hM.mAC k hk
+
 /-! ## `container_alloc` (`MALTCSource.v`) -/
 
 /-- `u = CT[id].usage; q = CT[id].quota; if (u == q) return 0; CT[id].usage = u + 1; return palloc();` -/
