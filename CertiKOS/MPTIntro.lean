@@ -28,7 +28,11 @@ What differs from the sources:
 * A directory entry that points to the identity map holds a pointer in
   mCertiKOS. Here it holds the number `ida + i * 4096 + 7`, with `ida` a
   parameter standing for the address of `IDPMap_LOC`.
-* `setPT'_spec` is not ported yet. It needs `PMap_valid` and `PMap_kern`.
+* `MatchPT.hid` (a page holding a table is hidden from visible flat memory)
+  is stated here directly. mCertiKOS gets it from `flatmem_inj` and the
+  permission table across two layers.
+* `setPT'_spec` and `set_pt` are not ported. They load `CR3`, which needs the
+  machine model.
 
 This file has the state, the specifications and the relation to memory. The
 C code and its proofs come next.
@@ -264,6 +268,9 @@ structure MatchPT (num_proc pb ib fb ida : Nat) (d : PTData) (b : Region) : Prop
     ∀ vadr, vadr < 1024 → RelPTE (pdx vadr) (b (fb + pi * 1024 + vadr))
   /-- `flatmem_inj`: visible flat memory is what the region holds. -/
   hp : ∀ a v, d.HP a = some v → b (fb + a) = v
+  /-- A page that holds a second-level table is hidden from visible flat memory. -/
+  hid : ∀ n i pi pdx, n < num_proc → i < 1024 → d.ptpool n i = .PDEValid pi pdx →
+    ∀ a, a / 1024 = pi → d.HP a = none
 
 /-! ## The C code of the read accessors (`MContainerCSource.v`) -/
 
@@ -418,5 +425,156 @@ theorem getPTE_triple (εR : REnv) (c : CPU) (i0 : Nat) (hpb : pb + num_proc * 1
       fun _ _ => rfl, rfl, v, hs0, by simp⟩
 
 end Read
+
+/-! ## Updating an entry keeps the relation -/
+
+open LockRegion (setCell)
+
+/-- Where the tables sit in the region, bottom up: allocation table,
+containers, page-table pool, identity map, flat memory. -/
+structure Layout (maxpage num_id cb num_proc pb ib fb : Nat) : Prop where
+  hcb : 3 * maxpage < cb
+  hpb : cb + 5 * num_id ≤ pb
+  hib : pb + num_proc * 1024 ≤ ib
+  hfb : ib + 2 ^ 20 ≤ fb
+  hend : fb + 2 ^ 30 ≤ 2 ^ 32
+
+theorem sc_eq (b : Region) (j : Nat) (v : Val) : setCell b j v j = v := by simp [setCell]
+
+theorem sc_ne (b : Region) {j k : Nat} (v : Val) (h : k ≠ j) : setCell b j v k = b k := by
+  simp [setCell, h]
+
+theorem pool_get_eq (P : PMapPool) (n i : Nat) (x : PDE) : setAt P n (setAt (P n) i x) n i = x := by
+  simp [setAt]
+
+theorem pool_get_ne (P : PMapPool) {n i n' i' : Nat} (x : PDE) (h : ¬ (n' = n ∧ i' = i)) :
+    setAt P n (setAt (P n) i x) n' i' = P n' i' := by
+  unfold setAt
+  by_cases hn : n' = n
+  · subst hn
+    by_cases hi : i' = i
+    · exact absurd ⟨rfl, hi⟩ h
+    · simp [hi]
+  · simp [hn]
+
+section Update
+variable {maxpage num_id cb num_proc pb ib fb ida : Nat}
+
+/-- Writes above the containers leave the allocation table and containers matched. -/
+theorem mm_frame (hL : Layout maxpage num_id cb num_proc pb ib fb) {d d' : RData} {b b' : Region}
+    (h : MatchMM maxpage num_id cb d b) (hAT : d'.AT = d.AT) (hn : d'.nps = d.nps) (hAC : d'.AC = d.AC)
+    (hb : ∀ k, k < pb → b' k = b k) : MatchMM maxpage num_id cb d' b' := by
+  have := hL.hcb; have := hL.hpb
+  refine ⟨⟨fun j hj => ?_, ?_⟩, fun j hj => ?_⟩
+  · rw [hAT, hb _ (by omega), hb _ (by omega), hb _ (by omega)]; exact h.mAT.mat j hj
+  · rw [hn, hb _ (by omega)]; exact h.mAT.mnps
+  · rw [hAC, hb _ (by omega), hb _ (by omega), hb _ (by omega), hb _ (by omega), hb _ (by omega)]
+    exact h.mAC j hj
+
+/-- Two present directory entries never share a page: the permission table
+names the one entry that owns it. -/
+theorem pde_unique {d : PTData} {b : Region} (hM : MatchPT num_proc pb ib fb ida d b) {n i n' i' pi : Nat}
+    {pdx pdx' : PTE} (hn : n < num_proc) (hi : i < 1024) (hn' : n' < num_proc) (hi' : i' < 1024)
+    (h : d.ptpool n i = .PDEValid pi pdx) (h' : d.ptpool n' i' = .PDEValid pi pdx') : n' = n ∧ i' = i := by
+  have a := hM.pool n i hn hi; rw [h] at a
+  have a' := hM.pool n' i' hn' hi'; rw [h'] at a'
+  have e := a.2.symm.trans a'.2
+  cases e; exact ⟨rfl, rfl⟩
+
+/-- **Replacing a directory entry.** The new entry `x` with word `w`, a new
+permission table and a new visible flat memory keep the relation, if they
+agree with the old ones away from this entry. -/
+theorem pool_update (hL : Layout maxpage num_id cb num_proc pb ib fb) {d : PTData} {b : Region}
+    (hM : MatchPT num_proc pb ib fb ida d b) {n i : Nat} (hn : n < num_proc) (hi : i < 1024) (x : PDE)
+    (w : Val) (pperm' : Nat → PPgInfo) (HP' : Nat → Option Val)
+    (hx : MatchPDE pperm' ida x w n i)
+    (hxpte : ∀ pi pdx, x = .PDEValid pi pdx → ∀ vadr, vadr < 1024 → RelPTE (pdx vadr) (b (fb + pi * 1024 + vadr)))
+    (hxhid : ∀ pi pdx, x = .PDEValid pi pdx → ∀ a, a / 1024 = pi → HP' a = none)
+    (hpp : ∀ n' i' pi' pdx', ¬ (n' = n ∧ i' = i) → n' < num_proc → i' < 1024 →
+      d.ptpool n' i' = .PDEValid pi' pdx' → pperm' pi' = d.pperm pi')
+    (hHP : ∀ a v, HP' a = some v → d.HP a = some v) :
+    MatchPT num_proc pb ib fb ida
+      { d with pperm := pperm', HP := HP', ptpool := setAt d.ptpool n (setAt (d.ptpool n) i x) }
+      (setCell b (pb + n * 1024 + i) w) := by
+  have := hL.hib; have := hL.hfb
+  refine ⟨fun n' i' hn' hi' => ?_, fun i' j hi' hj => ?_, fun n' i' pi' pdx' hn' hi' hp vadr hv => ?_,
+    fun a v hav => ?_, fun n' i' pi' pdx' hn' hi' hp a ha => ?_⟩
+  · show MatchPDE pperm' ida (setAt d.ptpool n (setAt (d.ptpool n) i x) n' i')
+      (setCell b (pb + n * 1024 + i) w (pb + n' * 1024 + i')) n' i'
+    by_cases h : n' = n ∧ i' = i
+    · obtain ⟨rfl, rfl⟩ := h; rw [pool_get_eq, sc_eq]; exact hx
+    · rw [pool_get_ne _ _ h, sc_ne _ _ (by omega)]
+      have old := hM.pool n' i' hn' hi'
+      cases hq : d.ptpool n' i' with
+      | PDEValid pi' pdx' =>
+        rw [hq] at old; exact ⟨old.1, (hpp n' i' pi' pdx' h hn' hi' hq).trans old.2⟩
+      | PDEID => rw [hq] at old; exact old
+      | PDEUnPresent => rw [hq] at old; exact old
+      | PDEUndef => trivial
+  · show MatchIDPTE (d.idpde i' j) (setCell b (pb + n * 1024 + i) w (ib + i' * 1024 + j)) i' j
+    rw [sc_ne _ _ (by omega)]; exact hM.idp i' j hi' hj
+  · have hp' : setAt d.ptpool n (setAt (d.ptpool n) i x) n' i' = .PDEValid pi' pdx' := hp
+    rw [sc_ne _ _ (by omega)]
+    by_cases h : n' = n ∧ i' = i
+    · obtain ⟨rfl, rfl⟩ := h; rw [pool_get_eq] at hp'; exact hxpte pi' pdx' hp' vadr hv
+    · rw [pool_get_ne _ _ h] at hp'; exact hM.pte n' i' pi' pdx' hn' hi' hp' vadr hv
+  · rw [sc_ne _ _ (by omega)]; exact hM.hp a v (hHP a v hav)
+  · have hp' : setAt d.ptpool n (setAt (d.ptpool n) i x) n' i' = .PDEValid pi' pdx' := hp
+    show HP' a = none
+    by_cases h : n' = n ∧ i' = i
+    · obtain ⟨rfl, rfl⟩ := h; rw [pool_get_eq] at hp'; exact hxhid pi' pdx' hp' a ha
+    · rw [pool_get_ne _ _ h] at hp'
+      have old := hM.hid n' i' pi' pdx' hn' hi' hp' a ha
+      cases hh : HP' a with
+      | none => rfl
+      | some v => rw [hHP a v hh] at old; cases old
+
+/-- **Writing a second-level entry.** The word `w` for the new entry `x` goes
+into the page that holds the table. -/
+theorem pte_update (hL : Layout maxpage num_id cb num_proc pb ib fb) {d : PTData} {b : Region}
+    (hM : MatchPT num_proc pb ib fb ida d b) {n i pi : Nat} {pdt : PTE} (hn : n < num_proc) (hi : i < 1024)
+    (hp : d.ptpool n i = .PDEValid pi pdt) {vadr : Nat} (hv : vadr < 1024) (x : PTEInfo) (w : Val)
+    (hx : RelPTE x w) :
+    MatchPT num_proc pb ib fb ida
+      { d with ptpool := setAt d.ptpool n (setAt (d.ptpool n) i (.PDEValid pi (setAt pdt vadr x))) }
+      (setCell b (fb + pi * 1024 + vadr) w) := by
+  have := hL.hib; have := hL.hfb
+  refine ⟨fun n' i' hn' hi' => ?_, fun i' j hi' hj => ?_, fun n' i' pi' pdx' hn' hi' hp2 vadr' hv' => ?_,
+    fun a v hav => ?_, fun n' i' pi' pdx' hn' hi' hp2 a ha => ?_⟩
+  · show MatchPDE d.pperm ida (setAt d.ptpool n (setAt (d.ptpool n) i _) n' i')
+      (setCell b (fb + pi * 1024 + vadr) w (pb + n' * 1024 + i')) n' i'
+    rw [sc_ne _ _ (by omega)]
+    by_cases h : n' = n ∧ i' = i
+    · obtain ⟨rfl, rfl⟩ := h; rw [pool_get_eq]
+      have old := hM.pool n' i' hn hi; rw [hp] at old; exact old
+    · rw [pool_get_ne _ _ h]; exact hM.pool n' i' hn' hi'
+  · show MatchIDPTE (d.idpde i' j) (setCell b (fb + pi * 1024 + vadr) w (ib + i' * 1024 + j)) i' j
+    rw [sc_ne _ _ (by omega)]; exact hM.idp i' j hi' hj
+  · have hp' : setAt d.ptpool n (setAt (d.ptpool n) i (.PDEValid pi (setAt pdt vadr x))) n' i' =
+        .PDEValid pi' pdx' := hp2
+    by_cases h : n' = n ∧ i' = i
+    · obtain ⟨rfl, rfl⟩ := h
+      rw [pool_get_eq] at hp'
+      cases hp'
+      by_cases hvv : vadr' = vadr
+      · rw [hvv, setAt_eq, sc_eq]; exact hx
+      · rw [setAt_ne _ _ hvv, sc_ne _ _ (by omega)]; exact hM.pte n' i' pi pdt hn hi hp vadr' hv'
+    · rw [pool_get_ne _ _ h] at hp'
+      have hne : pi' ≠ pi := fun e => h (pde_unique hM hn hi hn' hi' hp (e ▸ hp'))
+      rw [sc_ne _ _ (by omega)]; exact hM.pte n' i' pi' pdx' hn' hi' hp' vadr' hv'
+  · have hh := hM.hid n i pi pdt hn hi hp
+    have hne : a ≠ pi * 1024 + vadr := fun e => by
+      have := hh a (by rw [e]; omega); rw [this] at hav; cases (hav : (none : Option Val) = some v)
+    rw [sc_ne _ _ (by omega)]; exact hM.hp a v hav
+  · have hp' : setAt d.ptpool n (setAt (d.ptpool n) i (.PDEValid pi (setAt pdt vadr x))) n' i' =
+        .PDEValid pi' pdx' := hp2
+    show d.HP a = none
+    by_cases h : n' = n ∧ i' = i
+    · obtain ⟨rfl, rfl⟩ := h
+      rw [pool_get_eq] at hp'; cases hp'
+      exact hM.hid n' i' pi pdt hn hi hp a ha
+    · rw [pool_get_ne _ _ h] at hp'; exact hM.hid n' i' pi' pdx' hn' hi' hp' a ha
+
+end Update
 
 end MPTIntro
