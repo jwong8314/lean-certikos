@@ -422,4 +422,162 @@ theorem scanLoop_run (εR : REnv) {c : CPU} {i : Nat} {l : RLog} {b : Region} (h
     subst hme; exact Or.inl ⟨hf, hnc⟩
   · exact Or.inr hw
 
+/-! ## The second loop: the type of each page -/
+
+/-- The type `mem_init` gives page `p`: 1 kernel, 2 normal, 0 reserved. -/
+def entryCode (kl kh : Nat) (mm : MMTable) (size p : Nat) : Nat :=
+  if p < kl ∨ kh ≤ p then 1 else if mmKernValidB mm p size then 2 else 0
+
+/-- No region contains the page: it is not inside a usable one. -/
+theorem scan_none {mm : MMTable} {size p : Nat} (h : ∀ j, j < size → ¬ covers (mm j) p) :
+    mmKernValidB mm p size = false := by
+  cases hb : mmKernValidB mm p size with
+  | false => rfl
+  | true =>
+    obtain ⟨j, s, l, hj, hm, h1, h2⟩ := (mmKernValidB_iff mm p size).1 hb
+    exact absurd ⟨s, l, _, hm, h1, h2⟩ (h j hj)
+
+/-- Some region contains the page: by `MM_correct`, the page is inside a
+usable region exactly when that one is usable. -/
+theorem scan_some {mm : MMTable} {size p : Nat} (hc : MM_correct mm size) {j s ln : Nat} {q : MMPerm}
+    (hj : j < size) (hm : mm j = .MMValid s ln q) (h1 : s ≤ p * 4096) (h2 : (p + 1) * 4096 ≤ ln + s) :
+    mmKernValidB mm p size = decide (q = .MMUsable) := by
+  cases hb : mmKernValidB mm p size with
+  | true =>
+    obtain ⟨j', s', l', hj', hm', h1', h2'⟩ := (mmKernValidB_iff mm p size).1 hb
+    have := hc j j' s s' ln l' q .MMUsable hj hj' hm hm' (by omega) (by omega)
+    simp [this]
+  | false =>
+    by_cases hq : q = .MMUsable
+    · subst hq
+      have := (mmKernValidB_iff mm p size).2 ⟨j, s, ln, hj, hm, h1, h2⟩
+      rw [hb] at this; cases this
+    · simp [hq]
+
+theorem set3_same (σ : Locals) : ((σ.set "_" 0).set "_" 0).set "_" 0 = σ.set "_" 0 := by
+  rw [set_set, set_set]
+
+/-- **`set_norm(i, v)`** writes the three cells of entry `i`. -/
+theorem setNorm_run (εR : REnv) {c : CPU} {i : Nat} {l : RLog} {b : Region} (hcs : CS1 c i l b)
+    {maxpage : Nat} (hmax : 3 * maxpage < 2 ^ 32) {σ : Locals} (hlk : (σ "lk").toNat = i) {p : Nat}
+    (hi : σ "i" = BitVec.ofNat 32 p) (hp : p < maxpage) (v : Val) :
+    ∃ l', Runs (rprimsA εR c) (setNormS (.var "i") (.const v)) σ l (σ.set "_" 0) l' ∧
+      CS1 c i l' (setCell (setCell (setCell b (3 * p) v) (3 * p + 1) 0) (3 * p + 2) 0) := by
+  obtain ⟨l1, h1, c1⟩ := wr_run (εR := εR) hcs hlk (ixE (.var "i") 0) (.const v) (n := 3 * p) (v := v)
+    (by show ix (σ "i") 0 = _; rw [hi]; exact ix0 hmax hp) rfl
+  let σ1 := σ.set "_" 0
+  have hi1 : σ1 "i" = BitVec.ofNat 32 p := by simp [σ1, Locals.set, hi]
+  have hlk1 : (σ1 "lk").toNat = i := by simpa [σ1, Locals.set] using hlk
+  obtain ⟨l2, h2, c2⟩ := wr_run (εR := εR) c1 hlk1 (ixE (.var "i") 1) (.const 0) (n := 3 * p + 1) (v := 0)
+    (by show ix (σ1 "i") 1 = _; rw [hi1]; exact ix1 hmax hp) rfl
+  let σ2 := σ1.set "_" 0
+  have hi2 : σ2 "i" = BitVec.ofNat 32 p := by simp [σ2, σ1, Locals.set, hi]
+  have hlk2 : (σ2 "lk").toNat = i := by simpa [σ2, σ1, Locals.set] using hlk
+  obtain ⟨l3, h3, c3⟩ := wr_run (εR := εR) c2 hlk2 (ixE (.var "i") 2) (.const 0) (n := 3 * p + 2) (v := 0)
+    (by show ix (σ2 "i") 2 = _; rw [hi2]; exact ix2 hmax hp) rfl
+  have hr := Runs.seq h1 (Runs.seq h2 h3)
+  rw [show (σ2.set "_" 0) = σ.set "_" 0 from set3_same σ] at hr
+  exact ⟨l3, hr, c3⟩
+
+/-- `i < kern_low || i >= kern_high` -/
+def kernE (kl kh : Nat) : Expr :=
+  .bin .add (.bin .ltu (.var "i") (.const (BitVec.ofNat 32 kl)))
+    (.bin .eq (.bin .ltu (.var "i") (.const (BitVec.ofNat 32 kh))) (.const 0))
+
+theorem kern_eval {σ : Locals} {p kl kh : Nat} (hi : σ "i" = BitVec.ofNat 32 p) (hp : p < 2 ^ 32)
+    (hkl : kl < 2 ^ 32) (hkh : kh < 2 ^ 32) : (kernE kl kh).eval σ = 0 ↔ ¬ (p < kl ∨ kh ≤ p) := by
+  have a1 := ltu_eval (σ := σ) (ea := .var "i") (eb := .const (BitVec.ofNat 32 kl)) hi rfl hp hkl
+  have a2 := ltu_eval (σ := σ) (ea := .var "i") (eb := .const (BitVec.ofNat 32 kh)) hi rfl hp hkh
+  have e : (kernE kl kh).eval σ = (Expr.bin .ltu (.var "i") (.const (BitVec.ofNat 32 kl))).eval σ +
+      (if (Expr.bin .ltu (.var "i") (.const (BitVec.ofNat 32 kh))).eval σ = 0 then 1 else 0) := rfl
+  rw [e, a1, a2]
+  by_cases h1 : p < kl <;> by_cases h2 : p < kh
+  · rw [if_pos h1, if_pos h2]; exact ⟨fun h => absurd h (by decide), fun h => absurd (Or.inl h1) h⟩
+  · rw [if_pos h1, if_neg h2]; exact ⟨fun h => absurd h (by decide), fun h => absurd (Or.inl h1) h⟩
+  · rw [if_neg h1, if_pos h2]; exact ⟨fun _ => by omega, fun _ => by decide⟩
+  · rw [if_neg h1, if_neg h2]; exact ⟨fun h => absurd h (by decide), fun h => absurd (Or.inr (by omega)) h⟩
+
+/-- `flag == 1 && isnorm == 1` -/
+def normE : Expr := .bin .mul (.bin .eq (.var "flag") (.const 1)) (.bin .eq (.var "isn") (.const 1))
+
+/-- The body of the second loop:
+`if (i < kern_low || i >= kern_high) set_norm(i, 1);
+ else { j = 0; flag = 0; isnorm = 0; while (...) {...}
+        if (flag == 1 && isnorm == 1) set_norm(i, 2); else set_norm(i, 0); }
+ i++;` -/
+def fillBody (mmb kl kh : Nat) : Stmt APrim :=
+  .seq (.ite (kernE kl kh) (setNormS (.var "i") (.const 1))
+      (.seq (.assign "j" (.const 0)) (.seq (.assign "flag" (.const 0)) (.seq (.assign "isn" (.const 0))
+        (.seq (scanLoop mmb)
+          (.ite normE (setNormS (.var "i") (.const 2)) (setNormS (.var "i") (.const 0))))))))
+    (.assign "i" (.bin .add (.var "i") (.const 1)))
+
+def fillLoop (mmb kl kh : Nat) : Stmt APrim := .while (.bin .ltu (.var "i") (.var "nps")) (fillBody mmb kl kh)
+
+/-- Entry `p` after `set_norm(p, v)`. -/
+def set3 (b : Region) (p : Nat) (v : Val) : Region :=
+  setCell (setCell (setCell b (3 * p) v) (3 * p + 1) 0) (3 * p + 2) 0
+
+/-- **One iteration of the second loop** gives page `i` its type. -/
+theorem fillBody_run (εR : REnv) {c : CPU} {i : Nat} {l : RLog} {b : Region} (hcs : CS1 c i l b)
+    {mmb size maxpage kl kh : Nat} {mm : MMTable} (hmb : mmb + 1 + 3 * size ≤ 2 ^ 32)
+    (hmax : 3 * maxpage < 2 ^ 32) (hkl : kl < 2 ^ 32) (hkh : kh < 2 ^ 20) (hM : MatchMM mmb mm size b)
+    (hv : MM_valid mm size) (hc : MM_correct mm size) {σ : Locals} (hlk : (σ "lk").toNat = i) {p : Nat}
+    (hi : σ "i" = BitVec.ofNat 32 p) (hp : p < maxpage) (hsz : σ "size" = BitVec.ofNat 32 size) :
+    ∃ σ' l', Runs (rprimsA εR c) (fillBody mmb kl kh) σ l σ' l' ∧
+      CS1 c i l' (set3 b p (BitVec.ofNat 32 (entryCode kl kh mm size p))) ∧
+      σ' "i" = BitVec.ofNat 32 (p + 1) ∧ σ' "size" = σ "size" ∧ σ' "nps" = σ "nps" ∧ σ' "lk" = σ "lk" := by
+  have hke := kern_eval (σ := σ) (kl := kl) (kh := kh) hi (by omega) hkl (by omega)
+  by_cases hk : p < kl ∨ kh ≤ p
+  · have hcode : entryCode kl kh mm size p = 1 := by unfold entryCode; rw [if_pos hk]
+    obtain ⟨l1, h1, c1⟩ := setNorm_run εR hcs hmax hlk hi hp 1
+    have h2 := asg_run (εR := εR) (c := c) (σ := σ.set "_" 0) (l := l1) "i" (.bin .add (.var "i") (.const 1))
+      (inc_eval (m := p) (by simp [Locals.set, hi]))
+    refine ⟨_, l1, Runs.seq (Runs.ite_true (fun h => hke.1 h hk) h1) h2, by rw [hcode]; exact c1,
+      by simp, by simp [Locals.set], by simp [Locals.set], by simp [Locals.set]⟩
+  · have hpk : (p + 1) * 4096 < 2 ^ 32 := by omega
+    let σ1 := ((σ.set "j" 0).set "flag" 0).set "isn" 0
+    have ha : Runs (rprimsA εR c) (.seq (.assign "j" (.const 0)) (.seq (.assign "flag" (.const 0))
+        (.assign "isn" (.const 0)))) σ l σ1 l :=
+      Runs.seq (Runs.assign _ _) (Runs.seq (Runs.assign _ _) (Runs.assign _ _))
+    obtain ⟨σ2, hs, hlk2, hi2, hsz2, hn2, hpost⟩ := scanLoop_run εR hcs hmb hM hv hpk σ1
+      (by simpa [σ1, Locals.set] using hlk) (by simp [σ1, Locals.set, hi]) (by simp [σ1, Locals.set, hsz])
+      (by simp [σ1, Locals.set]) (by simp [σ1, Locals.set])
+    have hlkσ2 : (σ2 "lk").toNat = i := by rw [hlk2]; simpa [σ1, Locals.set] using hlk
+    have hiσ2 : σ2 "i" = BitVec.ofNat 32 p := by rw [hi2]; simp [σ1, Locals.set, hi]
+    have hne : normE.eval σ2 = (if σ2 "flag" = 1 then 1 else 0) * (if σ2 "isn" = 1 then 1 else 0) := rfl
+    have hfin : ∀ (v : Nat), entryCode kl kh mm size p = v →
+        (∃ l', Runs (rprimsA εR c) (.ite normE (setNormS (.var "i") (.const 2)) (setNormS (.var "i") (.const 0)))
+          σ2 l (σ2.set "_" 0) l' ∧ CS1 c i l' (set3 b p (BitVec.ofNat 32 v))) →
+        ∃ σ' l', Runs (rprimsA εR c) (fillBody mmb kl kh) σ l σ' l' ∧
+          CS1 c i l' (set3 b p (BitVec.ofNat 32 (entryCode kl kh mm size p))) ∧
+          σ' "i" = BitVec.ofNat 32 (p + 1) ∧ σ' "size" = σ "size" ∧ σ' "nps" = σ "nps" ∧ σ' "lk" = σ "lk" := by
+      rintro v hv' ⟨l', hr, c'⟩
+      have h2 := asg_run (εR := εR) (c := c) (σ := σ2.set "_" 0) (l := l') "i" (.bin .add (.var "i") (.const 1))
+        (inc_eval (m := p) (by simp [Locals.set, hiσ2]))
+      have hrun : Runs (rprimsA εR c) (fillBody mmb kl kh) σ l _ l' :=
+        Runs.seq (Runs.ite_false (hke.2 hk) (Runs.seq (Runs.assign _ _) (Runs.seq (Runs.assign _ _)
+          (Runs.seq (Runs.assign _ _) (Runs.seq hs hr))))) h2
+      refine ⟨_, l', hrun, by rw [hv']; exact c', by simp, ?_, ?_, ?_⟩
+      · simp [Locals.set, hsz2, σ1]
+      · simp [Locals.set, hn2, σ1]
+      · simp [Locals.set, hlk2, σ1]
+    rcases hpost with ⟨hf, hnc⟩ | ⟨hf, j, s, ln, q, hj, hm, c1, c2, hisn⟩
+    · have hcode : entryCode kl kh mm size p = 0 := by
+        unfold entryCode; rw [if_neg hk, scan_none hnc]; rfl
+      obtain ⟨l', hr, c'⟩ := setNorm_run εR hcs hmax hlkσ2 hiσ2 hp 0
+      exact hfin 0 hcode ⟨l', Runs.ite_false
+        (by rw [hne, hf, if_neg (by decide)]; exact BitVec.zero_mul) hr, c'⟩
+    · by_cases hq : q = .MMUsable
+      · have hcode : entryCode kl kh mm size p = 2 := by
+          unfold entryCode; rw [if_neg hk, scan_some hc hj hm c1 c2]; simp [hq]
+        rw [if_pos hq] at hisn
+        obtain ⟨l', hr, c'⟩ := setNorm_run εR hcs hmax hlkσ2 hiσ2 hp 2
+        exact hfin 2 hcode ⟨l', Runs.ite_true (by rw [hne, hf, hisn]; decide) hr, c'⟩
+      · have hcode : entryCode kl kh mm size p = 0 := by
+          unfold entryCode; rw [if_neg hk, scan_some hc hj hm c1 c2]; simp [hq]
+        rw [if_neg hq] at hisn
+        obtain ⟨l', hr, c'⟩ := setNorm_run εR hcs hmax hlkσ2 hiσ2 hp 0
+        exact hfin 0 hcode ⟨l', Runs.ite_false (by rw [hne, hf, hisn]; decide) hr, c'⟩
+
 end MALInit
