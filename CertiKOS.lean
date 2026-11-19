@@ -50,3 +50,4 @@ import CertiKOS.RegionNoLost
 import CertiKOS.KernPAlloc
 import CertiKOS.KernFrame
 import CertiKOS.KernPT
+import CertiKOS.KernContainer

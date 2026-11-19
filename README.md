@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-52 Lean files, about 22,000 lines. No `sorry`. The main theorems depend only on
+53 Lean files, about 23,000 lines. No `sorry`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-18)
@@ -95,6 +95,12 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
     map: an inserted entry reads back, every other entry is unchanged, and
     the invariant is kept (`insert_lookup_same`, `insert_lookup_other`,
     `insert_inv`).
+  - **Containers** (`KernContainer.lean`): per-process memory quotas.
+    `container_alloc` charges a page and calls `palloc`, `container_free`
+    gives one back and calls `pfree`, and `container_split` carves a child's
+    quota out of its parent's. Each refines its abstract operation
+    (`ctAlloc_guarantee`, `ctFree_guarantee`, `ctSplit_guarantee`), and each
+    keeps `usage ≤ quota` (`alloc_inv`, `free_inv`, `split_inv`).
 
 **Not done yet**
 
@@ -109,8 +115,8 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
   queues, context switch), and no thread liveness.
 - **Thread-safe CompCertX**: not attempted. It needs a verified compiler.
 - **Printers, rest**: turning tokens into text is still trusted.
-- **The rest of the kernel**: the page allocator and page tables are ported.
-  Quotas, address-space creation, shared memory, threads and queues, the
+- **The rest of the kernel**: the page allocator, page tables and containers
+  are ported. Address-space creation, shared memory, threads and queues, the
   scheduler, IPC, traps and virtualization are not started. The kernel
   guarantees are per CPU, and `PTInv` is not yet shown to hold across other
   CPUs' operations on the allocation table.

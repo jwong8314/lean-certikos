@@ -45,7 +45,7 @@ any environment that keeps the log valid.
 | **Memory management** | | |
 | `MBoot`, `PreInit` | boot, physical memory map | not started |
 | `MALInit`, `MALOp`, `MALT` | allocation table, `palloc`/`pfree` | **done**: `KernPAlloc.lean` |
-| `MContainer` | per-process memory quotas | not started |
+| `MContainer` | per-process memory quotas | **done**: `KernContainer.lean` (alloc, free, split; no getters, no page ownership) |
 | `MPTIntro`, `MPTOp`, `MPTCommon` | page-table entries, two-level page tables | **done**: `KernPT.lean` (insert, remove, lookup; no permission bits, tables are never freed) |
 | `MPTKern`, `MPTInit`, `MPTNew` | kernel page table, address-space creation | not started |
 | `MShareIntro`, `MShareOp`, `MShare` | shared memory between processes | not started |
@@ -111,6 +111,30 @@ the kernel's own page table (`MPTKern`). `ptInsert_guarantee` does not say
 where in the final log the nested `palloc` happened, only that the page is
 `pallocSpec` of some allocation table it found.
 
+## What `KernContainer.lean` proves
+
+The container table is a region. Container `id` is five cells from `id * 5`:
+quota, usage, parent, number of children, in use.
+
+- `ctAlloc_guarantee`: `container_alloc(id)` refines `ctAllocSpec`. If the
+  container is under quota it calls `palloc` on the allocation table's lock,
+  and charges one page if a page came back.
+- `ctFree_guarantee`: `container_free(id, j)` refines `ctFreeSpec`. It gives
+  one page back and calls `pfree(j)`.
+- `ctSplit_guarantee`: `container_split(id, amt)` refines `ctSplitSpec`. If
+  the parent has `amt` pages left it sets up the child slot
+  `id * mc + 1 + nchildren` with quota `amt` and charges the parent.
+- `alloc_inv`, `free_inv`, `split_inv`: `usage ≤ quota` is kept. After a
+  split the child has quota `amt`, usage 0, the right parent, and is marked
+  in use; the parent's quota is unchanged and its usage grew by `amt`.
+- `nest_run`: the general form of the nested call. Any code that works only
+  on the lock in `lk`, run on another lock inside a critical section, leaves
+  our lock held and our region unchanged.
+
+Not covered: the getters, and recording which container owns which page.
+`container_free` does not check that page `j` was allocated to this
+container, as CertiKOS's does through the allocation table.
+
 ## What stands in the way of the rest
 
 - **No pointers or structs in ClightL.** Kernel objects are regions of
@@ -132,8 +156,8 @@ where in the final log the nested `palloc` happened, only that the page is
 
 ## Suggested order
 
-1. `MContainer` (quotas): another table, same pattern as `palloc`. With it,
-   page ownership can be recorded, which the `PTInv` rely needs.
+1. Page ownership: record the owning container in the allocation table, so
+   that `container_free` can check it and the `PTInv` rely can be stated.
 2. Address spaces (`MPTKern`, `MPTInit`, `MPTNew`) and shared memory
    (`MShare*`): built from `pt_insert` and `pt_rmv`.
 3. Thread control blocks and queues (`PThreadIntro` to `PAbQueue`): tables
