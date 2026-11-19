@@ -159,7 +159,7 @@ variable {maxpage num_id cb num_proc pb ib fb ida : Nat}
 theorem ptResv_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_id cb num_proc pb ib fb)
     (hmax : 3 * maxpage < 2 ^ 32) (hnum : cb + 5 * num_id < 2 ^ 32) (hmp : maxpage ≤ 2 ^ 20)
     (hnn : num_proc ≤ num_id) {kl kh : Nat} (nn vadr perm : Nat) (hnid : nn < num_id) :
-    Triple εR c i0 (MatchAll maxpage num_id cb num_proc pb ib fb ida) (fun _ => True)
+    Triple εR c i0 (MatchAll maxpage num_id cb num_proc pb ib fb ida) (fun k => k < cb + 5 * num_id ∨ pb ≤ k)
       (fun σ d => σ "n" = BitVec.ofNat 32 nn ∧ σ "vaddr" = BitVec.ofNat 32 vadr ∧
         σ "perm" = BitVec.ofNat 32 perm ∧ ATInv maxpage kl kh d.toPData ∧
         (d.AC nn).cusage ≤ (d.AC nn).cquota ∧
@@ -180,7 +180,7 @@ theorem ptResv_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num
       have h := Runs.assign (P := rprimsA εR c) (σ := σ) (l := l) "id" (.var "n")
       have e : (Expr.var "n").eval σ = BitVec.ofNat 32 nn := hn
       rw [e] at h; exact h
-    obtain ⟨σb, lb, bb, db, hrb, hcsb, hMb, hlkb, -, r1', hdb, r, hsr, hrr⟩ :=
+    obtain ⟨σb, lb, bb, db, hrb, hcsb, hMb, hlkb, hfb, r1', hdb, r, hsr, hrr⟩ :=
       container_alloc_lift εR c i0 hL hmax hnum (kl := kl) (kh := kh) nn hnid σa l b d
         (by simpa [σa, Locals.set] using hlk) hcs hM ⟨by simp [σa], hI, hu, _, _, hA⟩
     rw [hA] at hsr
@@ -207,7 +207,7 @@ theorem ptResv_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num
       rw [hdbd] at hMb
       refine ⟨_, lb, bb, d, Runs.seq ha0 (Runs.seq hrb (Runs.seq hac (Runs.ite_true
         (eq_true (by simp [σc, hb0])) (Runs.assign _ _)))), hcsb, hMb, ?_,
-        fun k hk => absurd trivial hk, maxpage + 1, by rw [hs0, hdF, hrF], by simp [Expr.eval]⟩
+        fun k hk => hfb k (fun h => hk (Or.inl h)), maxpage + 1, by rw [hs0, hdF, hrF], by simp [Expr.eval]⟩
       rw [Locals.set_other _ _ (by decide)]; simp [σc, Locals.set, hlkb, σa]
     · rw [if_neg (by omega)] at hs
       have hnpsm : d.nps ≤ maxpage := hI.valid_nps.2
@@ -216,7 +216,7 @@ theorem ptResv_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num
           KernPAlloc.ofNat_ne (a := bq) (b := 0) (by omega) (by decide) (by omega)
         simpa [σc] using h
       have hI2 : ATInv maxpage kl kh db.toPData := by rw [hdb]; exact alloc_at_inv hI hA
-      obtain ⟨σd, ld, bd, dd, hrd, hcsd, hMd, hlkd, -, r', hsr', hrr'⟩ :=
+      obtain ⟨σd, ld, bd, dd, hrd, hcsd, hMd, hlkd, hfd, r', hsr', hrr'⟩ :=
         ptInsert_triple εR c i0 hL hmax hnum hmp hnn (kl := kl) (kh := kh) nn vadr bq perm σc lb bb db
           hlkc hcsb hMb
           ⟨by simp [σc, Locals.set, frb, hn], by simp [σc, Locals.set, frb, hva], by simp [σc],
@@ -225,7 +225,7 @@ theorem ptResv_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num
       simp only [Option.some.injEq, Prod.mk.injEq] at hsr'; obtain ⟨hdd, hrr2⟩ := hsr'
       rw [← hdd] at hMd; rw [← hrr2] at hrr'
       refine ⟨σd, ld, bd, dF, Runs.seq ha0 (Runs.seq hrb (Runs.seq hac (Runs.ite_false (eq_false hne) hrd))),
-        hcsd, hMd, ?_, fun k hk => absurd trivial hk, rF, hs0, hrr'⟩
+        hcsd, hMd, ?_, fun k hk => by rw [hfd k hk, hfb k (fun h => hk (Or.inl h))], rF, hs0, hrr'⟩
       rw [hlkd]; simp [σc, Locals.set, hlkb, σa]
 
 /-- **`pt_resv` under the memory-management lock.** `acquire; pt_resv; release`

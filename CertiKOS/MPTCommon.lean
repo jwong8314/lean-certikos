@@ -365,12 +365,12 @@ theorem rmvLoop_run (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_i
       σ "n" = BitVec.ofNat 32 nn → σ "i" = BitVec.ofNat 32 pdi → σ "vadr" = BitVec.ofNat 32 k →
       ∃ σ' l' b', Runs (rprimsA εR c) (rmvLoop pb fb) σ l σ' l' ∧ CS1 c i0 l' b' ∧
         MatchAll maxpage num_id cb num_proc pb ib fb ida (Dk DE nn pdi p 1024) b' ∧ σ' "lk" = σ "lk" ∧
-        ∀ z, z ≠ "o" → z ≠ "_" → z ≠ "vadr" → σ' z = σ z
+        (∀ z, z ≠ "o" → z ≠ "_" → z ≠ "vadr" → σ' z = σ z) ∧ ∀ k, k < pb → b' k = b k
   | 0, k, hk, σ, l, b, hlk, hcs, hM, hn, hi, hva => by
     have hk' : k = 1024 := by omega
     subst hk'
     have hg : (σ "vadr").ult 1024 = false := by rw [hva]; decide
-    refine ⟨σ, l, b, Runs.while_false ?_, hcs, hM, rfl, fun _ _ _ _ => rfl⟩
+    refine ⟨σ, l, b, Runs.while_false ?_, hcs, hM, rfl, fun _ _ _ _ => rfl, fun _ _ => rfl⟩
     show (if (σ "vadr").ult 1024 then (1 : Val) else 0) = 0
     rw [hg]; rfl
   | m + 1, k, hk, σ, l, b, hlk, hcs, hM, hn, hi, hva => by
@@ -379,7 +379,7 @@ theorem rmvLoop_run (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_i
       rw [hva]
       have := ult_ofNat (m := k) (n := 1024) (by omega) (by decide)
       rw [show (1024 : Val) = BitVec.ofNat 32 1024 from rfl, this]; simp [hk1]
-    obtain ⟨σ1, l1, b1, d1, hr1, hcs1, hM1, hlk1, -, hq⟩ :=
+    obtain ⟨σ1, l1, b1, d1, hr1, hcs1, hM1, hlk1, hf1, hq⟩ :=
       rmvPTE_triple εR c i0 hL nn pdi k σ l b (Dk DE nn pdi p k) hlk hcs hM
         ⟨hn, hi, hva, _, rmv_step num_proc hinit hipt hnp hpdx hk1 hPT⟩
     rw [rmv_step num_proc hinit hipt hnp hpdx hk1 hPT] at hq
@@ -394,10 +394,11 @@ theorem rmvLoop_run (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_i
         show σ1 "vadr" + 1 = _
         rw [fr1 _ (by decide) (by decide), hva]; simp [BitVec.ofNat_add]
       rw [e] at h; exact h
-    obtain ⟨σ', l', b', hr, hcs', hM', hlk', hfr⟩ := rmvLoop_run εR c i0 hL hinit hipt hnp hpdx hPT m (k + 1)
+    obtain ⟨σ', l', b', hr, hcs', hM', hlk', hfr, hfb'⟩ := rmvLoop_run εR c i0 hL hinit hipt hnp hpdx hPT m (k + 1)
       (by omega) σ2 l1 b1 (by simp [σ2, Locals.set, hlk1, hlk]) hcs1 hM1
       (by simp [σ2, Locals.set, fr1, hn]) (by simp [σ2, Locals.set, fr1, hi]) (by simp [σ2])
-    refine ⟨σ', l', b', Runs.while_true ?_ (Runs.seq hr1 ha) hr, hcs', hM', ?_, fun z h1 h2 h3 => ?_⟩
+    refine ⟨σ', l', b', Runs.while_true ?_ (Runs.seq hr1 ha) hr, hcs', hM', ?_, fun z h1 h2 h3 => ?_,
+      fun k hk => by rw [hfb' k hk, hf1 k (by omega)]⟩
     · show ¬ (if (σ "vadr").ult 1024 then (1 : Val) else 0) = 0
       rw [hg]; decide
     · rw [hlk']; simp [σ2, Locals.set, hlk1]
@@ -426,7 +427,7 @@ specifications of `container_alloc`, `pt_insert_pde` and `rmv_PTE`. -/
 theorem ptAllocPDE_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_id cb num_proc pb ib fb)
     (hmax : 3 * maxpage < 2 ^ 32) (hnum : cb + 5 * num_id < 2 ^ 32) (hmp : maxpage ≤ 2 ^ 20)
     (hnn : num_proc ≤ num_id) {kl kh : Nat} (nn vadr : Nat) :
-    Triple εR c i0 (MatchAll maxpage num_id cb num_proc pb ib fb ida) (fun _ => True)
+    Triple εR c i0 (MatchAll maxpage num_id cb num_proc pb ib fb ida) (fun k => k < cb + 5 * num_id ∨ pb ≤ k)
       (fun σ d => σ "n" = BitVec.ofNat 32 nn ∧ σ "vaddr" = BitVec.ofNat 32 vadr ∧
         ATInv maxpage kl kh d.toPData ∧ (d.AC nn).cusage ≤ (d.AC nn).cquota ∧
         ∃ d1 r, ptAllocPDE_spec num_proc nn vadr d = some (d1, r))
@@ -484,7 +485,7 @@ theorem ptAllocPDE_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage
           unfold container_alloc_spec
           simp only
           rw [if_pos ⟨hinit, hused⟩, if_pos hlt, hff]
-        obtain ⟨σb, lb, bb, db, hrb, hcsb, hMb, hlkb, -, r1, hdb, r, hsr, hrr⟩ :=
+        obtain ⟨σb, lb, bb, db, hrb, hcsb, hMb, hlkb, hfb, r1, hdb, r, hsr, hrr⟩ :=
           container_alloc_lift εR c i0 hL hmax hnum (kl := kl) (kh := kh) nn (by omega) σa l b d hlka hcs hM
             ⟨by simp [σa], hI, hu, _, _, eA⟩
         rw [eA] at hsr
@@ -515,7 +516,7 @@ theorem ptAllocPDE_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage
           rw [hDE]
           unfold ptInsertPDE_spec setPDEU_spec
           rw [if_pos ⟨hdbi, hdbipt, hnp, hpdx⟩, if_neg hdbPT, if_pos ⟨hp0, by rw [hdbnps]; exact hpn⟩, hdbpp]
-        obtain ⟨σd, ld, bd, dd, hrd, hcsd, hMd, hlkd, -, hqd⟩ :=
+        obtain ⟨σd, ld, bd, dd, hrd, hcsd, hMd, hlkd, hfd, hqd⟩ :=
           ptInsertPDE_triple εR c i0 hL nn vadr p hv σc lb bb db hlkc hcsb hMb
             ⟨by simp [σc, Locals.set, hnb], by simp [σc, Locals.set, hvab], by simp [σc],
               by rw [hdbnps]; exact hnps, _, eE⟩
@@ -538,7 +539,7 @@ theorem ptAllocPDE_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage
         have e0 : Dk DE nn (PDX vadr) p 0 = DE := by
           rw [hDE]; unfold Dk; simp only [pool2, initPTE_zero]
         rw [← e0] at hMd
-        obtain ⟨σg, lg, bg, hrg, hcsg, hMg, hlkg, hfrg⟩ :=
+        obtain ⟨σg, lg, bg, hrg, hcsg, hMg, hlkg, hfrg, hfg⟩ :=
           rmvLoop_run εR c i0 hL hDEi hDEipt hnp hpdx hDEPT 1024 0 rfl σf ld bd
             (by simp [σf, σe, Locals.set, hlkd, hlkc]) hcsd hMd
             (by simp [σf, σe, Locals.set, frD, σc, hnb]) (by simp [σf, σe, Locals.set]) (by simp [σf])
@@ -555,7 +556,10 @@ theorem ptAllocPDE_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage
         rw [efin] at hMg
         refine ⟨_, lg, bg, dF, Runs.seq ha0 (Runs.seq hrb (Runs.seq hac (Runs.seq (Runs.ite_true (ne_true hpne)
           (Runs.seq hrd (Runs.seq hae (Runs.seq haf hrg)))) hah))), hcsg, hMg, ?_,
-          fun k hk => absurd trivial hk, p, hs0, by simp⟩
+          fun k hk => by
+            have hk1 : ¬ k < cb + 5 * num_id := fun h => hk (Or.inl h)
+            have hk2 : ¬ pb ≤ k := fun h => hk (Or.inr h)
+            rw [hfg k (by omega), hfd k hk2, hfb k hk1], p, hs0, by simp⟩
         rw [Locals.set_other _ _ (by decide), hlkg]
         simp [σf, σe, Locals.set, hlkd, σc, hlkb, σa]
     · rw [if_neg hlt] at hs
@@ -564,7 +568,7 @@ theorem ptAllocPDE_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage
         unfold container_alloc_spec
         simp only
         rw [if_pos ⟨hinit, hused⟩, if_neg hlt]
-      obtain ⟨σb, lb, bb, db, hrb, hcsb, hMb, hlkb, -, r1, hdb, r, hsr, hrr⟩ :=
+      obtain ⟨σb, lb, bb, db, hrb, hcsb, hMb, hlkb, hfb, r1, hdb, r, hsr, hrr⟩ :=
         container_alloc_lift εR c i0 hL hmax hnum (kl := kl) (kh := kh) nn (by omega) σa l b d hlka hcs hM
           ⟨by simp [σa], hI, hu, _, _, eA⟩
       rw [eA] at hsr
@@ -582,7 +586,7 @@ theorem ptAllocPDE_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage
         have e : (Expr.var "pi").eval σc = BitVec.ofNat 32 0 := by show σc "pi" = _; simp [σc]
         rw [e] at h; exact h
       refine ⟨_, lb, bb, d, Runs.seq ha0 (Runs.seq hrb (Runs.seq hac (Runs.seq (Runs.ite_false
-        (ne_false (by simp [σc])) Runs.skip) hah))), hcsb, hMb, ?_, fun k hk => absurd trivial hk, 0, hs0,
+        (ne_false (by simp [σc])) Runs.skip) hah))), hcsb, hMb, ?_, fun k hk => hfb k (fun h => hk (Or.inl h)), 0, hs0,
         by simp⟩
       rw [Locals.set_other _ _ (by decide)]
       simp [σc, Locals.set, hlkb, σa]

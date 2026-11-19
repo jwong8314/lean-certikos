@@ -191,7 +191,8 @@ theorem insTail_run (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_i
     (hs : ptInsertPTE_spec nn vadr padr p d = some d') :
     ∃ σ' l' b', Runs (rprimsA εR c) (insTailS pb fb) σ l σ' l' ∧ CS1 c i0 l' b' ∧
       MatchAll maxpage num_id cb num_proc pb ib fb ida d' b' ∧ σ' "lk" = σ "lk" ∧
-      ∀ z : Ident, z ≠ "i" → z ≠ "vadr" → z ≠ "o" → z ≠ "_" → z ≠ "count" → σ' z = σ z := by
+      (∀ z : Ident, z ≠ "i" → z ≠ "vadr" → z ≠ "o" → z ≠ "_" → z ≠ "count" → σ' z = σ z) ∧
+      ∀ k, 3 * maxpage < k → k < pb → b' k = b k := by
   have := hL.hib; have := hL.hfb; have := hL.hend; have := hL.hpb; have := hL.hcb
   have hpdx : PDX vadr < 1024 := by unfold PDX; omega
   have hptx : PTX vadr < 1024 := by unfold PTX; omega
@@ -234,7 +235,7 @@ theorem insTail_run (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_i
         rw [if_pos ⟨hinit, hipt, ⟨hnp, hpdx⟩, hptx⟩, hz]
         simp only
         rw [if_neg hPT, if_pos hpr, hp]
-      obtain ⟨σ1, l1, b1, d1, hr1, hcs1, hM1, hlk1, -, hq1⟩ :=
+      obtain ⟨σ1, l1, b1, d1, hr1, hcs1, hM1, hlk1, hf1, hq1⟩ :=
         ptInsertAux_triple εR c i0 hL nn vadr padr perm hv σ l b d hlk hcs hM
           ⟨hn, hva, hpa, hpe, Nat.le_trans hnps hmp, _, e1⟩
       rw [e1] at hq1; simp only [Option.some.injEq] at hq1
@@ -251,7 +252,7 @@ theorem insTail_run (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_i
           | .ATValid _ _ n => some n
           | .ATUndef => none) = some cnt
         rw [hA]
-      obtain ⟨σ2, l2, b2, d2, hr2, hcs2, hM2, hlk2, -, hd2, v, hsv, hσ2⟩ :=
+      obtain ⟨σ2, l2, b2, d2, hr2, hcs2, hM2, hlk2, hf2, hd2, v, hsv, hσ2⟩ :=
         atGetC_lift εR c i0 hL hmax "count" (by decide) (.var "padr") padr σ1 l1 b1 _
           (by rw [hlk1]; exact hlk) hcs1 hM1 ⟨hpa1, _, e2⟩
       rw [e2] at hsv; simp only [Option.some.injEq] at hsv
@@ -267,7 +268,7 @@ theorem insTail_run (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_i
           | .ATValid b .ATNorm _ => some { d.toPData with AT := setAt d.AT padr (.ATValid b .ATNorm (cnt + 1)) }
           | _ => none) = _
         rw [hA]
-      obtain ⟨σ3, l3, b3, d3, hr3, hcs3, hM3, hlk3, -, r1, hd3, ⟨pd, hpd, hr1e⟩, -⟩ :=
+      obtain ⟨σ3, l3, b3, d3, hr3, hcs3, hM3, hlk3, hf3, r1, hd3, ⟨pd, hpd, hr1e⟩, -⟩ :=
         atSetC_lift εR c i0 hL hmax (.var "padr") (.bin .add (.var "count") (.const 1)) padr (cnt + 1)
           σ2 l2 b2 _ (by rw [hlk2, hlk1]; exact hlk) hcs2 hM2
           ⟨by show σ2 "padr" = _; rw [hσ2, Locals.set_other _ _ (by decide)]; exact hpa1,
@@ -278,7 +279,8 @@ theorem insTail_run (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_i
       refine ⟨σ3, l3, b3, Runs.seq hr1 (Runs.seq hr2 hr3), hcs3, ?_, by rw [hlk3, hlk2, hlk1],
         fun z h1 h2 h3 h4 h5 => (Runs.seq hr1 (Runs.seq hr2 hr3)).frame (by
           simp [frS, insTailS, ptInsertAuxS, withPDXPTX, setPTES, pteStoreS, atGetCS, atSetCS, Ne.symm h1,
-            Ne.symm h2, Ne.symm h3, Ne.symm h4, Ne.symm h5])⟩
+            Ne.symm h2, Ne.symm h3, Ne.symm h4, Ne.symm h5]),
+        fun k hk1 hk2 => by rw [hf3 k (by omega), hf2 k (fun h => h), hf1 k (by omega)]⟩
       rw [← hs]; exact hM3
 
 end Tail
@@ -356,7 +358,7 @@ variable {maxpage num_id cb num_proc pb ib fb ida : Nat}
 theorem ptInsert_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_id cb num_proc pb ib fb)
     (hmax : 3 * maxpage < 2 ^ 32) (hnum : cb + 5 * num_id < 2 ^ 32) (hmp : maxpage ≤ 2 ^ 20)
     (hnn : num_proc ≤ num_id) {kl kh : Nat} (nn vadr padr perm : Nat) :
-    Triple εR c i0 (MatchAll maxpage num_id cb num_proc pb ib fb ida) (fun _ => True)
+    Triple εR c i0 (MatchAll maxpage num_id cb num_proc pb ib fb ida) (fun k => k < cb + 5 * num_id ∨ pb ≤ k)
       (fun σ d => σ "n" = BitVec.ofNat 32 nn ∧ σ "vaddr" = BitVec.ofNat 32 vadr ∧
         σ "padr" = BitVec.ofNat 32 padr ∧ σ "perm" = BitVec.ofNat 32 perm ∧
         ATInv maxpage kl kh d.toPData ∧ (d.AC nn).cusage ≤ (d.AC nn).cquota ∧
@@ -399,7 +401,7 @@ theorem ptInsert_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage n
         obtain ⟨hpi0, hpil⟩ := insertPTE_pi_pos hI2 hp
         have e1 : ptReadPDE_spec num_proc nn vadr d = some pi := by
           unfold ptReadPDE_spec getPDE_spec; rw [if_pos ⟨hinit, hipt, hnp, hpdx⟩, hp]
-        obtain ⟨σ1, l1, b1, d1, hr1, hcs1, hM1, hlk1, -, hd1, v, hsv, hrv⟩ :=
+        obtain ⟨σ1, l1, b1, d1, hr1, hcs1, hM1, hlk1, hf1, hd1, v, hsv, hrv⟩ :=
           ptReadPDE_triple εR c i0 (pb := pb) (num_proc := num_proc) (by omega) nn vadr hv σ l b d hlk hcs hM
             ⟨hn, hva, pi, e1⟩
         rw [hd1] at hM1
@@ -415,7 +417,7 @@ theorem ptInsert_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage n
           have : (BitVec.ofNat 32 0 : Val) ≠ BitVec.ofNat 32 (maxpage + 1) :=
             KernPAlloc.ofNat_ne (by decide) hmagic (by omega)
           simpa [σ2] using this
-        obtain ⟨σ3, l3, b3, hr3, hcs3, hM3, hlk3, hfr3⟩ :=
+        obtain ⟨σ3, l3, b3, hr3, hcs3, hM3, hlk3, hfr3, hf3⟩ :=
           insTail_run εR c i0 hL hmax hmp (σ := σ2) (by simp [σ2, Locals.set, hlk1, hlk]) hcs1 hM1
             (by simp [σ2, Locals.set, fr1, hn]) (by simp [σ2, Locals.set, fr1, hva])
             (by simp [σ2, Locals.set, fr1, hpa]) (by simp [σ2, Locals.set, fr1, hpe])
@@ -428,7 +430,10 @@ theorem ptInsert_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage n
           rw [e] at h; exact h
         refine ⟨_, l3, b3, d2, Runs.seq hr1 (Runs.seq (Runs.ite_true (ne_true hg1) ha2)
           (Runs.seq (Runs.ite_true (ne_true hg2) hr3) ha3)), hcs3, hM3, ?_,
-          fun k hk => absurd trivial hk, 0, by rw [hs0, hdF, hrF], by simp⟩
+          fun k hk => by
+            have hk1 : ¬ k < cb + 5 * num_id := fun h => hk (Or.inl h)
+            have hk2 : ¬ pb ≤ k := fun h => hk (Or.inr h)
+            rw [hf3 k (by omega) (by omega), hf1 k (fun h => h)], 0, by rw [hs0, hdF, hrF], by simp⟩
         rw [Locals.set_other _ _ (by decide), hlk3]; simp [σ2, Locals.set, hlk1]
     | PDEUnPresent =>
       rw [hp] at hs; simp only at hs
@@ -440,7 +445,7 @@ theorem ptInsert_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage n
         obtain ⟨hnps2, hipt2, hvr⟩ := allocPDE_facts hAl
         have e1 : ptReadPDE_spec num_proc nn vadr d = some 0 := by
           unfold ptReadPDE_spec getPDE_spec; rw [if_pos ⟨hinit, hipt, hnp, hpdx⟩, hp]
-        obtain ⟨σ1, l1, b1, d1, hr1, hcs1, hM1, hlk1, -, hd1, v1, hsv, hrv⟩ :=
+        obtain ⟨σ1, l1, b1, d1, hr1, hcs1, hM1, hlk1, hf1, hd1, v1, hsv, hrv⟩ :=
           ptReadPDE_triple εR c i0 (pb := pb) (num_proc := num_proc) (by omega) nn vadr hv σ l b d hlk hcs hM
             ⟨hn, hva, 0, e1⟩
         rw [hd1] at hM1
@@ -448,7 +453,7 @@ theorem ptInsert_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage n
         have fr1 := frR σ1 l1 hr1
         have hg1 : σ1 "r" = 0 := by rw [hrv, ← hsv]; rfl
         -- pt_alloc_pde
-        obtain ⟨σ2, l2, b2, d2', hr2, hcs2, hM2, hlk2, -, r, hsr, hrr⟩ :=
+        obtain ⟨σ2, l2, b2, d2', hr2, hcs2, hM2, hlk2, hf2, r, hsr, hrr⟩ :=
           ptAllocPDE_triple εR c i0 hL hmax hnum hmp hnn (kl := kl) (kh := kh) nn vadr σ1 l1 b1 d
             (by rw [hlk1]; exact hlk) hcs1 hM1
             ⟨by rw [fr1 _ (by decide) (by decide)]; exact hn, by rw [fr1 _ (by decide) (by decide)]; exact hva,
@@ -485,7 +490,7 @@ theorem ptInsert_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage n
           refine ⟨_, l2, b2, d2, Runs.seq hr1 (Runs.seq (Runs.ite_false (ne_false hg1)
             (Runs.seq hr2 (Runs.seq ha3 (Runs.ite_true (eq_true (by simp [σ3, hv0])) ha4))))
             (Runs.seq (Runs.ite_false (ne_false (by simp [σ4])) Runs.skip) ha5)), hcs2, hM2, ?_,
-            fun k hk => absurd trivial hk, maxpage + 1, by rw [hs0, hdF, hrF], by simp⟩
+            fun k hk => by rw [hf2 k hk, hf1 k (fun h => h)], maxpage + 1, by rw [hs0, hdF, hrF], by simp⟩
           rw [Locals.set_other _ _ (by decide)]; simp [σ4, σ3, Locals.set, hlk2, hlk1]
         · rw [if_neg hv0] at hs
           have hvb : 0 < v ∧ v < d.nps := by rcases hvr with h | h; exact absurd h hv0; exact h
@@ -502,7 +507,7 @@ theorem ptInsert_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage n
               have : (BitVec.ofNat 32 v : Val) ≠ BitVec.ofNat 32 (maxpage + 1) :=
                 KernPAlloc.ofNat_ne (by omega) hmagic (by omega)
               simpa [σ3] using this
-            obtain ⟨σ5, l5, b5, hr5, hcs5, hM5, hlk5, hfr5⟩ :=
+            obtain ⟨σ5, l5, b5, hr5, hcs5, hM5, hlk5, hfr5, hf5⟩ :=
               insTail_run εR c i0 hL hmax hmp (σ := σ3) hlk3 hcs2 hM2
                 (by simp [σ3, Locals.set, fr2, hn]) (by simp [σ3, Locals.set, fr2, hva])
                 (by simp [σ3, Locals.set, fr2, hpa]) (by simp [σ3, Locals.set, fr2, hpe])
@@ -517,7 +522,10 @@ theorem ptInsert_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage n
             refine ⟨_, l5, b5, d3, Runs.seq hr1 (Runs.seq (Runs.ite_false (ne_false hg1)
               (Runs.seq hr2 (Runs.seq ha3 (Runs.ite_false (eq_false hne0) Runs.skip))))
               (Runs.seq (Runs.ite_true (ne_true hneM) hr5) ha6)), hcs5, hM5, ?_,
-              fun k hk => absurd trivial hk, v, by rw [hs0, hdF, hrF], by simp⟩
+              fun k hk => by
+                have hk1 : ¬ k < cb + 5 * num_id := fun h => hk (Or.inl h)
+                have hk2 : ¬ pb ≤ k := fun h => hk (Or.inr h)
+                rw [hf5 k (by omega) (by omega), hf2 k hk, hf1 k (fun h => h)], v, by rw [hs0, hdF, hrF], by simp⟩
             rw [Locals.set_other _ _ (by decide), hlk5]; simp [σ3, Locals.set, hlk2, hlk1]
 
 end Insert

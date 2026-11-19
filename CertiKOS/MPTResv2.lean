@@ -15,7 +15,9 @@ specification says and what is ported here.)
 * `ptInsert_keeps`: **`ptInsert_spec` preserves the allocation-table
   invariant**, keeps every container within its quota, and returns at most
   `MagicNumber`. `pt_resv2` needs it between its two calls of `pt_insert`.
-* `ptResv2_triple`: **the C code refines `ptResv2_spec`.**
+* `ptResv2_triple`: **the C code refines `ptResv2_spec`.** It writes only the
+  allocation table, the containers and the page tables (cells below
+  `cb + 5 * num_id` or from `pb` on), so data placed between them is kept.
 -/
 
 set_option linter.deprecated false
@@ -245,7 +247,7 @@ variable {maxpage num_id cb num_proc pb ib fb ida : Nat}
 theorem ptResv2_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_id cb num_proc pb ib fb)
     (hmax : 3 * maxpage < 2 ^ 32) (hnum : cb + 5 * num_id < 2 ^ 32) (hmp : maxpage ≤ 2 ^ 20)
     (hnn : num_proc ≤ num_id) {kl kh : Nat} (nn vadr perm nn' vadr' perm' : Nat) (hnid : nn < num_id) :
-    Triple εR c i0 (MatchAll maxpage num_id cb num_proc pb ib fb ida) (fun _ => True)
+    Triple εR c i0 (MatchAll maxpage num_id cb num_proc pb ib fb ida) (fun k => k < cb + 5 * num_id ∨ pb ≤ k)
       (fun σ d => σ "n" = BitVec.ofNat 32 nn ∧ σ "vaddr" = BitVec.ofNat 32 vadr ∧
         σ "perm" = BitVec.ofNat 32 perm ∧ σ "n2" = BitVec.ofNat 32 nn' ∧
         σ "vaddr2" = BitVec.ofNat 32 vadr' ∧ σ "perm2" = BitVec.ofNat 32 perm' ∧
@@ -268,7 +270,7 @@ theorem ptResv2_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage nu
       have h := Runs.assign (P := rprimsA εR c) (σ := σ) (l := l) "id" (.var "n")
       have e : (Expr.var "n").eval σ = BitVec.ofNat 32 nn := hn
       rw [e] at h; exact h
-    obtain ⟨σb, lb, bb, db, hrb, hcsb, hMb, hlkb, -, r1', hdb, r, hsr, hrr⟩ :=
+    obtain ⟨σb, lb, bb, db, hrb, hcsb, hMb, hlkb, hfb, r1', hdb, r, hsr, hrr⟩ :=
       container_alloc_lift εR c i0 hL hmax hnum (kl := kl) (kh := kh) nn hnid σa l b d
         (by simpa [σa, Locals.set] using hlk) hcs hM ⟨by simp [σa], hI, hu nn, _, _, hA⟩
     rw [hA] at hsr
@@ -296,7 +298,7 @@ theorem ptResv2_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage nu
       rw [hdbd] at hMb
       refine ⟨_, lb, bb, d, Runs.seq ha0 (Runs.seq hrb (Runs.seq hac (Runs.ite_true
         (eq_true (by simp [σc, hb0])) (Runs.assign _ _)))), hcsb, hMb, ?_,
-        fun k hk => absurd trivial hk, maxpage + 1, by rw [hs0, hdF, hrF], by simp [Expr.eval]⟩
+        fun k hk => hfb k (fun h => hk (Or.inl h)), maxpage + 1, by rw [hs0, hdF, hrF], by simp [Expr.eval]⟩
       rw [Locals.set_other _ _ (by decide)]; simp [σc, Locals.set, hlkb, σa]
     · rw [if_neg (by omega)] at hs
       have hnpsm : d.nps ≤ maxpage := hI.valid_nps.2
@@ -311,7 +313,7 @@ theorem ptResv2_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage nu
       | some pr2 =>
         obtain ⟨d2, v⟩ := pr2
         rw [hi1] at hs; simp only at hs
-        obtain ⟨σd, ld, bd, dd, hrd, hcsd, hMd, hlkd, -, r', hsr', hrr'⟩ :=
+        obtain ⟨σd, ld, bd, dd, hrd, hcsd, hMd, hlkd, hfd, r', hsr', hrr'⟩ :=
           ptInsert_triple εR c i0 hL hmax hnum hmp hnn (kl := kl) (kh := kh) nn vadr bq perm σc lb bb db
             hlkc hcsb hMb
             ⟨by simp [σc, Locals.set, frb, hn], by simp [σc, Locals.set, frb, hva], by simp [σc],
@@ -331,7 +333,8 @@ theorem ptResv2_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage nu
           rw [hdF] at hMd
           refine ⟨σd, ld, bd, dF, Runs.seq ha0 (Runs.seq hrb (Runs.seq hac (Runs.ite_false (eq_false hne)
             (Runs.seq hrd (Runs.ite_false (ne_false (by rw [hrr', hvm])) Runs.skip))))), hcsd, hMd, ?_,
-            fun k hk => absurd trivial hk, maxpage + 1, by rw [hs0, hrF], by rw [hrr', hvm]⟩
+            fun k hk => by rw [hfd k hk, hfb k (fun h => hk (Or.inl h))], maxpage + 1, by rw [hs0, hrF],
+            by rw [hrr', hvm]⟩
           rw [hlkd]; simp [σc, Locals.set, hlkb, σa]
         · rw [if_neg hvm] at hs
           have hner : σd "r" ≠ BitVec.ofNat 32 (maxpage + 1) := by
@@ -370,7 +373,7 @@ theorem ptResv2_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage nu
             rw [Locals.set_other _ _ (by decide), Locals.set_other _ _ (by decide),
               Locals.set_other _ _ (by decide), frd _ (Or.inr (Or.inr (Or.inr rfl)))]
             simp [σc]
-          obtain ⟨σf, lf, bf, df, hrf, hcsf, hMf, hlkf, -, r'', hsr'', hrr''⟩ :=
+          obtain ⟨σf, lf, bf, df, hrf, hcsf, hMf, hlkf, hff, r'', hsr'', hrr''⟩ :=
             ptInsert_triple εR c i0 hL hmax hnum hmp hnn (kl := kl) (kh := kh) nn' vadr' bq perm' σe ld bd d2
               (by simpa [σe, Locals.set] using hlkd') hcsd hMd
               ⟨by simp [σe, Locals.set], by simp [σe, Locals.set], hpadr, by simp [σe], hI4, hu5 nn',
@@ -380,7 +383,7 @@ theorem ptResv2_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage nu
           rw [← hdf] at hMf; rw [← hrf2] at hrr''
           refine ⟨σf, lf, bf, dF, Runs.seq ha0 (Runs.seq hrb (Runs.seq hac (Runs.ite_false (eq_false hne)
             (Runs.seq hrd (Runs.ite_true (ne_true hner) (hae hrf)))))), hcsf, hMf, ?_,
-            fun k hk => absurd trivial hk, rF, hs0, hrr''⟩
+            fun k hk => by rw [hff k hk, hfd k hk, hfb k (fun h => hk (Or.inl h))], rF, hs0, hrr''⟩
           rw [hlkf]; simp [σe, Locals.set, hlkd, σc, hlkb, σa]
 
 end Resv2
