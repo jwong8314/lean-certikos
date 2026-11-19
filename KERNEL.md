@@ -75,7 +75,7 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | abstract ownership (`PTInitGen`) | the logical table `LAT` with its owner lists, `consistent_pmap`, `consistent_pmap_domain`; `alloc_spec`, `ptInsert0_spec`, `ptRmv0_spec`, `ptResv_spec` over owner lists | **ported**: `PTInitGen.lean`. The count-based specs refine the owner-list ones: `alloc_exist`, `ptInsertPTE_exist`, `ptAllocPDE_exist`, `ptInsert_exist`, `ptRmv_exist`, `ptResv_exist`. Missing: `ptFreePDE0_spec`, and that the owner-list specs preserve the upper invariant |
 | **Process management** (`proc`) | | |
 | `PKContext`, `PKContextNew` | kernel contexts, `kctxt_switch`, `kctxt_new` | missing (needs assembly and a machine model) |
-| `PThreadIntro`, `PThreadInit` | thread control blocks | missing |
+| `PThreadIntro`, `PThreadInit` | thread control blocks | **`PThreadIntro` ported**: `PThreadIntro.lean`. `get_state`, `get_prev`, `get_next`, `set_state`, `set_prev`, `set_next`, `tcb_init` refine their specs; `threadInit_triple` verifies the loop of `thread_init` (`real_tcb`). `thread_init`'s first call is `sharedmem_init`, which needs `pmap_init` (machine model) |
 | `PQueueIntro`, `PQueueInit`, `PAbQueue` | thread queues, then abstract queues | missing |
 | `PCurID`, `PThreadSched`, `PThread` | current thread, `thread_spawn`, `thread_yield`, `thread_sleep`, `thread_wakeup` | missing (`ThreadLayer.lean` is a prototype of a different thing) |
 | `PIPCIntro`, `PIPC` | synchronous IPC | missing |
@@ -429,6 +429,23 @@ What this does not give:
   argument in `pn` and copies it once the lock is held. `ptResv_locked` is
   removed.
 
+### `PThreadIntro.lean`: thread control blocks
+
+- **State**: `TData` is `SData` with `tcb`, one `TCBValid state prev next`
+  per process. **Region**: three cells per process at `tb`, after the
+  shared-memory table (`TLayout`, `MatchTCB`, `MatchTP`, `MatchT`).
+- `tcb_get`, `tcb_put`: what the three cells of a valid block hold, and that
+  rewriting them gives the pool with that block replaced.
+- **The seven accessors** refine their specifications (`getTState_triple`,
+  `getPrev_triple`, `getNext_triple`, `setTState_triple`, `setPrev_triple`,
+  `setNext_triple`, `tcbInit_triple`).
+- **`threadInit_triple`**: the loop of `thread_init` makes every block a dead
+  thread on no queue (`real_tcb`).
+- As with shared memory, the specifications require paging to be on, and
+  `thread_init_spec` is stated with only its loop verified.
+- `PKContext` and `PKContextNew`, which sit below this layer in mCertiKOS,
+  are about saved registers and come with the machine model (stage 6).
+
 ### `MContainerInv.lean` and the end of `MALOp.lean`: the invariants
 
 mCertiKOS shows that every primitive of a layer preserves
@@ -513,4 +530,7 @@ unused by the ports.
 
 See "How the ports are organised" above. Stages 2 to 4 are done except for
 `pt_init` and `pmap_init` (machine model) and the linking step for the rely.
-Next: stage 5, thread data (thread control blocks and queues).
+Stage 5 has started: the thread control blocks are ported
+(`PThreadIntro.lean`). Next: the thread queues (`PQueueIntro`: head and tail
+accessors; `PQueueInit`: `enqueue`, `dequeue`, `queue_rmv`), then the
+abstract queues (`PAbQueue`).

@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-76 Lean files, about 33,200 lines. No `sorry`. The main theorems depend only on
+77 Lean files, about 33,800 lines. No `sorry`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-18)
@@ -126,8 +126,9 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 - **Thread-safe CompCertX**: not attempted. It needs a verified compiler.
 - **Printers, rest**: turning tokens into text is still trusted.
 - **The rest of the kernel**: the page allocator, page tables, containers,
-  boot (up to the kernel's page table) and shared memory are ported. Threads
-  and queues, the scheduler, IPC, traps and virtualization are not started. The kernel
+  boot (up to the kernel's page table), shared memory and thread control
+  blocks are ported. Thread queues, the scheduler, IPC, traps and
+  virtualization are not started. The kernel
   guarantees are per CPU, and `PTInv` is not yet shown to hold across other
   CPUs' operations on the allocation table.
   See [KERNEL.md](KERNEL.md).
