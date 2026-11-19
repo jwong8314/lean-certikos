@@ -581,7 +581,11 @@ theorem sm_write3 (εR : REnv) {c : CPU} {i0 : Nat} (hL : SLayout maxpage num_id
         σ l (σ.set "_" 0) l' ∧ CS1 c i0 l' b' ∧
       MatchS maxpage num_id cb num_proc pb ib fb ida sb
         { d with smspool := smSet d.smspool p1 p2 (.SHRDValid i s v) } b' ∧
-      ∀ k, ¬ (sb ≤ k ∧ k < sb + 3 * (num_proc * num_proc)) → b' k = b k := by
+      (∀ k, ¬ (sb ≤ k ∧ k < sb + 3 * (num_proc * num_proc)) → b' k = b k) ∧
+      ∀ (R : Stmt APrim) (τ : Locals) (lt : RLog), Runs (rprimsA εR c) R (σ.set "_" 0) l' τ lt →
+        Runs (rprimsA εR c) (.seq (smSetS sb num_proc (.var a1) (.var a2) k1 v1)
+          (.seq (smSetS sb num_proc (.var a1) (.var a2) k2 v2)
+            (.seq (smSetS sb num_proc (.var a1) (.var a2) k3 v3) R))) σ l τ lt := by
   let σ1 := σ.set "_" 0
   have hlk1 : (σ1 "lk").toNat = i0 := by simpa [σ1, Locals.set] using hlk
   have hq1 : (Expr.var a1).eval σ1 = BitVec.ofNat 32 p1 := (Locals.set_other _ _ ha1).trans hp1
@@ -612,7 +616,7 @@ theorem sm_write3 (εR : REnv) {c : CPU} {i0 : Nat} (hL : SLayout maxpage num_id
       · exact ⟨w2, Or.inr (Or.inl ⟨e2, rfl⟩)⟩
       · exact ⟨w3, Or.inr (Or.inr ⟨by omega, rfl⟩)⟩
   refine ⟨l3, _, Runs.seq r1 (Runs.seq r2 r3), c3, sm_put hL hM h1 h2 hv (fun k hk => ?_) ?_ ?_ ?_,
-    fun k hk => ?_⟩
+    fun k hk => ?_, fun R τ lt hR => Runs.seq r1 (Runs.seq r2 (Runs.seq r3 hR))⟩
   · rw [sc_ne _ _ (by unfold scell at *; omega), sc_ne _ _ (by unfold scell at *; omega),
       sc_ne _ _ (by unfold scell at *; omega)]
   · obtain ⟨w, hw⟩ := cover 0 (by decide)
@@ -639,7 +643,7 @@ theorem clear_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : SLayout maxpage num
   · rw [if_pos hc] at hs
     simp only [Option.some.injEq] at hs
     obtain ⟨-, -, h1, h2⟩ := hc
-    obtain ⟨l', b', hr, hcs', hM', hf⟩ := sm_write3 εR hL hcs hlk hM ha1 ha2 hp1 hp2 h1 h2
+    obtain ⟨l', b', hr, hcs', hM', hf, -⟩ := sm_write3 εR hL hcs hlk hM ha1 ha2 hp1 hp2 h1 h2
       (k1 := 0) (k2 := 1) (k3 := 2) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
       (v1 := .const 0) (v2 := .const 2) (v3 := .const 1) (w1 := BitVec.ofNat 32 0) (w2 := BitVec.ofNat 32 2)
       (w3 := BitVec.ofNat 32 1) rfl rfl rfl (i := .SHRDDEAD) (s := true) (v := 0) (by decide)

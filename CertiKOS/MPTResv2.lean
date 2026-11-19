@@ -221,6 +221,38 @@ def ptResv2_spec (maxpage num_proc : Nat) (n vadr perm n' vadr' perm' : Nat) (d 
       | none => none
   | none => none
 
+/-- **`ptResv2_spec` keeps the invariants**, and returns at most `MagicNumber`. -/
+theorem ptResv2_keeps {maxpage kl kh num_proc n vadr perm n' vadr' perm' : Nat} {d d' : PTData} {r : Nat}
+    (hI : ATInv maxpage kl kh d.toPData)
+    (h : ptResv2_spec maxpage num_proc n vadr perm n' vadr' perm' d = some (d', r)) :
+    ATInv maxpage kl kh d'.toPData ∧ (UQ d.AC → UQ d'.AC) ∧ r ≤ maxpage + 1 := by
+  unfold ptResv2_spec at h
+  cases hA : container_alloc_spec n d.toRData with
+  | none => rw [hA] at h; cases h
+  | some pr =>
+    obtain ⟨r1, b⟩ := pr
+    rw [hA] at h; simp only at h
+    by_cases hb : b = 0
+    · rw [if_pos hb] at h
+      simp only [Option.some.injEq, Prod.mk.injEq] at h; obtain ⟨rfl, rfl⟩ := h
+      exact ⟨hI, fun hu => hu, Nat.le_refl _⟩
+    · rw [if_neg hb] at h
+      have hI1 : ATInv maxpage kl kh ({ d with toRData := r1 } : PTData).toPData := alloc_at_inv hI hA
+      cases h1 : ptInsert_spec maxpage num_proc n vadr b perm { d with toRData := r1 } with
+      | none => rw [h1] at h; cases h
+      | some pr2 =>
+        obtain ⟨d2, v⟩ := pr2
+        rw [h1] at h; simp only at h
+        obtain ⟨hI2, hu2, hv⟩ := ptInsert_keeps hI1 h1
+        have hu1 : UQ d.AC → UQ d2.AC := fun hu => hu2 (alloc_usage hu hA)
+        by_cases hvm : v = maxpage + 1
+        · rw [if_pos hvm] at h
+          simp only [Option.some.injEq, Prod.mk.injEq] at h; obtain ⟨rfl, rfl⟩ := h
+          exact ⟨hI2, hu1, Nat.le_refl _⟩
+        · rw [if_neg hvm] at h
+          obtain ⟨hI3, hu3, hr⟩ := ptInsert_keeps hI2 h
+          exact ⟨hI3, fun hu => hu3 (hu1 hu), hr⟩
+
 /-- ```
 pi = container_alloc(proc_index);
 if (pi == 0) result = MagicNumber;
