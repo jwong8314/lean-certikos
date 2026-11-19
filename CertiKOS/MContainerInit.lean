@@ -19,8 +19,8 @@ Ported from `objects/ObjContainer.v`: `container_init_spec`.
   the invariants now hold from boot onwards, at the level of the
   specifications.
 
-Not here yet: the C code of `container_init` (a loop counting the free
-pages).
+The C code of `container_init` and its refinement proof are in
+`MContainerInitC.lean`.
 -/
 
 set_option linter.deprecated false

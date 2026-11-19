@@ -58,11 +58,11 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | Layer | What it adds | Status |
 |---|---|---|
 | **Memory management** (`mm`) | | |
-| `PreInit` | boot loader, memory map (`get_size`, `get_mms`, `get_mml`, `is_usable`) | missing |
-| `MBoot` | allocation-table accessors over memory | **ported** in `MALOp.lean`: `is_norm`, `at_get`, `at_set`, `at_set_c`, `get_nps`. Missing: `set_norm`, `set_nps`, `at_get_c` |
-| `MALInit` | `mem_init` | **specification ported**: `MALInit.lean` (`mem_init_spec`, `real_nps`, `real_AT`). `mem_init_inv`: it establishes the allocation-table invariant. C code (three loops over the memory map) not yet |
+| `PreInit` | boot loader, memory map (`get_size`, `get_mms`, `get_mml`, `is_usable`) | **accessors ported** in `MALInitC.lean` as reads of the memory map in the region (`MatchMMap`). `boot_loader` itself is not code here (it is not verified in mCertiKOS either): its effect is the precondition `MatchMMap` |
+| `MBoot` | allocation-table accessors over memory | **ported** in `MALOp.lean`: `is_norm`, `at_get`, `at_set`, `at_set_c`, `get_nps`. `set_norm`, `set_nps` in `MALInitC.lean`. Missing: `at_get_c` |
+| `MALInit` | `mem_init` | **specification ported**: `MALInit.lean` (`mem_init_spec`, `real_nps`, `real_AT`). `mem_init_inv`: it establishes the allocation-table invariant. **C code ported**: `MALInitC.lean`, `mem_init_triple` (the three loops refine `mem_init_spec`) |
 | `MALOp` | `palloc`, `pfree` | **ported**: `MALOp.lean` (`palloc_refines`, `pfree_refines`) |
-| `MALT` | container code: `container_init`, getters, `container_can_consume`, `container_split`, `container_alloc` | **ported** in `MContainer.lean`: the four getters (`getter_guarantee` with `get_*_ref`), `container_split` (`container_split_refines`), `container_alloc` (`container_alloc_refines`). `container_init_spec` ported in `MContainerInit.lean`, with `container_init_inv`: it establishes all three invariants. Missing: the C code of `container_init`, and `container_can_consume` |
+| `MALT` | container code: `container_init`, getters, `container_can_consume`, `container_split`, `container_alloc` | **ported** in `MContainer.lean`: the four getters (`getter_guarantee` with `get_*_ref`), `container_split` (`container_split_refines`), `container_alloc` (`container_alloc_refines`). `container_init_spec` ported in `MContainerInit.lean`, with `container_init_inv`: it establishes all three invariants. **C code of `container_init` ported**: `MContainerInitC.lean`, `container_init_triple`. Missing: `container_can_consume` |
 | `MContainer` | page-table pool accessors (`set_pt`, `get_PDE`, `set_PDE`, `rmv_PDE`, `set_PDEU`, `get_PTE`, `set_PTE`, `rmv_PTE`, `set_IDPTE`) | **ported**: `MPTIntro.lean`. All eight memory accessors refine their specs (`getPDE_triple`, `setPDE_triple`, `rmvPDE_triple`, `setPDEU_triple`, `getPTE_triple`, `setPTE_triple`, `rmvPTE_triple`, `setIDPTE_triple`). Missing: `set_pt` (loads `CR3`; needs the machine model) |
 | `MPTIntro` | `pt_read`, `pt_read_pde`, `pt_rmv_aux`, `pt_rmv_pde`, `pt_insert_aux`, `pt_insert_pde`, `idpde_init` | **ported**: `MPTOp.lean`. The six operations refine `ptRead_spec` … `ptInsertPDE_spec`, each verified against the accessor's triple. Missing: `idpde_init` (boot) |
 | `MPTOp` | `pt_alloc_pde`, `pt_free_pde`, `pt_init_comm` | **ported**: `MPTCommon.lean`. `pt_alloc_pde` refines `ptAllocPDE_spec` (through the specs of `container_alloc`, `pt_insert_pde`, and 1024 calls of `rmv_PTE`); `pt_free_pde` refines `ptFreePDE_spec` (through `pt_read_pde`, `pt_rmv_pde`, `pfree`). Missing: `pt_init_comm` (boot) |
@@ -96,8 +96,8 @@ Even for the ported layers:
 - `high_level_invariant`: the parts about the allocation table and the
   containers are proved preserved by the specifications
   (`MContainerInv.lean`). They are not yet carried along the shared log.
-- The C code of boot (`mem_init`, `container_init`) is not ported. Their
-  specifications are, and establish the invariants.
+- Boot: `mem_init` and `container_init` are ported with their C code. The
+  page-table initialisers are not.
 
 ## How the ports are organised
 
@@ -247,9 +247,45 @@ has no C code: it is a simulation between two abstract states.
 
 So the invariants that the refinement theorems assume now have a beginning
 (`container_init_inv`) and are kept by every specification
-(`MContainerInv.lean`, `palloc_inv`, `pfree_inv`). What is missing for boot is
-the C code: `mem_init`'s loops, `container_init`'s loop, the page-table
-initialisers, and the boot-loader accessors they read the memory map with.
+(`MContainerInv.lean`, `palloc_inv`, `pfree_inv`).
+
+### `MALInitC.lean` and `MContainerInitC.lean`: the C code of boot
+
+- **The memory map is in the region**, at a base `mmb` above the allocation
+  table and the containers: the number of regions, then start, length and
+  "usable" of each (`MatchMMap`). `get_size`, `get_mms`, `get_mml` and
+  `is_usable` are reads of it. `boot_loader` is not code here; what it leaves
+  is the precondition.
+- `while_inv`: a loop rule with an invariant and a measure. The earlier ports
+  proved each loop by a hand-written induction.
+- `mem_init`'s three loops, each with its own theorem: `npsLoop_run` (the
+  page count), `scanLoop_run` (is page `i` inside a region), `fillLoop_run`
+  (the type of each page).
+- **`mem_init_triple`: the C code refines `mem_init_spec`.** It writes only
+  the allocation table.
+- `MM_correct` (ported from `AuxStateDataType.v`) is what makes the code
+  agree with the specification. The code stops at the first region that
+  contains the page; the specification asks for any usable region that does.
+  They agree because overlapping regions have the same permission.
+- **`container_init_triple`: the C code refines `container_init_spec`.** It
+  calls `mem_init` through `mem_init_triple`, counts the free pages
+  (`cntLoop_run`) and writes container 0.
+- As in mCertiKOS (`valid_preinit_container`), `container_init_triple` assumes
+  every container is unused before initialisation.
+
+What differs from the sources:
+
+- `i < kern_low || i >= kern_high` is written with `+`, and `&&` with `*`
+  (ClightL has no short-circuit operators); `>`, `<=`, `>=` are written with
+  the unsigned `<`.
+- `kern_high < 2^20` is assumed, so `(i + 1) * PgSize` does not wrap. In
+  mCertiKOS it is the constant 983040.
+- The two theorems are about the code inside a critical section. Boot runs
+  before any other CPU, so no lock is taken in the sources.
+
+Still missing for boot: the page-table initialisers (`idpde_init`,
+`pt_init_comm`, `pt_init_kern`, `pmap_init`), and `pt_init`, which turns
+paging on and needs the machine model.
 
 ### `MContainerInv.lean` and the end of `MALOp.lean`: the invariants
 
@@ -278,8 +314,8 @@ Not done in the ports:
   hypotheses.
 - `palloc'_spec` and `pfree'_spec` alone do not preserve `quota_bounded_AT`.
   In mCertiKOS they are not exported above the container layer.
-- Boot: see `MALInit.lean` and `MContainerInit.lean` below. The C code of boot
-  is not ported.
+- Boot: see `MALInit.lean`, `MContainerInit.lean` and their C code in
+  `MALInitC.lean`, `MContainerInitC.lean`.
 - The getters and the setters of `MBoot` (`set_at_u_spec` and the like) have
   no invariant lemmas. The setters do not preserve the invariant one at a
   time.
@@ -316,11 +352,11 @@ unused by the ports.
   is taken. Nothing yet shows that every release re-establishes them.
 - **No machine model.** `set_pt`, `set_pg`, context switch, traps and
   virtualization are about `CR3`, registers, privilege levels and assembly.
-- **Boot** (stage 2): the specifications of `mem_init` and `container_init`
-  are ported and establish the invariants. Their C code, and the page-table
-  initialisers, are not.
+- **Boot** (stage 2): `mem_init` and `container_init` are ported, code and
+  specification. The page-table initialisers are not.
 
 ## Order
 
-See "How the ports are organised" above. Next: the C code of stage 2 (boot
-and init).
+See "How the ports are organised" above. Next: the rest of stage 2, the
+page-table initialisers (`idpde_init`, `pt_init_comm`, `pt_init_kern`,
+`pmap_init`).

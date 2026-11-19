@@ -25,8 +25,7 @@ the fields it sets that this state does not have (`MM`, `MMSize`, `vmxinfo`)
 are left out. `MM_kern_valid` is given as a search (`mmKernValidB`) and shown
 equal to the existential of the sources.
 
-Not here yet: the C code of `mem_init` (three nested loops over the memory
-map) and the boot-loader accessors it calls.
+The C code of `mem_init` and its refinement proof are in `MALInitC.lean`.
 -/
 
 set_option linter.deprecated false
