@@ -51,6 +51,7 @@ import CertiKOS.KernPAlloc
 import CertiKOS.KernFrame
 import CertiKOS.Layer
 import CertiKOS.MALOp
+import CertiKOS.MALInit
 import CertiKOS.MContainer
 import CertiKOS.MContainerInv
 import CertiKOS.MPTIntro
