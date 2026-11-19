@@ -50,6 +50,7 @@ import CertiKOS.RegionNoLost
 import CertiKOS.KernPAlloc
 import CertiKOS.KernFrame
 import CertiKOS.Layer
+import CertiKOS.LogInv
 import CertiKOS.MALOp
 import CertiKOS.MALInit
 import CertiKOS.MALInitC
