@@ -577,4 +577,180 @@ theorem pte_update (hL : Layout maxpage num_id cb num_proc pb ib fb) {d : PTData
 
 end Update
 
+/-! ## The C code of the write accessors (`MContainerCSource.v`) -/
+
+/-- `&flat[offset * 1024 + vadr]` -/
+def pteE (fb : Nat) : Expr :=
+  .bin .add (.bin .add (.const (BitVec.ofNat 32 fb)) (.bin .mul (.var "o") (.const 1024))) (.var "vadr")
+
+/-- `offset = ((unsigned int)PTPool_LOC[n][i] - PT_PERM_PTU) / 4096; fstore(offset * 1024 + vadr, w);` -/
+def pteStoreS (pb fb : Nat) (we : Expr) : Stmt APrim :=
+  .seq (.call "o" .pull [lkE, pdeE pb])
+    (.seq (.assign "o" (.bin .div (.bin .sub (.var "o") (.const 7)) (.const 4096)))
+      (.call "_" .push [lkE, pteE fb, we]))
+
+/-- `set_PTE(n, i, vadr, padr, perm)`: `fstore(offset * 1024 + vadr, padr * 4096 + perm);` -/
+def setPTES (pb fb : Nat) : Stmt APrim :=
+  pteStoreS pb fb (.bin .add (.bin .mul (.var "padr") (.const 4096)) (.var "perm"))
+
+/-- `rmv_PTE(n, i, vadr)`: `fstore(offset * 1024 + vadr, 0);` -/
+def rmvPTES (pb fb : Nat) : Stmt APrim := pteStoreS pb fb (.const 0)
+
+/-- `set_PDEU(n, i, pi)`: `PTPool_LOC[n][i] = pi * 4096 + PT_PERM_PTU;` -/
+def setPDEUS (pb : Nat) : Stmt APrim :=
+  .call "_" .push [lkE, pdeE pb, .bin .add (.bin .mul (.var "pi") (.const 4096)) (.const 7)]
+
+/-- `rmv_PDE(n, i)`: `PTPool_LOC[n][i] = PT_PERM_UP;` -/
+def rmvPDES (pb : Nat) : Stmt APrim := .call "_" .push [lkE, pdeE pb, .const 0]
+
+/-- `set_PDE(n, i)`: `PTPool_LOC[n][i] = (char * )IDPMap_LOC[i] + PT_PERM_PTU;` -/
+def setPDES (pb ida : Nat) : Stmt APrim :=
+  .call "_" .push [lkE, pdeE pb,
+    .bin .add (.bin .add (.const (BitVec.ofNat 32 ida)) (.bin .mul (.var "i") (.const 4096))) (.const 7)]
+
+section Write
+variable {maxpage num_id cb num_proc pb ib fb ida : Nat}
+
+/-- The run of a second-level store. -/
+theorem pteStore_run (εR : REnv) {c : CPU} {i0 : Nat} (hL : Layout maxpage num_id cb num_proc pb ib fb)
+    {l : RLog} {b : Region} (hcs : CS1 c i0 l b) {σ : Locals} (hlk : (σ "lk").toNat = i0) {d : PTData}
+    (hM : MatchPT num_proc pb ib fb ida d b) {n i vadr pi : Nat} {pdt : PTE} (hnp : n < num_proc)
+    (hi1 : i < 1024) (hv1 : vadr < 1024) (hn : σ "n" = BitVec.ofNat 32 n) (hi : σ "i" = BitVec.ofNat 32 i)
+    (hva : σ "vadr" = BitVec.ofNat 32 vadr) (hp : d.ptpool n i = .PDEValid pi pdt) (we : Expr) {w : Val}
+    (hw : ∀ τ : Locals, (∀ z, z ≠ "o" → τ z = σ z) → we.eval τ = w) :
+    ∃ σ' l', Runs (rprimsA εR c) (pteStoreS pb fb we) σ l σ' l' ∧
+      CS1 c i0 l' (setCell b (fb + pi * 1024 + vadr) w) ∧ σ' "lk" = σ "lk" := by
+  have := hL.hib; have := hL.hfb; have := hL.hend; have := hL.hpb
+  have hix := pde_ix (pb := pb) (num_proc := num_proc) (by omega) hnp hi1 hn hi
+  have hrd := cs1_rd (εR := εR) hcs hlk "o" (pdeE pb)
+  rw [hix] at hrd
+  have hm := hM.pool n i hnp hi1
+  rw [hp] at hm
+  obtain ⟨hv, -⟩ := hm
+  have hlt := (b (pb + n * 1024 + i)).isLt
+  have hpi : pi < 2 ^ 20 := by omega
+  let σ1 := σ.set "o" (b (pb + n * 1024 + i))
+  let σ2 := σ1.set "o" (BitVec.ofNat 32 pi)
+  have ha : Runs (rprimsA εR c) (.assign "o" (.bin .div (.bin .sub (.var "o") (.const 7)) (.const 4096)))
+      σ1 l σ2 l := by
+    have h := Runs.assign (P := rprimsA εR c) (σ := σ1) (l := l) "o"
+      (.bin .div (.bin .sub (.var "o") (.const 7)) (.const 4096))
+    have e : (Expr.bin .div (.bin .sub (.var "o") (.const 7)) (.const 4096)).eval σ1 =
+        BitVec.ofNat 32 pi := by
+      show (σ1 "o" - 7) / 4096 = _
+      have : σ1 "o" = b (pb + n * 1024 + i) := by simp [σ1]
+      rw [this]
+      refine val_of_toNat ?_ (by omega)
+      rw [BitVec.toNat_udiv, BitVec.toNat_sub, hv]
+      show (2 ^ 32 - 7 + (pi * 4096 + 7)) % 2 ^ 32 / 4096 = pi
+      omega
+    rw [e] at h; exact h
+  obtain ⟨l', hwr, hc'⟩ := cs1_wr (εR := εR) hcs (σ := σ2) (by simpa [σ2, σ1, Locals.set] using hlk)
+    (pteE fb) we
+  have hix2 : ((pteE fb).eval σ2).toNat = fb + pi * 1024 + vadr := by
+    show (BitVec.ofNat 32 fb + σ2 "o" * 1024 + σ2 "vadr").toNat = _
+    have h1 : σ2 "o" = BitVec.ofNat 32 pi := by simp [σ2]
+    have h2 : σ2 "vadr" = BitVec.ofNat 32 vadr := by simp [σ2, σ1, Locals.set, hva]
+    rw [h1, h2]
+    simp [BitVec.toNat_add, BitVec.toNat_mul]; omega
+  have hwv : we.eval σ2 = w := hw σ2 (fun z hz => by simp [σ2, σ1, Locals.set, hz])
+  rw [hix2, hwv] at hc'
+  exact ⟨_, l', Runs.seq hrd (Runs.seq ha hwr), hc', by simp [σ2, σ1, Locals.set]⟩
+
+theorem perm_le (p : PTPerm) : PermtoZ p ≤ 259 := by
+  cases p with
+  | PTP => decide
+  | PTU => decide
+  | PTK b => cases b <;> decide
+
+/-- **`set_PTE` refines `setPTE_spec`.** -/
+theorem setPTE_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_id cb num_proc pb ib fb)
+    (n i vadr padr perm : Nat) :
+    Triple εR c i0 (MatchAll maxpage num_id cb num_proc pb ib fb ida) (fun k => pb ≤ k)
+      (fun σ d => σ "n" = BitVec.ofNat 32 n ∧ σ "i" = BitVec.ofNat 32 i ∧
+        σ "vadr" = BitVec.ofNat 32 vadr ∧ σ "padr" = BitVec.ofNat 32 padr ∧
+        σ "perm" = BitVec.ofNat 32 perm ∧ d.nps ≤ 2 ^ 20 ∧
+        ∃ d1, setPTE_spec num_proc n i vadr padr perm d = some d1)
+      (setPTES pb fb)
+      (fun _ d _ d' => setPTE_spec num_proc n i vadr padr perm d = some d') := by
+  intro σ l b d hlk hcs hM ⟨hn, hi, hva, hpa, hpe, hnps, d1, hs⟩
+  have := hL.hib; have := hL.hfb; have := hL.hend; have := hL.hpb
+  have hs0 := hs
+  unfold setPTE_spec at hs
+  have hc : d.init = true ∧ d.ipt = true ∧ PTE_Arg num_proc n i vadr := by
+    by_cases h : d.init = true ∧ d.ipt = true ∧ PTE_Arg num_proc n i vadr
+    · exact h
+    · rw [if_neg h] at hs; cases hs
+  rw [if_pos hc] at hs
+  obtain ⟨-, -, ⟨hnp, hi1⟩, hv1⟩ := hc
+  cases hz : ZtoPerm perm with
+  | none => rw [hz] at hs; cases hs
+  | some p =>
+    rw [hz] at hs; simp only at hs
+    by_cases hPT : n = d.PT
+    · rw [if_pos hPT] at hs; cases hs
+    · rw [if_neg hPT] at hs
+      by_cases hpr : 0 < padr ∧ padr < d.nps
+      · rw [if_pos hpr] at hs
+        cases hp : d.ptpool n i with
+        | PDEID => rw [hp] at hs; cases hs
+        | PDEUnPresent => rw [hp] at hs; cases hs
+        | PDEUndef => rw [hp] at hs; cases hs
+        | PDEValid pi pdt =>
+          rw [hp] at hs; simp only [Option.some.injEq] at hs
+          obtain ⟨σ', l', hr, hc', hlk'⟩ := pteStore_run εR hL hcs hlk hM.pt hnp hi1 hv1 hn hi hva hp
+            (.bin .add (.bin .mul (.var "padr") (.const 4096)) (.var "perm"))
+            (w := BitVec.ofNat 32 padr * 4096 + BitVec.ofNat 32 perm) (fun τ hτ => by
+              show τ "padr" * 4096 + τ "perm" = _
+              rw [hτ _ (by decide), hτ _ (by decide), hpa, hpe])
+          have hrel : RelPTE (.PTEValid padr p) (BitVec.ofNat 32 padr * 4096 + BitVec.ofNat 32 perm) := by
+            show (BitVec.ofNat 32 padr * 4096 + BitVec.ofNat 32 perm).toNat = padr * 4096 + PermtoZ p
+            have e := PermZ_eq hz
+            have := perm_le p
+            rw [← e]
+            simp [BitVec.toNat_add, BitVec.toNat_mul]; omega
+          have hpt := pte_update hL hM.pt hnp hi1 hp hv1 (.PTEValid padr p) _ hrel
+          rw [hs] at hpt
+          exact ⟨σ', l', _, d1, hr, hc', ⟨mm_frame (d' := d1.toRData) hL hM.mm (by rw [← hs]) (by rw [← hs])
+            (by rw [← hs]) (fun k hk => sc_ne _ _ (by omega)), hpt⟩, hlk',
+            fun k hk => sc_ne _ _ (by omega), hs0⟩
+      · rw [if_neg hpr] at hs; cases hs
+
+/-- **`rmv_PTE` refines `rmvPTE_spec`.** -/
+theorem rmvPTE_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage num_id cb num_proc pb ib fb)
+    (n i vadr : Nat) :
+    Triple εR c i0 (MatchAll maxpage num_id cb num_proc pb ib fb ida) (fun k => pb ≤ k)
+      (fun σ d => σ "n" = BitVec.ofNat 32 n ∧ σ "i" = BitVec.ofNat 32 i ∧
+        σ "vadr" = BitVec.ofNat 32 vadr ∧ ∃ d1, rmvPTE_spec num_proc n i vadr d = some d1)
+      (rmvPTES pb fb)
+      (fun _ d _ d' => rmvPTE_spec num_proc n i vadr d = some d') := by
+  intro σ l b d hlk hcs hM ⟨hn, hi, hva, d1, hs⟩
+  have := hL.hib; have := hL.hfb; have := hL.hend; have := hL.hpb
+  have hs0 := hs
+  unfold rmvPTE_spec at hs
+  have hc : d.init = true ∧ d.ipt = true ∧ PTE_Arg num_proc n i vadr := by
+    by_cases h : d.init = true ∧ d.ipt = true ∧ PTE_Arg num_proc n i vadr
+    · exact h
+    · rw [if_neg h] at hs; cases hs
+  rw [if_pos hc] at hs
+  obtain ⟨-, -, ⟨hnp, hi1⟩, hv1⟩ := hc
+  by_cases hPT : n = d.PT
+  · rw [if_pos hPT] at hs; cases hs
+  · rw [if_neg hPT] at hs
+    cases hp : d.ptpool n i with
+    | PDEID => rw [hp] at hs; cases hs
+    | PDEUnPresent => rw [hp] at hs; cases hs
+    | PDEUndef => rw [hp] at hs; cases hs
+    | PDEValid pi pdt =>
+      rw [hp] at hs; simp only [Option.some.injEq] at hs
+      obtain ⟨σ', l', hr, hc', hlk'⟩ := pteStore_run εR hL hcs hlk hM.pt hnp hi1 hv1 hn hi hva hp
+        (.const 0) (w := 0) (fun _ _ => rfl)
+      have hpt := pte_update hL hM.pt hnp hi1 hp hv1 .PTEUnPresent 0 rfl
+      rw [hs] at hpt
+      exact ⟨σ', l', _, d1, hr, hc', ⟨mm_frame (d' := d1.toRData) hL hM.mm (by rw [← hs]) (by rw [← hs])
+        (by rw [← hs]) (fun k hk => sc_ne _ _ (by omega)), hpt⟩, hlk',
+        fun k hk => sc_ne _ _ (by omega), hs0⟩
+
+end Write
+
 end MPTIntro
