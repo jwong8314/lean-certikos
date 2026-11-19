@@ -68,7 +68,7 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | `MPTOp` | `pt_alloc_pde`, `pt_free_pde`, `pt_init_comm` | **ported**: `MPTCommon.lean`. `pt_alloc_pde` refines `ptAllocPDE_spec` (through the specs of `container_alloc`, `pt_insert_pde`, and 1024 calls of `rmv_PTE`); `pt_free_pde` refines `ptFreePDE_spec` (through `pt_read_pde`, `pt_rmv_pde`, `pfree`). `pt_init_comm` is in `MPTInit.lean` (`pt_init_comm_triple`) |
 | `MPTCommon` | `pt_insert`, `pt_rmv` with reference counts, `pt_init_kern` | **ported**: `MPTKern.lean`. `pt_insert` refines `ptInsert_spec` (`ptInsert_triple`) and `pt_rmv` refines `ptRmv_spec` (`ptRmv_triple`), both keeping the page's count in the allocation table. `pt_init_kern` is in `MPTInit.lean` (`pt_init_kern_triple`) |
 | `MPTKern`, `MPTInit` | kernel page table, `pt_init`, paging on (`set_pg`, `set_cr3`) | missing: these are boot, and loading `CR3` needs the machine model |
-| `MPTNew` | `pt_new`, `pt_resv`, `pt_resv2`, `pmap_init` | **ported**: `MPTNew.lean`. `pt_new` refines `pt_new_spec`; `pt_resv` refines `ptResv_spec` (stated over `container_alloc_spec` and `ptInsert_spec`); `ptResv_locked` is `pt_resv` under the lock. `pt_resv2` is in `MPTResv2.lean` (`ptResv2_triple`). Missing: `pmap_init` (machine model) |
+| `MPTNew` | `pt_new`, `pt_resv`, `pt_resv2`, `pmap_init` | **ported**: `MPTNew.lean`. `pt_new` refines `pt_new_spec`; `pt_resv` refines `ptResv_spec` (stated over `container_alloc_spec` and `ptInsert_spec`); `pt_resv` under the lock is `MMInv.ptResv_locked_inv`. `pt_resv2` is in `MPTResv2.lean` (`ptResv2_triple`). Missing: `pmap_init` (machine model) |
 | `MShareIntro` | the shared-memory table and its seven accessors | **ported**: `MShareIntro.lean`. Each accessor refines its spec (`getState_triple`, `getSeen_triple`, `getLoc_triple`, `setState_triple`, `setSeen_triple`, `setLoc_triple`, `clear_triple`) |
 | `MShareOp` | `shared_mem_to_pending`, `shared_mem_to_dead`, `shared_mem_to_ready`, `get_shared_mem_status_seen`, `shared_mem_init` | **ported**: `MShareOp.lean` (`toPending_triple`, `toDead_triple`, `toReady_triple`, `statusSeen_triple`). `shared_mem_init`: its loop is verified (`smInit_triple` in `MShare.lean`); its call to `pmap_init` waits for the machine model |
 | `MShare` | `shared_mem_status`, `offer_shared_mem` | **ported**: `MShare.lean` (`status_triple`, `offer_triple`) |
@@ -97,7 +97,8 @@ Even for the ported layers:
 - The objects live in lock regions, not in CompCert memory.
 - `high_level_invariant`: the parts about the allocation table and the
   containers are proved preserved by the specifications
-  (`MContainerInv.lean`). They are not yet carried along the shared log.
+  (`MContainerInv.lean`). The allocation-table invariant and the quota bound
+  are carried along the shared log (`LogInv.lean`, `MMInv.lean`).
 - Boot: `mem_init`, `container_init`, `idpde_init`, `pt_init_comm` and
   `pt_init_kern` are ported with their C code. `pt_init` and `pmap_init` are
   not: they need the machine model.
@@ -107,7 +108,7 @@ Even for the ported layers:
 - **Agreed order** (2026-11-19): 0 calling convention for layers, 1 page
   tables, 2 boot and init, 3 shared memory, 4 invariants along the shared
   log, 5 thread data, 6 machine model and scheduler, 7 IPC, 8 processes and
-  traps, 9 security and virtualization. Stages 0 to 3 are done, except for what needs `CR3` (`pt_init`, `pmap_init`, and so the first line of `shared_mem_init`).
+  traps, 9 security and virtualization. Stages 0 to 4 are done, except for what needs `CR3` (`pt_init`, `pmap_init`, and so the first line of `shared_mem_init`) and the linking step for the rely of stage 4.
 - **`Layer.lean`: a primitive's interface is a triple.**
   `Triple εR c i M F P s Q` says: in a critical section, on a region matching
   abstract data `d` with precondition `P`, the code `s` runs to completion,
@@ -127,7 +128,9 @@ Even for the ported layers:
   memory, are all in one region (`MatchMM`, `MatchPT`). A primitive is one
   critical section and the sequential specifications apply as they are.
   mC2 uses finer locks. Its sources are not public, so that is not ported.
-  It is the subject of stage 4.
+- **`Triple.locked_inv`** (`LogInv.lean`) is `Triple.locked` with the
+  invariant on the log: the caller assumes the log has it, not that the
+  region matches anything.
 
 ## What the ported files prove
 
@@ -379,6 +382,53 @@ What differs from the sources:
 - `sharedmem_init_spec` sets the allocation table (`real_AT`) where the
   sources set owner lists (`real_LAT`).
 
+### `LogInv.lean` and `MMInv.lean`: the invariants along the log
+
+Before this, every theorem about `acquire; s; release` assumed that the
+region found under the lock matched abstract data with the operation's
+precondition. Now that is a property of the log.
+
+- `LInv i J l`: the log is valid and the region last released on lock `i`
+  satisfies `J`. For a kernel lock `J b` is `∃ d, M d b ∧ I d`.
+- `RelyJ εR c i J`: the rely. Whatever the environment appends, the last
+  released region still satisfies `J`.
+- `rstep_hmem`: an event changes the last released region only if it is a
+  release by a holder that has written. So taking the lock, waiting, and
+  other locks' events do not disturb the invariant.
+- `acquire_runs_inv`: under the rely, acquiring finds a region with `J`.
+- **`Triple.locked_inv`**: if the log has `∃ d, M d b ∧ I d` on entry, the
+  region found matches such a `d`; for any such `d` with `P` the call
+  finishes, and the log on exit has `∃ d', M d' b ∧ I' d'`. `I'` is what the
+  operation establishes from `I`, so boot can go from one invariant to
+  another.
+- `MMI`: the allocation-table invariant and every container within its quota.
+- **`boot_locked_inv`**: from a log whose region is as the boot loader left
+  it (`PreInit`), `pt_init_kern` under the lock ends on a log with `MMI`,
+  initialised.
+- **`ptResv_locked_inv`, `offer_locked_inv`**: `pt_resv` and
+  `offer_shared_mem` under the lock keep `MMI` on the log. The caller needs
+  only that the specification is defined on the state found.
+
+So the exit of one theorem is the entry of the next: nothing about the region
+is assumed between calls.
+
+What this does not give:
+
+- **The rely is assumed.** See "What a port still leaves out".
+- **Boot does not yet connect to the operations.** After `boot_locked_inv`
+  paging is off, and `ptResv_spec` and `offer_shared_mem_spec` are defined
+  only with paging on. Turning it on is `pt_init`, which needs the machine
+  model.
+- `PreInit` (every container unused, no directory entry holding a table, no
+  page permission) is assumed of the region the boot loader leaves. In
+  mCertiKOS these are invariants of the initial state.
+- **A calling-convention bug found and fixed.** The earlier `ptResv_locked`
+  put the process argument in the local `n` before `acquire`, and `acquire`
+  uses `n` for the lock's counter. Its hypotheses were about `n` after
+  `acquire`, so no caller could meet them. `ptResv_locked_inv` takes the
+  argument in `pn` and copies it once the lock is held. `ptResv_locked` is
+  removed.
+
 ### `MContainerInv.lean` and the end of `MALOp.lean`: the invariants
 
 mCertiKOS shows that every primitive of a layer preserves
@@ -401,9 +451,10 @@ proved, on the specifications.
 
 Not done in the ports:
 
-- The invariants are preserved by the specifications. They are not yet
-  carried along the shared log. The `*_refines` theorems still take them as
-  hypotheses.
+- The `*_refines` theorems of the allocation table and the containers still
+  take the invariants as hypotheses on the region found. `pt_resv`,
+  `offer_shared_mem` and boot have the version with the invariant on the log
+  (`MMInv.lean`).
 - `palloc'_spec` and `pfree'_spec` alone do not preserve `quota_bounded_AT`.
   In mCertiKOS they are not exported above the container layer.
 - Boot: see `MALInit.lean`, `MContainerInit.lean` and their C code in
@@ -443,9 +494,13 @@ unused by the ports.
   `PTInitGen.lean` assumes the upper invariant (`HInvI`). That the owner-list
   specifications preserve it is not proved, except for `alloc_spec`
   (`alloc_inv_I`).
-- **Invariants along the shared log** (stage 4). The invariants are proved
-  preserved by the specifications. `Triple.locked` assumes them when the lock
-  is taken. Nothing yet shows that every release re-establishes them.
+- **Invariants along the shared log** (stage 4): done for one CPU against a
+  rely (`RelyJ`). The rely is what the other CPUs' own theorems guarantee,
+  but that step (linking, as `Link.lean` does for the single ticket lock) is
+  not redone for regions. `RelyJ` is shown to hold only with no environment
+  and for an environment that does not release the lock. Only the
+  allocation-table invariant and the quota bound are carried, not
+  `Container_valid` or `quota_bounded_AT`.
 - **No machine model.** `set_pt`, `set_pg`, context switch, traps and
   virtualization are about `CR3`, registers, privilege levels and assembly.
   Until then nothing establishes `pg = true`, which the shared-memory
@@ -456,6 +511,6 @@ unused by the ports.
 
 ## Order
 
-See "How the ports are organised" above. Stages 2 and 3 are done except for
-`pt_init` and `pmap_init` (machine model). Next: stage 4, the invariants
-along the shared log.
+See "How the ports are organised" above. Stages 2 to 4 are done except for
+`pt_init` and `pmap_init` (machine model) and the linking step for the rely.
+Next: stage 5, thread data (thread control blocks and queues).

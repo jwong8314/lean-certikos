@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-74 Lean files, about 32,700 lines. No `sorry`. The main theorems depend only on
+76 Lean files, about 33,200 lines. No `sorry`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-18)
@@ -84,6 +84,10 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
     write footprint. Each layer is verified against the triples of the layer
     below, never its code. `Triple.lift` is the frame rule and
     `Triple.locked` connects a triple to `acquire; s; release`.
+  - **Invariants along the log** (`LogInv.lean`, `MMInv.lean`): the
+    invariant is a property of the shared log. Boot establishes it and
+    `pt_resv` and `offer_shared_mem` keep it, against a rely on the other
+    CPUs that is assumed, not yet derived.
   - **Allocation table** (`MALOp.lean`): `palloc`, `pfree`, and the table
     accessors.
   - **Containers** (`MContainer.lean`, `MContainerInv.lean`):
