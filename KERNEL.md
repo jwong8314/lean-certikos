@@ -60,9 +60,9 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | **Memory management** (`mm`) | | |
 | `PreInit` | boot loader, memory map (`get_size`, `get_mms`, `get_mml`, `is_usable`) | missing |
 | `MBoot` | allocation-table accessors over memory | **ported** in `MALOp.lean`: `is_norm`, `at_get`, `at_set`, `at_set_c`, `get_nps`. Missing: `set_norm`, `set_nps`, `at_get_c` |
-| `MALInit` | `mem_init` | missing |
+| `MALInit` | `mem_init` | **specification ported**: `MALInit.lean` (`mem_init_spec`, `real_nps`, `real_AT`). `mem_init_inv`: it establishes the allocation-table invariant. C code (three loops over the memory map) not yet |
 | `MALOp` | `palloc`, `pfree` | **ported**: `MALOp.lean` (`palloc_refines`, `pfree_refines`) |
-| `MALT` | container code: `container_init`, getters, `container_can_consume`, `container_split`, `container_alloc` | **ported** in `MContainer.lean`: the four getters (`getter_guarantee` with `get_*_ref`), `container_split` (`container_split_refines`), `container_alloc` (`container_alloc_refines`). Missing: `container_init`, `container_can_consume` |
+| `MALT` | container code: `container_init`, getters, `container_can_consume`, `container_split`, `container_alloc` | **ported** in `MContainer.lean`: the four getters (`getter_guarantee` with `get_*_ref`), `container_split` (`container_split_refines`), `container_alloc` (`container_alloc_refines`). `container_init_spec` ported in `MContainerInit.lean`, with `container_init_inv`: it establishes all three invariants. Missing: the C code of `container_init`, and `container_can_consume` |
 | `MContainer` | page-table pool accessors (`set_pt`, `get_PDE`, `set_PDE`, `rmv_PDE`, `set_PDEU`, `get_PTE`, `set_PTE`, `rmv_PTE`, `set_IDPTE`) | **ported**: `MPTIntro.lean`. All eight memory accessors refine their specs (`getPDE_triple`, `setPDE_triple`, `rmvPDE_triple`, `setPDEU_triple`, `getPTE_triple`, `setPTE_triple`, `rmvPTE_triple`, `setIDPTE_triple`). Missing: `set_pt` (loads `CR3`; needs the machine model) |
 | `MPTIntro` | `pt_read`, `pt_read_pde`, `pt_rmv_aux`, `pt_rmv_pde`, `pt_insert_aux`, `pt_insert_pde`, `idpde_init` | **ported**: `MPTOp.lean`. The six operations refine `ptRead_spec` … `ptInsertPDE_spec`, each verified against the accessor's triple. Missing: `idpde_init` (boot) |
 | `MPTOp` | `pt_alloc_pde`, `pt_free_pde`, `pt_init_comm` | **ported**: `MPTCommon.lean`. `pt_alloc_pde` refines `ptAllocPDE_spec` (through the specs of `container_alloc`, `pt_insert_pde`, and 1024 calls of `rmv_PTE`); `pt_free_pde` refines `ptFreePDE_spec` (through `pt_read_pde`, `pt_rmv_pde`, `pfree`). Missing: `pt_init_comm` (boot) |
@@ -96,8 +96,8 @@ Even for the ported layers:
 - `high_level_invariant`: the parts about the allocation table and the
   containers are proved preserved by the specifications
   (`MContainerInv.lean`). They are not yet carried along the shared log.
-- Boot (`mem_init`, `container_init`) is not ported, so nothing establishes
-  the invariant initially.
+- The C code of boot (`mem_init`, `container_init`) is not ported. Their
+  specifications are, and establish the invariants.
 
 ## How the ports are organised
 
@@ -231,6 +231,26 @@ has no C code: it is a simulation between two abstract states.
   mCertiKOS's top specification of it, through three steps: code to
   count-based spec, and count-based spec to owner-list spec.
 
+### `MALInit.lean` and `MContainerInit.lean`: boot, at the level of specifications
+
+- `mem_init_spec`: the page count is the end of the highest region of the
+  boot memory map (`real_nps`), and each page's entry is computed from the
+  map (`real_AT`): kernel outside `[kern_low, kern_high)`, normal inside if a
+  usable region covers the page, reserved otherwise.
+- `real_nps_range`, `real_at_kern_valid`, `real_at_usr_valid`: mCertiKOS's
+  lemmas, under its assumptions on the memory map (`MM_valid`, `MM_kern`).
+- `mem_init_inv`: `mem_init_spec` establishes `ATInv`.
+- `container_init_spec`: after `mem_init`, the root container gets every free
+  page as its quota (`real_AC`, `real_quota`).
+- `container_init_inv`: `container_init_spec` establishes `ATInv`,
+  `Container_valid` and `quota_bounded_AT`.
+
+So the invariants that the refinement theorems assume now have a beginning
+(`container_init_inv`) and are kept by every specification
+(`MContainerInv.lean`, `palloc_inv`, `pfree_inv`). What is missing for boot is
+the C code: `mem_init`'s loops, `container_init`'s loop, the page-table
+initialisers, and the boot-loader accessors they read the memory map with.
+
 ### `MContainerInv.lean` and the end of `MALOp.lean`: the invariants
 
 mCertiKOS shows that every primitive of a layer preserves
@@ -258,7 +278,8 @@ Not done in the ports:
   hypotheses.
 - `palloc'_spec` and `pfree'_spec` alone do not preserve `quota_bounded_AT`.
   In mCertiKOS they are not exported above the container layer.
-- Boot is not ported, so nothing establishes the invariants initially.
+- Boot: see `MALInit.lean` and `MContainerInit.lean` below. The C code of boot
+  is not ported.
 - The getters and the setters of `MBoot` (`set_at_u_spec` and the like) have
   no invariant lemmas. The setters do not preserve the invariant one at a
   time.
@@ -295,9 +316,11 @@ unused by the ports.
   is taken. Nothing yet shows that every release re-establishes them.
 - **No machine model.** `set_pt`, `set_pg`, context switch, traps and
   virtualization are about `CR3`, registers, privilege levels and assembly.
-- **Boot** (stage 2) is not ported, so nothing establishes the invariants
-  initially.
+- **Boot** (stage 2): the specifications of `mem_init` and `container_init`
+  are ported and establish the invariants. Their C code, and the page-table
+  initialisers, are not.
 
 ## Order
 
-See "How the ports are organised" above. Next: stage 2 (boot and init).
+See "How the ports are organised" above. Next: the C code of stage 2 (boot
+and init).
