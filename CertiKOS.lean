@@ -95,5 +95,6 @@ import CertiKOS.UMachine
 import CertiKOS.PProc
 import CertiKOS.TTrapArg
 import CertiKOS.TTrap
+import CertiKOS.TDispatch
 import CertiKOS.PTInitGen
 import CertiKOS.MPTInit
