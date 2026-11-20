@@ -112,5 +112,6 @@ import CertiKOS.TTop
 import CertiKOS.THyp
 import CertiKOS.THyp2
 import CertiKOS.TDispatchH
+import CertiKOS.TSecH
 import CertiKOS.PTInitGen
 import CertiKOS.MPTInit
