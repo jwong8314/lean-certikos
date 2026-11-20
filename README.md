@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-105 Lean files, about 44,600 lines. No `sorry`. The main theorems depend only on
+108 Lean files, about 45,500 lines. No `sorry`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-19)
@@ -147,6 +147,13 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
     mCertiKOS's specifications. Its three top-level primitives are proved as
     whole passages through the kernel: a system call, a page fault, and a
     yield that ends in user mode in another process.
+  - **Security, first half** (`ObsEq.lean`, `Integrity.lean`,
+    `Confidentiality.lean`): mCertiKOS's observation function (what one
+    process can see of the kernel's state). Integrity: a process that is not
+    running observes nothing of another's system call, page fault or yield.
+    Confidentiality: after its own system call or yield, what a process
+    observes, and the registers it gets back, depend only on what it observed
+    before.
   - **Steps and data abstraction** (`LayerStep.lean`): running a function's
     code call by call on the abstract state, and carrying a layer's triples
     to a layer whose state is a view of it.
@@ -180,8 +187,11 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
   machine model has `CR3`, the paging bit, kernel contexts and user mode, one
   copy rather than one per CPU. Still open there: two of the four system
   calls (`SYS_share`, `SYS_print`), taking the lock at the kernel boundary,
-  and carrying the invariants from one trap to the next. Security
-  (noninterference) and virtualization are not started. The kernel
+  and carrying the invariants from one trap to the next. Security is
+  half done: integrity and confidentiality hold for single passages through
+  the kernel (not yet confidentiality of the page fault), and they are not
+  yet combined into noninterference for whole executions. Virtualization is
+  not started. The kernel
   guarantees are per CPU, and `PTInv` is not yet shown to hold across other
   CPUs' operations on the allocation table.
   See [KERNEL.md](KERNEL.md).
