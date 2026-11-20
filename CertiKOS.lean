@@ -104,5 +104,6 @@ import CertiKOS.ConfidentialityPF
 import CertiKOS.Security
 import CertiKOS.SecurityBigstep
 import CertiKOS.VEPT
+import CertiKOS.VVMCS
 import CertiKOS.PTInitGen
 import CertiKOS.MPTInit
