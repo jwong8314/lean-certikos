@@ -240,14 +240,16 @@ structure PFrame (n : Nat) (d d' : PTData) : Prop where
   other : ∀ j, j ≠ n → d'.ptpool j = d.ptpool j ∧ d'.AC j = d.AC j
   used : ∀ v, NotFree d.AT v →
     d'.pperm v = d.pperm v ∧ (∀ a, a / 1024 = v → d'.HP a = d.HP a) ∧ NotFree d'.AT v
+  flags : d'.pg = d.pg ∧ d'.ipt = d.ipt ∧ d'.init = d.init
 
 theorem PFrame.refl (n : Nat) (d : PTData) : PFrame n d d :=
-  ⟨fun _ _ => ⟨rfl, rfl⟩, fun _ hv => ⟨rfl, fun _ _ => rfl, hv⟩⟩
+  ⟨fun _ _ => ⟨rfl, rfl⟩, fun _ hv => ⟨rfl, fun _ _ => rfl, hv⟩, rfl, rfl, rfl⟩
 
 theorem PFrame.trans {n : Nat} {d1 d2 d3 : PTData} (h1 : PFrame n d1 d2) (h2 : PFrame n d2 d3) :
     PFrame n d1 d3 := by
   refine ⟨fun j hj => ⟨((h2.other j hj).1).trans (h1.other j hj).1, ((h2.other j hj).2).trans (h1.other j hj).2⟩,
-    fun v hv => ?_⟩
+    fun v hv => ?_, h2.flags.1.trans h1.flags.1, h2.flags.2.1.trans h1.flags.2.1,
+    h2.flags.2.2.trans h1.flags.2.2⟩
   obtain ⟨a1, a2, a3⟩ := h1.used v hv
   obtain ⟨b1, b2, b3⟩ := h2.used v a3
   exact ⟨b1.trans a1, fun a ha => (b2 a ha).trans (a2 a ha), b3⟩
@@ -265,7 +267,7 @@ theorem alloc_frame {n : Nat} {d : PTData} {r1 : RData} {b : Nat}
         simp only [Option.some.injEq, Prod.mk.injEq] at h
         obtain ⟨rfl, -⟩ := h
         obtain ⟨-, -, ⟨c0, hc0⟩, -⟩ := first_free_some hff
-        refine ⟨fun j hj => ⟨rfl, setAt_ne _ _ hj⟩, fun v hv => ?_⟩
+        refine ⟨fun j hj => ⟨rfl, setAt_ne _ _ hj⟩, fun v hv => ?_, rfl, rfl, rfl⟩
         have hne : v ≠ pi := fun e => hv c0 (e ▸ hc0)
         exact ⟨setAt_ne _ _ hne, fun _ _ => rfl, notFree_set hv⟩
     · simp only [Option.some.injEq, Prod.mk.injEq] at h
@@ -280,7 +282,8 @@ theorem insertPTE_frame {n vadr padr : Nat} {p : PTPerm} {d d' : PTData}
   all_goals first
     | (simp only [Option.some.injEq] at h
        subst h
-       exact ⟨fun j hj => ⟨setAt_ne _ _ hj, rfl⟩, fun v hv => ⟨rfl, fun _ _ => rfl, notFree_set hv⟩⟩)
+       exact ⟨fun j hj => ⟨setAt_ne _ _ hj, rfl⟩, fun v hv => ⟨rfl, fun _ _ => rfl, notFree_set hv⟩,
+         rfl, rfl, rfl⟩)
     | cases h
 
 theorem allocPDE_frame {np n vadr : Nat} {d d' : PTData} {v : Nat}
@@ -302,7 +305,7 @@ theorem allocPDE_frame {np n vadr : Nat} {d d' : PTData} {v : Nat}
             simp only [Option.some.injEq, Prod.mk.injEq] at h
             obtain ⟨rfl, -⟩ := h
             obtain ⟨-, -, ⟨c0, hc0⟩, -⟩ := first_free_some hff
-            refine ⟨fun j hj => ⟨setAt_ne _ _ hj, setAt_ne _ _ hj⟩, fun w hw => ?_⟩
+            refine ⟨fun j hj => ⟨setAt_ne _ _ hj, setAt_ne _ _ hj⟩, fun w hw => ?_, rfl, rfl, rfl⟩
             have hne : w ≠ pi := fun e => hw c0 (e ▸ hc0)
             refine ⟨setAt_ne _ _ hne, fun a ha => ?_, notFree_set hw⟩
             show free_page pi d.HP a = d.HP a

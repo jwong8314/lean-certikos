@@ -33,9 +33,8 @@ two runs, follows by applying the function to equal observations.
   tell apart while parked: once resumed it still cannot, and it resumes the
   same kernel computation.
 
-Not here: the page-fault handler (`conf_ptfault_resv`), which needs that a
-fresh page reads the same in both states (mCertiKOS's `dirty_ppage`), and
-user-mode instructions, which are not modelled.
+The page-fault handler is in `ConfidentialityPF.lean`. Not ported: user-mode
+instructions, which are not modelled.
 -/
 
 set_option linter.deprecated false
