@@ -386,11 +386,12 @@ end Keeps
 /-! ## The region, seen as lists -/
 
 /-- The list view `a` of the pointer state `q`: the rest of the state is
-the same, the threads and queues are related, and `q` satisfies the
-invariants of its own layer. -/
+the same, the threads and queues are related, and once paging is on `q`
+satisfies the invariants of its own layer (they are conditional on `pg` in
+mCertiKOS too, so the relation can hold before initialisation). -/
 def RelA (np nc : Nat) (a : AData) (q : QData) : Prop :=
-  a.toSData = q.toSData ∧ AbQ_RealQ np nc a.abtcb a.abq q.tcb q.tdq ∧ TCBCorrect_range np q.tcb ∧
-    TDQCorrect_range np nc q.tdq
+  a.toSData = q.toSData ∧ AbQ_RealQ np nc a.abtcb a.abq q.tcb q.tdq ∧
+    (q.pg = true → TCBCorrect_range np q.tcb ∧ TDQCorrect_range np nc q.tdq)
 
 /-- The region matches the list view. -/
 def MatchA (maxpage num_id cb num_proc pb ib fb ida sb tb num_chan qb : Nat) (a : AData) (b : Region) : Prop :=
@@ -421,7 +422,39 @@ pointer view of `real_abtcb`, `real_abq`. -/
 theorem real_relA {np nc : Nat} {a : AData} {q : QData} (hS : a.toSData = q.toSData) :
     RelA np nc { a with abtcb := real_abtcb np a.abtcb, abq := real_abq nc a.abq }
       { q with tcb := real_tcb np q.tcb, tdq := real_tdq np nc q.tdq } :=
-  ⟨hS, real_data _ _ _ _, real_tcb_correct _, real_tdq_correct _⟩
+  ⟨hS, real_data _ _ _ _, fun _ => ⟨real_tcb_correct _, real_tdq_correct _⟩⟩
+
+section Pg
+variable {np nc : Nat}
+
+theorem set_state0_pg {nid n s : Nat} {a a' : AData} (hs : set_state0_spec nid n s a = some a') :
+    a.pg = true := by
+  unfold set_state0_spec at hs
+  by_cases hc : a.pg = true ∧ a.ipt = true ∧ n < nid
+  · exact hc.1
+  · rw [if_neg hc] at hs; cases hs
+
+theorem enqueue0_pg {n i : Nat} {a a' : AData} (hs : enqueue0_spec np nc n i a = some a') : a.pg = true := by
+  unfold enqueue0_spec at hs
+  by_cases hc : a.pg = true ∧ a.ipt = true ∧ n ≤ nc ∧ i < np
+  · exact hc.1
+  · rw [if_neg hc] at hs; cases hs
+
+theorem dequeue0_pg {n r : Nat} {a a' : AData} (hs : dequeue0_spec np nc n a = some (a', r)) :
+    a.pg = true := by
+  unfold dequeue0_spec at hs
+  by_cases hc : a.pg = true ∧ a.ipt = true ∧ n ≤ nc
+  · exact hc.1
+  · rw [if_neg hc] at hs; cases hs
+
+theorem queue_rmv0_pg {n i : Nat} {a a' : AData} (hs : queue_rmv0_spec np nc n i a = some a') :
+    a.pg = true := by
+  unfold queue_rmv0_spec at hs
+  by_cases hc : a.pg = true ∧ a.ipt = true ∧ n ≤ nc ∧ i < np
+  · exact hc.1
+  · rw [if_neg hc] at hs; cases hs
+
+end Pg
 
 section Triples
 variable {maxpage num_id cb num_proc pb ib fb ida sb tb num_chan qb : Nat}
@@ -503,13 +536,14 @@ theorem setState0_triple (hL : QLayout maxpage num_id cb num_proc pb ib fb sb tb
         ∃ a1, set_state0_spec nid n sv a = some a1)
       (setTStateS tb ie ve)
       (fun σ a σ' a' => set_state0_spec nid n sv a = some a' ∧ σ' = σ.set "_" 0) :=
-  (setStateQ_triple εR c i0 hL ie ve n sv).sim (fun σ a q ⟨hS, hR, hT, hQ⟩ ⟨he, hve, a1, hs⟩ => by
+  (setStateQ_triple εR c i0 hL ie ve n sv).sim (fun σ a q ⟨hS, hR, hInv⟩ ⟨he, hve, a1, hs⟩ => by
+    obtain ⟨hT, hQ⟩ := hInv ((flags_eq hS).1.trans (set_state0_pg hs))
     obtain ⟨t', ht', hS', hR'⟩ := set_state_exists hid hS hR hs
     refine ⟨⟨he, hve, t', ht'⟩, fun σ' q' ⟨t1, ht1, hq', hσ'⟩ => ?_⟩
     rw [ht'] at ht1
     injection ht1 with e
     subst e; subst hq'
-    exact ⟨a1, ⟨hS', hR', set_state_keeps ht' hT, hQ⟩, hs, hσ'⟩)
+    exact ⟨a1, ⟨hS', hR', fun _ => ⟨set_state_keeps ht' hT, hQ⟩⟩, hs, hσ'⟩)
 
 /-- **`enqueue` refines `enqueue0_spec`.** -/
 theorem enqueue0_triple (hL : QLayout maxpage num_id cb num_proc pb ib fb sb tb num_chan qb) (n i : Nat) :
@@ -518,14 +552,14 @@ theorem enqueue0_triple (hL : QLayout maxpage num_id cb num_proc pb ib fb sb tb 
         AInv num_proc num_chan a ∧ ∃ a1, enqueue0_spec num_proc num_chan n i a = some a1)
       (enqueueS tb qb num_proc)
       (fun _ a _ a' => enqueue0_spec num_proc num_chan n i a = some a') :=
-  (enqueue_triple εR c i0 hL n i).sim (fun σ a q ⟨hS, hR, hT, hQ⟩ ⟨hcn, hpi, hI, a1, hs⟩ => by
+  (enqueue_triple εR c i0 hL n i).sim (fun σ a q ⟨hS, hR, hInv⟩ ⟨hcn, hpi, hI, a1, hs⟩ => by
+    obtain ⟨hT, hQ⟩ := hInv ((flags_eq hS).1.trans (enqueue0_pg hs))
     obtain ⟨q', hq', hS', hR'⟩ := enqueue_exists hS hR hI.qc hI.cnt hI.inq hs
     refine ⟨⟨hcn, hpi, q', hq'⟩, fun σ' d' hd' => ?_⟩
     rw [hq'] at hd'
     injection hd' with e
     subst e
-    obtain ⟨hT', hQ'⟩ := enqueue_keeps hq' hT hQ
-    exact ⟨a1, ⟨hS', hR', hT', hQ'⟩, hs⟩)
+    exact ⟨a1, ⟨hS', hR', fun _ => enqueue_keeps hq' hT hQ⟩, hs⟩)
 
 /-- **`dequeue` refines `dequeue0_spec`.** -/
 theorem dequeue0_triple (hL : QLayout maxpage num_id cb num_proc pb ib fb sb tb num_chan qb) (n : Nat) :
@@ -535,7 +569,8 @@ theorem dequeue0_triple (hL : QLayout maxpage num_id cb num_proc pb ib fb sb tb 
       (dequeueS tb qb num_proc)
       (fun _ a σ' a' => ∃ r, dequeue0_spec num_proc num_chan n a = some (a', r) ∧
         σ' "proc_index" = BitVec.ofNat 32 r) :=
-  (dequeue_triple εR c i0 hL n).sim (fun σ a q ⟨hS, hR, hT, hQ⟩ ⟨hcn, hI, a1, r, hs⟩ => by
+  (dequeue_triple εR c i0 hL n).sim (fun σ a q ⟨hS, hR, hInv⟩ ⟨hcn, hI, a1, r, hs⟩ => by
+    obtain ⟨hT, hQ⟩ := hInv ((flags_eq hS).1.trans (dequeue0_pg hs))
     obtain ⟨q', hq', hS', hR'⟩ := dequeue_exists hS hR hI.qc hI.cnt hI.inq hs
     refine ⟨⟨hcn, hT, q', r, hq'⟩, fun σ' d' ⟨r', hd', hr'⟩ => ?_⟩
     rw [hq'] at hd'
@@ -543,7 +578,7 @@ theorem dequeue0_triple (hL : QLayout maxpage num_id cb num_proc pb ib fb sb tb 
     injection e with e1 e2
     subst e1; subst e2
     obtain ⟨hT', hQ', -⟩ := dequeue_keeps hq' hT hQ
-    exact ⟨a1, ⟨hS', hR', hT', hQ'⟩, r, hs, hr'⟩)
+    exact ⟨a1, ⟨hS', hR', fun _ => ⟨hT', hQ'⟩⟩, r, hs, hr'⟩)
 
 /-- **`queue_rmv` refines `queue_rmv0_spec`.** -/
 theorem queueRmv0_triple (hL : QLayout maxpage num_id cb num_proc pb ib fb sb tb num_chan qb) (n i : Nat) :
@@ -552,14 +587,14 @@ theorem queueRmv0_triple (hL : QLayout maxpage num_id cb num_proc pb ib fb sb tb
         AInv num_proc num_chan a ∧ ∃ a1, queue_rmv0_spec num_proc num_chan n i a = some a1)
       (queueRmvS tb qb num_proc)
       (fun _ a _ a' => queue_rmv0_spec num_proc num_chan n i a = some a') :=
-  (queueRmv_triple εR c i0 hL n i).sim (fun σ a q ⟨hS, hR, hT, hQ⟩ ⟨hcn, hpi, hI, a1, hs⟩ => by
+  (queueRmv_triple εR c i0 hL n i).sim (fun σ a q ⟨hS, hR, hInv⟩ ⟨hcn, hpi, hI, a1, hs⟩ => by
+    obtain ⟨hT, hQ⟩ := hInv ((flags_eq hS).1.trans (queue_rmv0_pg hs))
     obtain ⟨q', hq', hS', hR'⟩ := queue_rmv_exists hS hR hI.qc hI.cnt hI.inq hs
     refine ⟨⟨hcn, hpi, hT, q', hq'⟩, fun σ' d' hd' => ?_⟩
     rw [hq'] at hd'
     injection hd' with e
     subst e
-    obtain ⟨hT', hQ'⟩ := queueRmv_keeps hq' hT hQ
-    exact ⟨a1, ⟨hS', hR', hT', hQ'⟩, hs⟩)
+    exact ⟨a1, ⟨hS', hR', fun _ => queueRmv_keeps hq' hT hQ⟩, hs⟩)
 
 end Triples
 
