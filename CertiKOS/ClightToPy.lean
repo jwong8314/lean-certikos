@@ -72,6 +72,9 @@ def trOp : ClightL.BinOp → PyL.Expr → PyL.Expr → PyL.Expr
   | .eq, a, b => .bin .eq a b
   | .ne, a, b => .bin .ne a b
   | .ltu, a, b => .bin .lt a b
+  | .band, a, b => .bin .band a b
+  | .bor, a, b => .bin .bor a b
+  | .shl, a, b => .bin .fmod (.bin .shl a b) (.const M)
 
 def trE : ClightL.Expr → PyL.Expr
   | .const v => .const (enc v)
@@ -138,6 +141,21 @@ theorem trOp_eval (op : ClightL.BinOp) (a b : Val) (ea eb : PyL.Expr) (s : Store
       simp [h, enc, this]
     · have : ¬ a.toNat < b.toNat := fun h' => h (BitVec.ult_iff_lt.2 (BitVec.lt_def.2 h'))
       simp [h, enc, this]
+  | band =>
+    simp only [trOp, PyL.Expr.eval, PyL.BinOp.eval, ha, hb, ClightL.BinOp.eval]
+    show PyL.intAnd (Int.ofNat a.toNat) (Int.ofNat b.toNat) = Int.ofNat (a &&& b).toNat
+    rw [BitVec.toNat_and]; rfl
+  | bor =>
+    simp only [trOp, PyL.Expr.eval, PyL.BinOp.eval, ha, hb, ClightL.BinOp.eval]
+    show PyL.intOr (Int.ofNat a.toNat) (Int.ofNat b.toNat) = Int.ofNat (a ||| b).toNat
+    rw [BitVec.toNat_or]; rfl
+  | shl =>
+    simp only [trOp, PyL.Expr.eval, PyL.BinOp.eval, ha, hb, ClightL.BinOp.eval]
+    rw [Int.fmod_eq_emod_of_nonneg _ (by decide)]
+    have h : (a <<< b.toNat).toNat = a.toNat * 2 ^ b.toNat % 2 ^ 32 := by
+      rw [BitVec.toNat_shiftLeft, Nat.shiftLeft_eq]
+    have e : (enc b).toNat = b.toNat := by simp [enc]
+    unfold enc at *; rw [e, h, Int.natCast_emod, Int.natCast_mul, Int.natCast_pow]; rfl
 
 theorem trE_eval {Rsv : Var → Prop} {σ : Locals} {s : Store} (hA : Agree Rsv σ s) :
     ∀ e, EWF Rsv e → (trE e).eval s = enc (e.eval σ)

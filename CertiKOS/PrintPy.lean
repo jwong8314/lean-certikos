@@ -426,6 +426,7 @@ theorem print_eq_iff {c d : Cmd} (hc : Src c) (hd : Src d) : printC c = printC d
 def opPy : BinOp → String
   | .add => " + " | .sub => " - " | .mul => " * " | .fdiv => " // " | .fmod => " % "
   | .eq => " == " | .ne => " != " | .lt => " < " | .le => " <= "
+  | .band => " & " | .bor => " | " | .shl => " << "
 
 def pad (lvl : Nat) : String := String.join (List.replicate lvl "    ")
 

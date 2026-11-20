@@ -34,6 +34,8 @@ def Locals.set (σ : Locals) (x : Ident) (v : Val) : Locals :=
 
 inductive BinOp
   | add | sub | mul | div | mod | eq | ne | ltu
+  /-- bitwise `&`, `|`, `<<` on 32-bit words (added for the virtualization port) -/
+  | band | bor | shl
 
 inductive Expr
   | const (v : Val)
@@ -49,6 +51,9 @@ def BinOp.eval : BinOp → Val → Val → Val
   | .eq,  a, b => if a = b then 1 else 0
   | .ne,  a, b => if a = b then 0 else 1
   | .ltu, a, b => if a.ult b then 1 else 0
+  | .band, a, b => a &&& b
+  | .bor, a, b => a ||| b
+  | .shl, a, b => a <<< b.toNat
 
 def Expr.eval (σ : Locals) : Expr → Val
   | .const v => v

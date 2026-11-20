@@ -152,7 +152,23 @@ open Heap
 
 inductive BinOp
   | add | sub | mul | fdiv | fmod | eq | ne | lt | le
+  /-- `&`, `|`, `<<` -/
+  | band | bor | shl
 deriving DecidableEq, Repr
+
+/-- Python's `&` on `int` (two's complement, unbounded). -/
+def intAnd : Int → Int → Int
+  | .ofNat m, .ofNat n => .ofNat (m &&& n)
+  | .ofNat m, .negSucc n => .ofNat (m - (m &&& n))
+  | .negSucc m, .ofNat n => .ofNat (n - (n &&& m))
+  | .negSucc m, .negSucc n => .negSucc (m ||| n)
+
+/-- Python's `|` on `int`. -/
+def intOr : Int → Int → Int
+  | .ofNat m, .ofNat n => .ofNat (m ||| n)
+  | .ofNat m, .negSucc n => .negSucc (n - (n &&& m))
+  | .negSucc m, .ofNat n => .negSucc (m - (m &&& n))
+  | .negSucc m, .negSucc n => .negSucc (m &&& n)
 
 /-- Python's semantics of the operators on `int`. Comparisons return
 `True`/`False`, i.e. `1`/`0`. -/
@@ -166,6 +182,9 @@ def BinOp.eval : BinOp → Int → Int → Int
   | .ne, a, b => if a = b then 0 else 1
   | .lt, a, b => if a < b then 1 else 0
   | .le, a, b => if a ≤ b then 1 else 0
+  | .band, a, b => intAnd a b
+  | .bor, a, b => intOr a b
+  | .shl, a, b => a * 2 ^ b.toNat
 
 inductive Expr
   | const (v : Int)
