@@ -84,9 +84,9 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | `PIPCIntro`, `PIPC` | synchronous IPC: the channel pool and its accessors, `get_kernel_pa`, `syncsendto_chan_pre`, `syncsendto_chan_post`, `syncreceive_chan`, `proc_init` | **ported**: `PIPCIntro.lean` (the seven accessors and `get_kernel_pa` refine their specs; `liftCI`), `PIPC.lean` (`syncSendPre_triple`, `syncSendPost_triple`), `FlatMem.lean` (`flatmem_copy` as a loop, `flatmemCopy_triple`), `PIPCRecv.lean` (`syncReceive_triple`), `PProcInit.lean` (`proc_init_triple`, `proc_init_inv`). Not done: the two halves of a send joined with the sleep between them, which mCertiKOS does in the trap layer |
 | `PUCtxtIntro`, `PProc` | user contexts, `proc_create`, `proc_start_user`, `proc_exit_user` | **ported**: `PUCtxtIntro.lean` (the top state `UData`; `uctx_get`, `uctx_set`, `uctx_set_eip`, `save_uctx` refine their specs; `liftIU`), `UMachine.lean` (user mode: a trap enters the kernel, a finished kernel computation returns), `PProc.lean` (`proc_create_run`, `procExitUser_triple`, `procStartUser_run`, `start_user_ustar`). `elf_load` and `tss_switch` are left out |
 | **Trap handling** (`trap`) | | |
-| `TTrapArg`, `TTrap`, `TDispatch`, `TSysCall` | system-call arguments, handlers, dispatch, the kernel's entry points | **ported**: `TTrapArg.lean` (`uctx_arg1` … `uctx_arg6`, `uctx_set_errno`, `uctx_set_retval1` … `5`), `TTrap.lean` (`trap_sendtochan_pre`, `trap_sendtochan_post`, `sys_receive_chan`, `sys_get_quota`, `ptfault_resv`), `TDispatch.lean` (`container_can_consume`, `sys_proc_create`, `syscall_dispatch_c`), `TSysCall.lean` (`syscall_dispatch`, `pgf_handler`, `sys_yield`, from user mode back to user mode). `SYS_share` (`TShare.lean`), `SYS_print` (`TTop.lean`) and the hypercalls (`THyp.lean`, `THyp2.lean`) are handled by the dispatcher on the top state (`TDispatchH.lean`), and so is `SYS_hvm_mmap` (`THyp3.lean`); `SYS_hvm_run_vm` is its own entry, with the VM exit (`TRunVM.lean`). Missing: `SYS_recv` in the new dispatcher |
+| `TTrapArg`, `TTrap`, `TDispatch`, `TSysCall` | system-call arguments, handlers, dispatch, the kernel's entry points | **ported**: `TTrapArg.lean` (`uctx_arg1` … `uctx_arg6`, `uctx_set_errno`, `uctx_set_retval1` … `5`), `TTrap.lean` (`trap_sendtochan_pre`, `trap_sendtochan_post`, `sys_receive_chan`, `sys_get_quota`, `ptfault_resv`), `TDispatch.lean` (`container_can_consume`, `sys_proc_create`, `syscall_dispatch_c`), `TSysCall.lean` (`syscall_dispatch`, `pgf_handler`, `sys_yield`, from user mode back to user mode). `SYS_share` (`TShare.lean`), `SYS_print` (`TTop.lean`) and the hypercalls (`THyp.lean`, `THyp2.lean`) are handled by the dispatcher on the top state (`TDispatchH.lean`), and so is `SYS_hvm_mmap` (`THyp3.lean`); `SYS_hvm_run_vm` is its own entry, with the VM exit (`TRunVM.lean`). `SYS_recv` is in the new dispatcher too |
 | **Other** | | |
-| `objects/ObjVMX`, `ObjVMCS`, `ObjEPT` | virtualization | **specifications ported, implementation written here**: the public sources have only these three specification files, not the layers or verified C that implement them (checked over the whole repository tree on 2026-11-19). So the code is written from the specifications and the C comments and proved to refine them, first in Coq (`coq/EPT.v`, `coq/VMCS.v`, `coq/VMX.v`), then in Lean (`VEPT.lean`, `VVMCS.lean`, `VVMX.lean`); guest mode is in the machine (`GMachine.lean`). The hypercalls of the trap layer (commented out in mCertiKOS's `ObjTrap.v`, C in `trap/sys_*.c`) are verified too, first in Coq (`coq/Trap.v`), then in Lean (`THyp.lean`, `THyp2.lean`), on the top state (`TTop.lean`). `vmx_init` (`coq/Init.v`, `VInit.lean`) and the EPT's upper tables in memory (`coq/EPT4.v`, `VEPT4.lean`) are done too. Missing: the upper tables as part of the top state's relation |
+| `objects/ObjVMX`, `ObjVMCS`, `ObjEPT` | virtualization | **specifications ported, implementation written here**: the public sources have only these three specification files, not the layers or verified C that implement them (checked over the whole repository tree on 2026-11-19). So the code is written from the specifications and the C comments and proved to refine them, first in Coq (`coq/EPT.v`, `coq/VMCS.v`, `coq/VMX.v`), then in Lean (`VEPT.lean`, `VVMCS.lean`, `VVMX.lean`); guest mode is in the machine (`GMachine.lean`). The hypercalls of the trap layer (commented out in mCertiKOS's `ObjTrap.v`, C in `trap/sys_*.c`) are verified too, first in Coq (`coq/Trap.v`), then in Lean (`THyp.lean`, `THyp2.lean`), on the top state (`TTop.lean`). `vmx_init` (`coq/Init.v`, `VInit.lean`) and the EPT's upper tables in memory (`coq/EPT4.v`, `VEPT4.lean`) are done too; the upper tables are part of the top state's relation (`MatchH`) |
 | `security` | noninterference (`ObsEq`, `Integrity`, `Confidentiality`, `ConfidentialityRestore`, `Security`) | **ported up to the unwinding conditions**: `ObsEq.lean` (the observation function), `Integrity.lean`, `Confidentiality.lean`, `ConfidentialityPF.lean` (the page fault), `Security.lean` (`KPass`: one passage through the kernel; `integ`, `conf`, `conf_restore`), `SecurityBigstep.lean` (`bigstep_conf`, `noninterference`, with a user program as a function from what it sees to its next trap). Missing: integrity and confidentiality of user-mode instructions (user code is not modelled); preservation of the security invariants; the link down to the bottom layer (`end_to_end_security` is stated on the machine of `MBoot`) |
 | `layerlib`: `LAsm`, `CompCertiKOS` | layered assembly, the compiler | missing: no machine model, no verified compiler |
 | layer calculus | linking layers vertically with `high_level_invariant` | partial: each port states refinement to the spec; invariant preservation and layer linking are not done per layer |
@@ -794,9 +794,15 @@ contain, and prove that the code refines them, first in Coq, then in Lean.
   mCertiKOS's `rdmsr_spec` and `wrmsr_spec` say.
 - **The dispatcher** (`TDispatchH.lean`): `sysDispatchH_run`, on the kernel
   machine, for every number: `SYS_spawn` through `sysProcCreate_run`, the
-  others through `chain_triple` over the table `hlist`.
+  others through `chain_triple` over the table `hlist`, which has every row
+  of mCertiKOS's C dispatcher (`SYS_recv` through `trapReceive_triple`, so
+  the precondition `DPre` includes the queue invariant) and `SYS_share`,
+  `SYS_print`.
 - **Integrity** (`TSecH.lean`): `integ_dispatch_h`: every call of the table
-  but `SYS_share` leaves every other process's observation unchanged.
+  but `SYS_share` and `SYS_recv` leaves every other process's observation
+  unchanged. `SYS_recv` copies into the caller's buffer, which may be a page
+  shared with the observer, and wakes the sender; mCertiKOS's security proof
+  covers its verified dispatcher, which has no `SYS_recv`.
 - **`SYS_hvm_mmap`** (`THyp3.lean`): `pt_read` and `pt_resv` carried to the
   top state (`readU`, `resvU`); `mmap_triple`. After the page-table calls the
   handler reads `gpa` and `mem_type` again from the caller's registers.
@@ -813,9 +819,11 @@ contain, and prove that the code refines them, first in Coq, then in Lean.
 - **The EPT's upper tables** (`coq/EPT4.v`, `VEPT4.lean`): `pml4`, `pdpt` and
   `pdt[4]` in memory; `MatchUp`; `setEPML4`, `setEPDPTE`, `setEPDTE`;
   `ept_init`'s upper tables; `up_store` (a leaf write keeps them).
-- Not done: `SYS_recv` in this dispatcher; the upper tables as part of the
-  top state's relation (they are a separate relation, kept by every leaf
-  write); what the guest does while it runs (not modelled, as user code is
+  `MatchH` includes `MatchUp` at `upb vb`, right after the VMCS page:
+  `stepXH` asks that a VMX step keep the EPT's tables (`SameShape`), which
+  holds because only `vmx_set_mmap` changes the EPT and it writes a leaf
+  (`setMmap_shape`); `matchUp_shape` (also in `coq/EPT4.v`) does the rest.
+- Not done: what the guest does while it runs (not modelled, as user code is
   not); several virtual machines, or one per process (mCertiKOS has one, and
   any process may make hypercalls).
 

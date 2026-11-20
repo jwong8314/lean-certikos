@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-126 Lean files, about 52,300 lines, and a Coq development of the
+126 Lean files, about 52,500 lines, and a Coq development of the
 virtualization layers in `coq/` (about 3,700 lines). No `sorry`, no `Admitted`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
@@ -223,9 +223,10 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
   (`coq/EPT4.v`, `VEPT4.lean`), `SYS_hvm_mmap` (`THyp3.lean`), and
   `SYS_hvm_run_vm` with the VM exit (`TRunVM.lean`); a visit to the guest
   keeps the other processes' observations (`TSecVM.lean`). Not done: what the
-  guest itself does is not modelled, there is one virtual machine shared by
-  all processes (as in mCertiKOS), and the upper EPT tables are a separate
-  relation, not yet part of the top state's. The kernel
+  guest itself does is not modelled, and there is one virtual machine shared
+  by all processes (as in mCertiKOS). The top state's relation includes the
+  EPT's upper tables, and its dispatcher covers every number of mCertiKOS's
+  C dispatcher (including `SYS_recv`) plus `SYS_share` and `SYS_print`. The kernel
   guarantees are per CPU, and `PTInv` is not yet shown to hold across other
   CPUs' operations on the allocation table.
   See [KERNEL.md](KERNEL.md).

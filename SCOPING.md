@@ -125,15 +125,15 @@ A first P0 spike is in `CertiKOS/` and builds with Lean 4.35.0. It has no `sorry
 | `VVMX.lean` | **Ported from `coq/VMX.v`**: `MatchX` over the three blocks; `getReg_step`, `setReg_step`, `nextEip_step`, the I/O fields, `setMmap_step` (`liftE`), `vmRun_step`, `return_step`, `vm_roundtrip`. |
 | `GMachine.lean` | **Machine model, fourth part: guest mode.** `GState`, `GStep` (VM entry when a kernel computation ends with `GUEST` set, VM exit to the exit handler), `GStar.vmenter`, `GStar.reenter`, `GStar.exit_to_user`. |
 | `TShare.lean` | **`SYS_share`**: `trap_offer_shared_mem_spec`; `liftSC` (the shared-memory layer in the state with threads); `trapShare_triple`. |
-| `TTop.lean` | **The top state**: `HData` (process layers, consoles, virtual machine), `MatchOut` (a ring of 256 words per process), `stepUH`, `stepXH`; **`SYS_print`**: `print_triple`. |
+| `TTop.lean` | **The top state**: `HData` (process layers, consoles, virtual machine), `MatchOut` (a ring of 256 words per process), `MatchH` (with the EPT's upper tables), `stepUH`, `stepXH`; **`SYS_print`**: `print_triple`. |
 | `THyp.lean`, `THyp2.lean` | **The hypercalls, ported from `coq/Trap.v`**: `hcall`, `liftV`, `setsH`; get/set register, set segment, next eip, inject event, pending event, interrupt shadow, interrupt window, TSC offset, exit information, `rdmsr`, `wrmsr`; each `*_triple`. |
-| `TDispatchH.lean` | **The dispatcher on the top state**: `chain_triple`, `hlist_triples`, `sysDispatchH_run` (spawn, quota, share, print and the hypercalls, on the kernel machine). |
+| `TDispatchH.lean` | **The dispatcher on the top state**: `chain_triple`, `hlist_triples`, `sysDispatchH_run` (spawn, quota, receive, share, print and the hypercalls, on the kernel machine). |
 | `TSecH.lean` | **Integrity** of the hypercalls, `SYS_print` and the dispatcher's table (`integ_dispatch_h`). |
 | `THyp3.lean` | **`SYS_hvm_mmap`**: `readU`, `resvU` (page-table calls on the top state), `mmap_triple`. |
 | `TRunVM.lean` | **`SYS_hvm_run_vm`**: `run_vm_enters` (to guest mode), `vm_exit_returns` (back to the caller). |
 | `TSecVM.lean` | **Integrity around the guest**: `integ_run_vm`, `integ_vm_exit`, `integ_visit`. |
 | `VInit.lean` | **`vmx_init`, ported from `coq/Init.v`**: `defaults`, `vmx_init0_spec`, `vmxInit_step`. |
-| `VEPT4.lean` | **The EPT's upper tables, ported from `coq/EPT4.v`**: `MatchUp`, `up_store`, `setEPML4_step`, `setEPDPTE_run`, `setEPDTE_step`, `initUp_run`. |
+| `VEPT4.lean` | **The EPT's upper tables, ported from `coq/EPT4.v`**: `MatchUp`, `up_store`, `SameShape`, `matchUp_shape`, `setEPML4_step`, `setEPDPTE_run`, `setEPDTE_step`, `initUp_run`. |
 | `LayerStep.lean` | **Steps and data abstraction.** `Step` (a triple for one starting point), `Step.seq`, `Step.ite_true`, `Step.ite_false`, `Step.while_inv`, `Step.triple`, `Step.lift`; `Triple.sim` (a layer whose state is a view of the state below inherits its triples); guards on machine words (`eqc_true`, `nec_false`, `nev_true`, …). |
 | `Layer.lean` | **Layer interface.** `Triple` (a primitive's spec as a triple with a write footprint), `Triple.seq`, `Triple.conseq`, `Triple.widen`, `Triple.lift` (frame: reuse a primitive when the state grows), `acquire_runs`, `release_runs`, `Triple.locked` (from a triple to `acquire; s; release`). |
 | `MPTIntro.lean` | **Ported from mCertiKOS** (page-table pool accessors): `PTPerm`, `PTEInfo`, `PDE`, `PTData`; the eight specs `getPDE_spec` … `setIDPTE_spec`; `MatchPT`, `Layout`; `pool_update`, `pte_update`, `idp_update`, `pde_unique`; the C code of `get_PDE`, `set_PDE`, `rmv_PDE`, `set_PDEU`, `get_PTE`, `set_PTE`, `rmv_PTE`, `set_IDPTE`, each proved to refine its spec as a `Triple`. `set_pt` not ported (needs `CR3`). |
