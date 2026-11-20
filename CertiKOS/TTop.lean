@@ -1,5 +1,6 @@
 import CertiKOS.TShare
 import CertiKOS.VVMX
+import CertiKOS.VEPT4
 
 /-!
 # The top state: processes, device output and the virtual machine
@@ -21,7 +22,10 @@ The system calls still missing need two more parts:
   2^32), and every one of the last 256 words is in its slot. So the
   specification keeps mCertiKOS's unbounded list, and the device holds what a
   console shows.
-* the three blocks of `VVMX` (`MatchX`) at `xb`, `vb`, `eb`.
+* the three blocks of `VVMX` (`MatchX`) at `xb`, `vb`, `eb`;
+* the EPT's three upper tables (`VEPT.MatchUp`, from `VEPT4`) at `upb vb`,
+  right after the VMCS page and before the leaf tables at `eb`, as in
+  mCertiKOS's `struct eptStruct` (`pml4`, `pdpt`, `pdt`, then `ptab`).
 All of it sits between the user contexts and the page-table pool
 (`HLayout`), where the layers below do not look.
 
@@ -29,7 +33,9 @@ All of it sits between the user contexts and the page-table pool
   its own cells.
 * `stepUH`: **a step of the process layers is a step of the top state**, if
   it writes only their cells.
-* `stepXH`: **a step of the VMX layer is a step of the top state.**
+* `stepXH`: **a step of the VMX layer is a step of the top state**, if it
+  keeps the EPT's tables (`VEPT.SameShape`): only `vmx_set_mmap` changes the
+  EPT, and it writes a leaf (`THyp3.setMmap_shape`).
 * `printS`, `print_triple`: **`sys_print` refines `print_spec`.**
 -/
 
@@ -93,11 +99,15 @@ structure HLayout (maxpage num_id cb num_proc pb ib fb sb tb num_chan qb cidb ip
   hxv : xb + 36 ≤ vb
   hve : vb + 65540 ≤ eb
   hep : eb + 1048576 ≤ pb
+  hup : vb + 65540 + 3072 ≤ eb
+
+/-- Where the EPT's upper tables start: after the VMCS page. -/
+def upb (vb : Nat) : Nat := vb + 65540
 
 def MatchH (maxpage num_id cb num_proc pb ib fb ida sb tb num_chan qb cidb ipb ucb ob xb vb eb : Nat) (d : HData)
     (b : Region) : Prop :=
   MatchU maxpage num_id cb num_proc pb ib fb ida sb tb num_chan qb cidb ipb ucb d.toUData b ∧
-    (MatchOut num_proc ob d.devout b ∧ MatchX xb vb eb (toX d) b)
+    (MatchOut num_proc ob d.devout b ∧ (MatchX xb vb eb (toX d) b ∧ VEPT.MatchUp (upb vb) eb d.ept b))
 
 section Region
 variable {maxpage num_id cb num_proc pb ib fb ida sb tb num_chan qb cidb ipb ucb ob xb vb eb : Nat}
@@ -182,28 +192,32 @@ local notation "MH" => MatchH maxpage num_id cb num_proc pb ib fb ida sb tb num_
 theorem stepUH (hL : HLayout maxpage num_id cb num_proc pb ib fb sb tb num_chan qb cidb ipb ucb ob xb vb eb)
     {s : Stmt APrim} {σ σ' : Locals} {d : HData} {u : UData} (h : Step εR c i0 MU F s σ d.toUData σ' u)
     (hF : ∀ k, F k → k < ucb + 17 * num_proc ∨ pb ≤ k) : Step εR c i0 MH F s σ d σ' { d with toUData := u } := by
-  have := hL.hob; have := hL.hxb; have := hL.hxv; have := hL.hve; have := hL.hep
+  have := hL.hob; have := hL.hxb; have := hL.hxv; have := hL.hve; have := hL.hep; have := hL.hup
   refine Step.lift (π := HData.toUData) (put := fun (d' : HData) (u' : UData) => ({ d' with toUData := u' } : HData))
-    (M2 := fun d' b => MatchOut num_proc ob d'.devout b ∧ MatchX xb vb eb (toX d') b) h rfl
+    (M2 := fun d' b => MatchOut num_proc ob d'.devout b ∧
+      (MatchX xb vb eb (toX d') b ∧ VEPT.MatchUp (upb vb) eb d'.ept b)) h rfl
     (fun b b' h2 _ _ hf => ⟨matchOut_frame h2.1 (fun k hk => hf k (fun h' => by
         have := hF k h'; unfold OF at hk; omega)),
-      matchX_of (matchX_frame h2.2 (fun k h1 h2' => hf k (fun h' => by
-        have := hF k h'; unfold VEPT.NPG at h2'; omega)) hL.hxv hL.hve) rfl rfl rfl⟩)
+      matchX_of (matchX_frame h2.2.1 (fun k h1 h2' => hf k (fun h' => by
+        have := hF k h'; unfold VEPT.NPG at h2'; omega)) hL.hxv hL.hve) rfl rfl rfl,
+      VEPT.matchUp_frame h2.2.2 (fun a ha => hf a (fun h' => by
+        have := hF a h'; unfold VEPT.InUp upb at ha; omega))⟩)
 
 /-- **A step of the VMX layer is a step of the top state.** -/
 theorem stepXH (hL : HLayout maxpage num_id cb num_proc pb ib fb sb tb num_chan qb cidb ipb ucb ob xb vb eb)
     {s : Stmt APrim} {σ σ' : Locals} {d : HData} {x : XSt}
-    (h : Step εR c i0 (MatchX xb vb eb) (XF xb vb eb) s σ (toX d) σ' x) :
+    (h : Step εR c i0 (MatchX xb vb eb) (XF xb vb eb) s σ (toX d) σ' x) (hsh : VEPT.SameShape d.ept x.ept) :
     Step εR c i0 MH (XF xb vb eb) s σ d σ' (putX d x) := by
-  have := hL.hob; have := hL.hxb; have := hL.hxv; have := hL.hve; have := hL.hep
+  have := hL.hob; have := hL.hxb; have := hL.hxv; have := hL.hve; have := hL.hep; have := hL.hup
   refine ⟨h.1, fun l b hlk hcs hM => ?_⟩
-  obtain ⟨l1, b1, r1, c1, m1, f1⟩ := h.2 l b hlk hcs hM.2.2
+  obtain ⟨l1, b1, r1, c1, m1, f1⟩ := h.2 l b hlk hcs hM.2.2.1
   have hx : ∀ k, XF xb vb eb k → xb ≤ k ∧ k < eb + VEPT.NPG := fun k hk => by
     unfold XF VVMX.VMX_Size' VVMCS.NENC VEPT.NPG at hk; unfold VEPT.NPG; omega
   refine ⟨l1, b1, r1, c1, ⟨matchU_frame hL.ulay hM.1 (fun k hk => f1 k (fun h' => by
       have := hx k h'; unfold VEPT.NPG at this; omega)),
     matchOut_frame hM.2.1 (fun k hk => f1 k (fun h' => by have := hx k h'; unfold OF at hk; omega)),
-    matchX_of m1 rfl rfl rfl⟩, f1⟩
+    matchX_of m1 rfl rfl rfl, VEPT.matchUp_shape hM.2.2.2 hsh (fun a ha => f1 a (fun h' => by
+      unfold XF VVMX.VMX_Size' VVMCS.NENC VEPT.NPG at h'; unfold VEPT.InUp upb at ha; omega))⟩, f1⟩
 
 /-- **A triple of the process layers holds in the top state**, if it writes
 none of the consoles and VMX blocks. -/
@@ -213,13 +227,16 @@ theorem liftUT (hL : HLayout maxpage num_id cb num_proc pb ib fb sb tb num_chan 
     (hF : ∀ k, F k → k < ucb + 17 * num_proc ∨ pb ≤ k) :
     Triple εR c i0 MH F (fun σ d => P σ d.toUData) s
       (fun σ d σ' d' => ∃ u, d' = { d with toUData := u } ∧ Q σ d.toUData σ' u) := by
-  have := hL.hob; have := hL.hxb; have := hL.hxv; have := hL.hve; have := hL.hep
+  have := hL.hob; have := hL.hxb; have := hL.hxv; have := hL.hve; have := hL.hep; have := hL.hup
   exact h.lift (π := HData.toUData) (put := fun (d' : HData) (u' : UData) => ({ d' with toUData := u' } : HData))
-    (M2 := fun d' b => MatchOut num_proc ob d'.devout b ∧ MatchX xb vb eb (toX d') b) (fun _ _ => rfl)
+    (M2 := fun d' b => MatchOut num_proc ob d'.devout b ∧
+      (MatchX xb vb eb (toX d') b ∧ VEPT.MatchUp (upb vb) eb d'.ept b)) (fun _ _ => rfl)
     (fun d' b σ σ' d1 b' h2 _ _ _ hf => ⟨matchOut_frame h2.1 (fun k hk => hf k (fun h' => by
         have := hF k h'; unfold OF at hk; omega)),
-      matchX_of (matchX_frame h2.2 (fun k h1 h2' => hf k (fun h' => by
-        have := hF k h'; unfold VEPT.NPG at h2'; omega)) hL.hxv hL.hve) rfl rfl rfl⟩)
+      matchX_of (matchX_frame h2.2.1 (fun k h1 h2' => hf k (fun h' => by
+        have := hF k h'; unfold VEPT.NPG at h2'; omega)) hL.hxv hL.hve) rfl rfl rfl,
+      VEPT.matchUp_frame h2.2.2 (fun a ha => hf a (fun h' => by
+        have := hF a h'; unfold VEPT.InUp upb at ha; omega))⟩)
 
 end Lift
 
@@ -285,7 +302,7 @@ theorem outPut_step (hL : HLayout maxpage num_id cb num_proc pb ib fb sb tb num_
     (hn : σ "n" = BitVec.ofNat 32 (d.devout i).length) (hv : σ "content" = v) :
     Step εR c i0 MH (OF ob num_proc) (outPutS ob) σ d ((σ.set "_" 0).set "_" 0)
       { d with devout := setAt d.devout i (d.devout i ++ [v]) } := by
-  have := hL.hob; have := hL.hxb; have := hL.hxv; have := hL.hve; have := hL.hep
+  have := hL.hob; have := hL.hxb; have := hL.hxv; have := hL.hve; have := hL.hep; have := hL.hup
   have hlt := oaddr_lt hL hi
   refine ⟨by simp [Locals.set], fun l b hlk hcs hM => ?_⟩
   have hmi : (d.devout i).length % 256 < 256 := Nat.mod_lt _ (by decide)
@@ -310,7 +327,9 @@ theorem outPut_step (hL : HLayout maxpage num_id cb num_proc pb ib fb sb tb num_
     rw [sc_ne _ _ (hin k hk).1, sc_ne _ _ (hin k hk).2]
   refine ⟨l2, _, Runs.seq r1 r2, c2, ⟨matchU_frame hL.ulay hM.1 (fun k hk => hfr k (fun h' => by
       unfold OF at h'; omega)), matchOut_append v hM.2.1 hi,
-    matchX_frame hM.2.2 (fun k h1 h2 => hfr k (fun h' => by unfold OF at h'; omega)) hL.hxv hL.hve⟩, hfr⟩
+    matchX_frame hM.2.2.1 (fun k h1 h2 => hfr k (fun h' => by unfold OF at h'; omega)) hL.hxv hL.hve,
+    VEPT.matchUp_frame hM.2.2.2 (fun a ha => hfr a (fun h' => by unfold OF at h'; unfold VEPT.InUp upb at ha; omega))⟩,
+    hfr⟩
 
 /-- **`sys_print` refines `print_spec`.** -/
 theorem print_triple (hL : HLayout maxpage num_id cb num_proc pb ib fb sb tb num_chan qb cidb ipb ucb ob xb vb eb) :

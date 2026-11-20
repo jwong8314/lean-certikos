@@ -252,13 +252,13 @@ theorem hvb_of (hL : HL) : vb + 2 + VVMCS.NENC ≤ 2 ^ 32 := by
 theorem vH (hL : HL) {s : Stmt APrim} {σ σ' : Locals} {d : HData} {v : VVMCS.VSt}
     (h : Step εR c i0 (VVMCS.MatchS vb) (fun k => vb + 2 ≤ k ∧ k < vb + 2 + VVMCS.NENC) s σ (toV (toX d)) σ' v) :
     Step εR c i0 MH (HF ucb num_proc xb vb eb) s σ d σ' (putX d { toX d with vmcs := v.vmcs }) :=
-  (stepXH εR c i0 hL (liftV εR c i0 hL h)).widen (fun _ h => Or.inr h)
+  (stepXH εR c i0 hL (liftV εR c i0 hL h) (VEPT.SameShape.refl _)).widen (fun _ h => Or.inr h)
 
 /-- A step of the VMX layer, as a step of the top state. -/
 theorem xH (hL : HL) {s : Stmt APrim} {σ σ' : Locals} {d : HData} {x : XSt}
-    (h : Step εR c i0 (MatchX xb vb eb) (XF xb vb eb) s σ (toX d) σ' x) :
+    (h : Step εR c i0 (MatchX xb vb eb) (XF xb vb eb) s σ (toX d) σ' x) (hsh : VEPT.SameShape d.ept x.ept) :
     Step εR c i0 MH (HF ucb num_proc xb vb eb) s σ d σ' (putX d x) :=
-  (stepXH εR c i0 hL h).widen (fun _ h => Or.inr h)
+  (stepXH εR c i0 hL h hsh).widen (fun _ h => Or.inr h)
 
 /-- Reading an argument. -/
 theorem argH (hL : HL) (x : Ident) (hx : x ≠ "lk") {reg : Nat} (hreg : reg < 17) {σ : Locals} {d : HData} {a : Nat}
@@ -373,6 +373,7 @@ theorem getReg_triple (hL : HL) :
         rw [hv] at hb; simp only [Option.some.injEq, Prod.mk.injEq] at hb
         obtain ⟨rfl, rfl⟩ := hb
         have B := xH (ida := ida) εR c i0 hL (VVMX.getReg_step hL.hxv hL.hve (heb_of hL) εR c i0 (σ := σ1) (by simp [σ1]) hv)
+          (VEPT.SameShape.refl _)
         obtain ⟨σ3, R⟩ := ret1H (ida := ida) εR c i0 hL (σ := σ1.set "r" v) (d := putX d (toX d)) hcp (by simp) hR
         exact ⟨_, _, A.seq (Step.ite_true (fun h => absurd (hg.symm.trans h) (by decide)) (B.seq R)), hs0⟩
     · rw [if_neg t] at hb hg
@@ -380,6 +381,14 @@ theorem getReg_triple (hL : HL) :
       obtain ⟨rfl, rfl⟩ := hb
       obtain ⟨σ3, R⟩ := errH (ida := ida) εR c i0 hL (σ := σ1) (d := putX d (toX d)) hcp hR
       exact ⟨_, _, A.seq (Step.ite_false (by exact hg) R), hs0⟩
+
+/-- `vmx_set_reg` keeps the EPT. -/
+theorem setReg_ept {r v : Nat} {x x' : XSt} (h : VVMX.vmx_set_reg_spec r v x = some x') :
+    VEPT.SameShape x.ept x'.ept := by
+  apply VEPT.SameShape.of_eq
+  unfold VVMX.vmx_set_reg_spec at h
+  repeat' split at h
+  all_goals first | (cases h; rfl) | cases h
 
 /-- **`sys_hvm_set_reg` refines `trap_set_reg_spec`.** -/
 theorem setReg_triple (hL : HL) :
@@ -412,7 +421,7 @@ theorem setReg_triple (hL : HL) :
           rw [hv] at hb; simp only [Option.some.injEq, Prod.mk.injEq] at hb
           obtain ⟨rfl, rfl⟩ := hb
           have B := xH (ida := ida) εR c i0 hL (VVMX.setReg_step hL.hxv hL.hve (heb_of hL) εR c i0 (σ := σ2)
-            (by simp [σ2, Locals.set]) (by simp [σ2]) hv)
+            (by simp [σ2, Locals.set]) (by simp [σ2]) hv) (setReg_ept hv)
           obtain ⟨σ3, R⟩ := errH (ida := ida) εR c i0 hL (σ := σ2.set "_" 0) (d := putX d x1) hcp hR
           exact ⟨_, _, A1.seq (A2.seq (Step.ite_true (fun h => absurd (hg.symm.trans h) (by decide)) (B.seq R))), hs0⟩
       · rw [if_neg t] at hb hg
@@ -438,7 +447,7 @@ theorem getNextEip_triple (hL : HL) :
     obtain ⟨rfl, rfl⟩ := hb
     obtain ⟨σ1, B, hr, -⟩ := VVMX.nextEip_step hL.hxv hL.hve (heb_of hL) εR c i0 (σ := σ) hv
     obtain ⟨σ3, R⟩ := ret1H (ida := ida) εR c i0 hL (σ := σ1) (d := putX d (toX d)) hcp hr hR
-    exact ⟨_, _, (xH (ida := ida) εR c i0 hL B).seq R, hs0⟩
+    exact ⟨_, _, (xH (ida := ida) εR c i0 hL B (VEPT.SameShape.refl _)).seq R, hs0⟩
 
 /-- A VMCS reader followed by `uctx_set_retval1(r); uctx_set_errno(E_SUCC);`. -/
 theorem reader_triple (hL : HL) {s : Stmt APrim} {f : VVMCS.VSt → Option Val}

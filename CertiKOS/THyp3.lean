@@ -190,6 +190,27 @@ theorem arg_setPT {reg a : Nat} {d : HData} {p : PTData} (hp : p.pg = d.pg)
   show (if d.ikern = true ∧ p.pg = true ∧ d.ihost = true then _ else none) = some a
   rw [hp]; exact h
 
+/-- **`vmx_set_mmap` writes only a leaf**: the EPT keeps its tables. -/
+theorem setMmap_shape {mp g hp mt r : Nat} {x x1 : XSt} (h : VVMX.vmx_set_mmap_spec mp g hp mt x = some (x1, r)) :
+    VEPT.SameShape x.ept x1.ept := by
+  unfold VVMX.vmx_set_mmap_spec at h
+  cases ha : VEPT.ept_add_mapping_spec mp g hp mt (VVMX.toE x) with
+  | none => rw [ha] at h; cases h
+  | some pr =>
+    obtain ⟨e', res⟩ := pr
+    rw [ha] at h; simp only at h
+    have he : VEPT.SameShape x.ept e'.ept := by
+      unfold VEPT.ept_add_mapping_spec at ha
+      split at ha
+      · cases hs : VEPT.ept_store (VVMX.toE x).ept g (VEPT.mapVal hp mt) with
+        | none => rw [hs] at ha; cases ha
+        | some e2 =>
+          rw [hs] at ha; simp only [Option.some.injEq, Prod.mk.injEq] at ha
+          obtain ⟨rfl, -⟩ := ha; exact VEPT.SameShape.store hs
+      · cases ha
+    repeat' split at h
+    all_goals first | (simp only [Option.some.injEq, Prod.mk.injEq] at h; obtain ⟨rfl, -⟩ := h; exact he) | cases h
+
 section Mmap
 variable {maxpage num_id cb num_proc pb ib fb ida sb tb num_chan qb cidb ipb ucb ob xb vb eb : Nat}
 variable (εR : REnv) (c : CPU) (i0 : Nat)
@@ -223,7 +244,7 @@ theorem tail_step (hL : HL) (hmp : maxpage ≤ 2 ^ 20) {σ : Locals} {d d' : HDa
     obtain ⟨σ4, B, -⟩ := VVMX.setMmap_step hL.hxv hL.hve (heb_of hL) (by unfold VEPT.NPG; omega) εR c i0 (σ := σ3)
       (by simp [σ3, σ2, Locals.set]) (by simp [σ3, σ2, σ1, Locals.set]) (by simp [σ3]) hv
     obtain ⟨σ5, R⟩ := errH (ida := ida) εR c i0 hL (σ := σ4) (d := putX d x1) hcp hR
-    exact ⟨σ5, S1.seq (S2.seq (S3.seq ((xH (ida := ida) εR c i0 hL B).seq R)))⟩
+    exact ⟨σ5, S1.seq (S2.seq (S3.seq ((xH (ida := ida) εR c i0 hL B (setMmap_shape hv)).seq R)))⟩
 
 /-- The footprint of `sys_hvm_mmap`: the page tables and containers, and the
 hypercall's. -/

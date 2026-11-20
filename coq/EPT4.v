@@ -20,7 +20,8 @@
     - [ept_init4]: the tree [real_ept] builds, written out: every upper entry
       points to its table, every leaf is 0.
     - [up_store]: a write of a leaf (what [ept_set_page_entry],
-      [ept_add_mapping] and the others do) keeps [MatchUp].
+      [ept_add_mapping] and the others do) keeps [MatchUp]; [matchUp_shape]:
+      so does any change that keeps the tables ([SameShape]).
 
     What differs: a table's address is a word index here; [ent a] is
     [4 a + 7] (the byte address with read, write and execute), which is
@@ -143,6 +144,23 @@ Theorem up_store : forall e g v e' m m', ept_store e g v = Some e' -> MatchUp e 
 Proof.
   intros e g v e' m m' Hs HM F.
   destruct (shape_store e g v e' Hs) as (S4 & SP & SD).
+  destruct (matchUp_frame e m m' HM F) as (H1 & H2 & H3).
+  split; [|split].
+  - rewrite S4; exact H1.
+  - intros h j Hj; rewrite SP; apply H2; [rewrite <- S4|]; auto.
+  - intros j k Hj Hk hv; rewrite SD; apply H3; auto; rewrite <- SP; auto.
+Qed.
+
+(** Two trees with the same tables: only their leaves may differ. *)
+Definition SameShape (e e' : EPT) : Prop :=
+  v4 e' = v4 e /\ (forall j, vP e' j = vP e j) /\ (forall j k, vD e' j k = vD e j k).
+
+(** **The upper tables match any tree with the same tables**, if their cells
+are kept (what the top state's relation needs of every hypercall). *)
+Theorem matchUp_shape : forall e e' m m', MatchUp e m -> SameShape e e' ->
+  (forall a, InUp a -> m' a = m a) -> MatchUp e' m'.
+Proof.
+  intros e e' m m' HM (S4 & SP & SD) F.
   destruct (matchUp_frame e m m' HM F) as (H1 & H2 & H3).
   split; [|split].
   - rewrite S4; exact H1.

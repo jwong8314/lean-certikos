@@ -63,6 +63,19 @@ variable (εR : REnv) (c : CPU) (i0 : Nat)
 local notation "MH" => MatchH maxpage num_id cb num_proc pb ib fb ida sb tb num_chan qb cidb ipb ucb ob xb vb eb
 local notation "HL" => HLayout maxpage num_id cb num_proc pb ib fb sb tb num_chan qb cidb ipb ucb ob xb vb eb
 
+theorem run_ept {r1 r2 : Val} {x x' : XSt} (h : VVMX.vm_run_spec r1 r2 x = some x') : VEPT.SameShape x.ept x'.ept := by
+  apply VEPT.SameShape.of_eq
+  unfold VVMX.vm_run_spec at h
+  repeat' split at h
+  all_goals first | (cases h; rfl) | cases h
+
+theorem return_ept {a b c' dx si bp : Val} {x x' : XSt} (h : VVMX.vmx_return_from_guest_spec a b c' dx si bp x = some x') :
+    VEPT.SameShape x.ept x'.ept := by
+  apply VEPT.SameShape.of_eq
+  unfold VVMX.vmx_return_from_guest_spec at h
+  repeat' split at h
+  all_goals first | (cases h; rfl) | cases h
+
 /-- The region does not see `ihost`. -/
 theorem matchH_ihost {d : HData} {b : Region} (v : Bool) (h : MH d b) : MH { d with ihost := v } b := h
 
@@ -87,7 +100,7 @@ theorem run_vm_enters (hL : HL) (code : Nat → Stmt KPrim) (entry : Nat → Nat
       (σ := σ) rfl rfl ha hbx hdx hsi hdi hbp hip hx
     have S' : Step εR c i0 MH (HF ucb num_proc xb vb eb) (runVmS xb vb) σ d (σ1.set "GUEST" 1)
         { putX d x with ihost := false } :=
-      (VVMX.Step.post (xH (ida := ida) εR c i0 hL S) (fun b h => matchH_ihost false h)).seq
+      (VVMX.Step.post (xH (ida := ida) εR c i0 hL S (run_ept hx)) (fun b h => matchH_ihost false h)).seq
         (Step.assign "GUEST" (by decide) (.const 1))
     obtain ⟨l1, b1, r1, c1, m1, -⟩ := S'.2 l b hlk hcs hM
     refine ⟨gregsOf (σ1.set "GUEST" 1), l1, b1, GStar.vmenter (KStar.of_runs r1 .stop pool) (by simp),
@@ -116,7 +129,7 @@ theorem vm_exit_returns (hL : HL) (code : Nat → Stmt KPrim) (entry : Nat → N
       hhe hhb hx
     have S1 : Step εR c i0 MH (HF ucb num_proc xb vb eb) (VVMX.returnS xb vb) σ d σ1
         (putX { d with ihost := true } x) :=
-      VVMX.Step.post (xH (ida := ida) εR c i0 hL S) (fun b h => h)
+      VVMX.Step.post (xH (ida := ida) εR c i0 hL S (return_ept hx)) (fun b h => h)
     obtain ⟨σ2, R⟩ := errH (ida := ida) (cidb := cidb) εR c i0 hL (σ := σ1) (d := putX { d with ihost := true } x)
       hcp hR
     obtain ⟨l1, b1, r1, c1, m1, -⟩ := S1.2 l b hlk' hcs hM

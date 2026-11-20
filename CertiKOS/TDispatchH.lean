@@ -479,8 +479,10 @@ theorem sysDispatchH_run (code : Nat → Stmt KPrim) (hL : HL) (hmax : 3 * maxpa
           omega
         refine ⟨σ', l', b', k1.trans (.step k2 hks), hcs', ⟨hM', matchOut_frame hM.2.1 (fun k hk => hf' k
           (fun h => by have := hCF k h; unfold OF at hk; omega)),
-          matchX_of (matchX_frame hM.2.2 (fun k h1 h2' => hf' k (fun h => by have := hCF k h; omega))
-            hL.hxv hL.hve) rfl rfl rfl⟩, by rw [hlk']; simp [σ1, Locals.set]⟩
+          matchX_of (matchX_frame hM.2.2.1 (fun k h1 h2' => hf' k (fun h => by have := hCF k h; omega))
+            hL.hxv hL.hve) rfl rfl rfl,
+          VEPT.matchUp_frame hM.2.2.2 (fun a ha => hf' a (fun h => by
+            have := hCF a h; have := hL.hup; unfold VEPT.InUp upb at ha; omega))⟩, by rw [hlk']; simp [σ1, Locals.set]⟩
     · rw [if_neg h2] at hs
       have hg : (Expr.bin .eq (.var "arg1") (.const 2)).eval σ1 = 0 := eqc_false (b := 2) harg ha32 (by decide) h2
       rw [if_pos hg] at k2

@@ -217,7 +217,7 @@ theorem getExitinfo_triple (hL : HL) :
             (toV (toX d))) => vH (ida := ida) (num_proc := num_proc) (ucb := ucb) (ob := ob) εR c i0 hL (d := d) h
       have Xs := fun {s : Stmt APrim} {σa σb : Locals}
           (h : Step εR c i0 (MatchX xb vb eb) (XF xb vb eb) s σa (toX d) σb (toX d)) =>
-        xH (ida := ida) (num_proc := num_proc) (ucb := ucb) (ob := ob) εR c i0 hL (d := d) h
+        xH (ida := ida) (num_proc := num_proc) (ucb := ucb) (ob := ob) εR c i0 hL (d := d) h (VEPT.SameShape.refl _)
       exact (V X1).seq ((Step.assign' "reason" (by decide) _ (by exact h1)).seq ((Xs X2).seq
         ((Step.assign' "port" (by decide) _ (by exact h2)).seq ((Xs X3).seq
         ((Step.assign' "width" (by decide) _ (by exact h3)).seq ((Xs X4).seq
@@ -313,11 +313,11 @@ theorem toX_putX {d : HData} {x : XSt} (h : x.ikern = d.ikern ∧ x.pg = d.pg �
 /-- A step of the VMX layer from a state the top state's flags agree with. -/
 theorem xH' (hL : HL) {s : Stmt APrim} {σ σ' : Locals} {d : HData} {x x' : XSt}
     (hfl : x.ikern = d.ikern ∧ x.pg = d.pg ∧ x.ihost = d.ihost)
-    (h : Step εR c i0 (MatchX xb vb eb) (XF xb vb eb) s σ x σ' x') :
+    (h : Step εR c i0 (MatchX xb vb eb) (XF xb vb eb) s σ x σ' x') (hsh : VEPT.SameShape x.ept x'.ept) :
     Step εR c i0 MH (HF ucb num_proc xb vb eb) s σ (putX d x) σ' (putX d x') := by
   have h' : Step εR c i0 (MatchX xb vb eb) (XF xb vb eb) s σ (toX (putX d x)) σ' x' := by
     rw [toX_putX hfl]; exact h
-  exact xH (ida := ida) εR c i0 hL h'
+  exact xH (ida := ida) εR c i0 hL h' hsh
 
 /-- **`sys_hvm_handle_rdmsr` refines its specification.** -/
 theorem rdmsr_triple (hL : HL) :
@@ -355,10 +355,11 @@ theorem rdmsr_triple (hL : HL) :
     let d1 := putX d x1
     let σ1 := σ.set "reg" 0
     have G := xH (ida := ida) (num_proc := num_proc) (ucb := ucb) (ob := ob) εR c i0 hL (d := d)
-      (VVMX.getReg_step hxv hve heb εR c i0 (σ := σ1) (by simp [σ1] <;> rfl) eg)
+      (VVMX.getReg_step hxv hve heb εR c i0 (σ := σ1) (by simp [σ1] <;> rfl) eg) (VEPT.SameShape.refl _)
     let σ6 := (((((σ1.set "r" msr).set "msr" msr).set "vlo" 0).set "vhi" 0).set "reg" 0).set "v" 0
     have S1 := xH (ida := ida) (num_proc := num_proc) (ucb := ucb) (ob := ob) εR c i0 hL (d := putX d (toX d))
       (VVMX.setReg_step hxv hve heb εR c i0 (σ := σ6) (by simp [σ6] <;> rfl) (by simp [σ6] <;> rfl) e0)
+      (setReg_ept e0)
     let σ8 := ((σ6.set "_" 0).set "reg" 3).set "v" 0
     have f0 := setReg_flags e0
     have f1 := setReg_flags e1
@@ -367,11 +368,12 @@ theorem rdmsr_triple (hL : HL) :
       ⟨f1.1.trans f0.1, f1.2.1.trans f0.2.1, f1.2.2.trans f0.2.2⟩
     have S2 := xH' (ida := ida) (num_proc := num_proc) (ucb := ucb) (ob := ob) εR c i0 hL (d := d) fl0
       (VVMX.setReg_step hxv hve heb εR c i0 (σ := σ8) (by simp [σ8] <;> rfl) (by simp [σ8] <;> rfl) e1)
+      (setReg_ept e1)
     obtain ⟨σ9, N, hn, -⟩ := VVMX.nextEip_step hxv hve heb εR c i0 (σ := σ8.set "_" 0) en
-    have N' := xH' (ida := ida) (num_proc := num_proc) (ucb := ucb) (ob := ob) εR c i0 hL (d := d) fl1 N
+    have N' := xH' (ida := ida) (num_proc := num_proc) (ucb := ucb) (ob := ob) εR c i0 hL (d := d) fl1 N (VEPT.SameShape.refl _)
     let σ11 := (σ9.set "reg" 8).set "v" ne
     have S3 := xH' (ida := ida) (num_proc := num_proc) (ucb := ucb) (ob := ob) εR c i0 hL (d := d) fl1
-      (VVMX.setReg_step hxv hve heb εR c i0 (σ := σ11) (by simp [σ11] <;> rfl) (by simp [σ11]) e2)
+      (VVMX.setReg_step hxv hve heb εR c i0 (σ := σ11) (by simp [σ11] <;> rfl) (by simp [σ11]) e2) (setReg_ept e2)
     obtain ⟨σ12, R⟩ := errH (ida := ida) εR c i0 hL (σ := σ11.set "_" 0) (d := putX d x2) hcp hR
     exact ⟨_, _, (Step.assign "reg" (by decide) _).seq (G.seq ((Step.assign "msr" (by decide) _).seq
       ((Step.assign "vlo" (by decide) _).seq ((Step.assign "vhi" (by decide) _).seq
@@ -412,23 +414,24 @@ theorem wrmsr_triple (hL : HL) :
     simp only [ec, ea, ed, ew, en, e2, Option.some.injEq, Prod.mk.injEq] at hb
     obtain ⟨rfl, rfl⟩ := hb
     have X := fun {s : Stmt APrim} {σa σb : Locals} {x : XSt}
-        (h : Step εR c i0 (MatchX xb vb eb) (XF xb vb eb) s σa (toX d) σb x) =>
-      xH (ida := ida) (num_proc := num_proc) (ucb := ucb) (ob := ob) εR c i0 hL (d := d) h
+        (h : Step εR c i0 (MatchX xb vb eb) (XF xb vb eb) s σa (toX d) σb x) (hsh : VEPT.SameShape d.ept x.ept) =>
+      xH (ida := ida) (num_proc := num_proc) (ucb := ucb) (ob := ob) εR c i0 hL (d := d) h hsh
     let σ1 := σ.set "reg" 2
-    have G1 := X (VVMX.getReg_step hxv hve heb εR c i0 (σ := σ1) (by simp [σ1] <;> rfl) ec)
+    have G1 := X (VVMX.getReg_step hxv hve heb εR c i0 (σ := σ1) (by simp [σ1] <;> rfl) ec) (VEPT.SameShape.refl _)
     let σ2 := ((σ1.set "r" msr).set "msr" msr).set "reg" 0
-    have G2 := X (VVMX.getReg_step hxv hve heb εR c i0 (σ := σ2) (by simp [σ2] <;> rfl) ea)
+    have G2 := X (VVMX.getReg_step hxv hve heb εR c i0 (σ := σ2) (by simp [σ2] <;> rfl) ea) (VEPT.SameShape.refl _)
     let σ3 := ((σ2.set "r" eax).set "eax" eax).set "reg" 3
-    have G3 := X (VVMX.getReg_step hxv hve heb εR c i0 (σ := σ3) (by simp [σ3] <;> rfl) ed)
+    have G3 := X (VVMX.getReg_step hxv hve heb εR c i0 (σ := σ3) (by simp [σ3] <;> rfl) ed) (VEPT.SameShape.refl _)
     let σ4 := (σ3.set "r" edx).set "edx" edx
     obtain ⟨σ9, N, hn, -⟩ := VVMX.nextEip_step hxv hve heb εR c i0 (σ := σ4) en
     let σ11 := (σ9.set "reg" 8).set "v" ne
     have S3 := X (VVMX.setReg_step hxv hve heb εR c i0 (σ := σ11) (by simp [σ11] <;> rfl) (by simp [σ11]) e2)
+      (setReg_ept e2)
     obtain ⟨σ12, R⟩ := errH (ida := ida) εR c i0 hL (σ := σ11.set "_" 0) (d := putX d x2) hcp hR
     exact ⟨_, _, (Step.assign "reg" (by decide) _).seq (G1.seq ((Step.assign "msr" (by decide) _).seq
       ((Step.assign "reg" (by decide) _).seq (G2.seq ((Step.assign "eax" (by decide) _).seq
       ((Step.assign "reg" (by decide) _).seq (G3.seq ((Step.assign "edx" (by decide) _).seq
-      ((X N).seq ((Step.assign "reg" (by decide) _).seq
+      ((X N (VEPT.SameShape.refl _)).seq ((Step.assign "reg" (by decide) _).seq
       ((Step.assign' "v" (by decide) _ (by simp [Expr.eval, Locals.set, hn])).seq (S3.seq R)))))))))))), hs0⟩
 
 end Steps

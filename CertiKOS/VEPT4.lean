@@ -11,7 +11,9 @@ tables of mCertiKOS's `struct eptStruct` (`pml4`, `pdpt`, `pdt[4]`) at `ub`.
   guest uses): an entry that points to a table holds `ent` of its address, an
   entry with no table holds 0.
 * `up_store`: **a leaf write keeps `MatchUp`** (what every `VEPT` function
-  that changes the EPT does).
+  that changes the EPT does). `SameShape`, `matchUp_shape`: the same for any
+  two trees with the same tables; the top state's relation (`TTop.MatchH`)
+  includes `MatchUp`, and every step of the VMX layer keeps the shape.
 * `setEPML4_step`, `setEPDPTE_step`, `setEPDTE_step`: **each adds a level and
   refines its specification** (`ObjEPT.v`).
 * `fill_run`: a loop that writes `f i` at `base + i`.
@@ -142,6 +144,29 @@ theorem matchUp_frame {ub eb : Nat} {e : EPT} {b b' : Region} (h : MatchUp ub eb
 theorem up_store {ub eb : Nat} {e e' : EPT} {g : Nat} {v : Val} {b b' : Region} (hs : ept_store e g v = some e')
     (hM : MatchUp ub eb e b) (hf : ∀ a, InUp ub a → b' a = b a) : MatchUp ub eb e' b' := by
   obtain ⟨s4, sP, sD⟩ := shape_store hs
+  obtain ⟨h1, h2, h3⟩ := matchUp_frame hM hf
+  refine ⟨by rw [s4]; exact h1, fun hv j hj => ?_, fun j k hj hk hv => ?_⟩
+  · rw [sP]; exact h2 (by rw [← s4]; exact hv) j hj
+  · rw [sD]; exact h3 j k hj hk (by rw [← sP]; exact hv)
+
+/-- Two trees with the same tables (only leaves may differ). -/
+def SameShape (e e' : EPT) : Prop := v4 e' = v4 e ∧ (∀ j, vP e' j = vP e j) ∧ ∀ j k, vD e' j k = vD e j k
+
+theorem SameShape.refl (e : EPT) : SameShape e e := ⟨rfl, fun _ => rfl, fun _ _ => rfl⟩
+
+theorem SameShape.of_eq {e e' : EPT} (h : e' = e) : SameShape e e' := by subst h; exact SameShape.refl _
+
+theorem SameShape.trans {e1 e2 e3 : EPT} (h1 : SameShape e1 e2) (h2 : SameShape e2 e3) : SameShape e1 e3 :=
+  ⟨h2.1.trans h1.1, fun j => (h2.2.1 j).trans (h1.2.1 j), fun j k => (h2.2.2 j k).trans (h1.2.2 j k)⟩
+
+theorem SameShape.store {e e' : EPT} {g : Nat} {v : Val} (h : ept_store e g v = some e') : SameShape e e' :=
+  shape_store h
+
+/-- **The upper tables match a tree with the same tables**, if their cells
+are kept. -/
+theorem matchUp_shape {ub eb : Nat} {e e' : EPT} {b b' : Region} (hM : MatchUp ub eb e b) (hs : SameShape e e')
+    (hf : ∀ a, InUp ub a → b' a = b a) : MatchUp ub eb e' b' := by
+  obtain ⟨s4, sP, sD⟩ := hs
   obtain ⟨h1, h2, h3⟩ := matchUp_frame hM hf
   refine ⟨by rw [s4]; exact h1, fun hv j hj => ?_, fun j k hj hk hv => ?_⟩
   · rw [sP]; exact h2 (by rw [← s4]; exact hv) j hj
