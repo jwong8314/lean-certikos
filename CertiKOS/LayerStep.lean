@@ -21,6 +21,8 @@ Steps compose like an interpreter run on `(σ, d)`:
 * `Step.triple`: a step from every state satisfying `P`, landing in `Q`, is a
   `Triple`.
 * `Step.lift`: frame, as `Triple.lift`.
+* `Triple.sim`: **data abstraction.** A layer whose state is a view of the
+  state below inherits the triples below.
 
 A layer states one step lemma per primitive of the layer below (what the
 primitive's specification does to `d`), and the code of the layer's own
@@ -148,6 +150,21 @@ theorem Step.iffM {M' : D → Region → Prop} {s : Stmt APrim} {σ σ' : Locals
   refine ⟨h.1, fun l b hlk hcs hm => ?_⟩
   obtain ⟨l1, b1, r1, c1, m1, f1⟩ := h.2 l b hlk hcs ((hM d b).1 hm)
   exact ⟨l1, b1, r1, c1, (hM d' b1).2 m1, f1⟩
+
+/-- **Data abstraction.** A layer whose state `a` is a view of the state `d`
+below (`R a d`) gets a triple from the triple below, if every abstract
+precondition gives the concrete one and every concrete result is the view of
+an abstract result. -/
+theorem Triple.sim {A : Type} {R : A → D → Prop} {P : Locals → D → Prop} {s : Stmt APrim}
+    {Q : Locals → D → Locals → D → Prop} {PA : Locals → A → Prop} {QA : Locals → A → Locals → A → Prop}
+    (h : Triple εR c i M F P s Q)
+    (hsim : ∀ σ a d, R a d → PA σ a → P σ d ∧ ∀ σ' d', Q σ d σ' d' → ∃ a', R a' d' ∧ QA σ a σ' a') :
+    Triple εR c i (fun a b => ∃ d, M d b ∧ R a d) F PA s QA := by
+  intro σ l b a hlk hcs ⟨d, hM, hR⟩ hp
+  obtain ⟨hP, hQ⟩ := hsim σ a d hR hp
+  obtain ⟨σ', l', b', d', hr, hc', hM', hlk', hf, hq⟩ := h σ l b d hlk hcs hM hP
+  obtain ⟨a', hR', hQA⟩ := hQ σ' d' hq
+  exact ⟨σ', l', b', a', hr, hc', ⟨d', hM', hR'⟩, hlk', hf, hQA⟩
 
 end Rules
 
