@@ -5,8 +5,8 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-121 Lean files, about 51,000 lines, and a Coq development of the
-virtualization layers in `coq/` (about 3,000 lines). No `sorry`, no `Admitted`. The main theorems depend only on
+126 Lean files, about 52,300 lines, and a Coq development of the
+virtualization layers in `coq/` (about 3,700 lines). No `sorry`, no `Admitted`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-19)
@@ -218,9 +218,14 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
   comments, first in Coq (`coq/`), then in Lean (`VEPT.lean`, `VVMCS.lean`,
   `VVMX.lean`), and proved to refine them; the machine has a guest mode
   (`GMachine.lean`); the hypercalls and the dispatcher are verified on a top
-  state with the consoles and the virtual machine. Not done: `vmx_init`, the
-  EPT's three upper tables in memory, `SYS_hvm_mmap` and `SYS_hvm_run_vm` as
-  system calls, and isolation between guests. The kernel
+  state with the consoles and the virtual machine, and so are `vmx_init`
+  (`coq/Init.v`, `VInit.lean`), the EPT's upper tables in memory
+  (`coq/EPT4.v`, `VEPT4.lean`), `SYS_hvm_mmap` (`THyp3.lean`), and
+  `SYS_hvm_run_vm` with the VM exit (`TRunVM.lean`); a visit to the guest
+  keeps the other processes' observations (`TSecVM.lean`). Not done: what the
+  guest itself does is not modelled, there is one virtual machine shared by
+  all processes (as in mCertiKOS), and the upper EPT tables are a separate
+  relation, not yet part of the top state's. The kernel
   guarantees are per CPU, and `PTInv` is not yet shown to hold across other
   CPUs' operations on the allocation table.
   See [KERNEL.md](KERNEL.md).
