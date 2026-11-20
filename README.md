@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-77 Lean files, about 33,800 lines. No `sorry`. The main theorems depend only on
+84 Lean files, about 37,100 lines. No `sorry`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-18)
@@ -76,7 +76,7 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
   switching only at yield points, are a special case of the multicore machine,
   so the multicore safety theorems apply to them.
 
-- **Kernel, memory management, ported from the mCertiKOS sources**
+- **Kernel, memory management and thread data, ported from the mCertiKOS sources**
   ([KERNEL.md](KERNEL.md) tracks the port layer by layer). The abstract
   state, the specifications and the C code are transcribed from the public
   mCertiKOS sources, and the C code is proved to refine the specifications.
@@ -106,6 +106,18 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
   - **Shared memory** (`MPTResv2.lean`, `MShareIntro.lean`, `MShareOp.lean`,
     `MShare.lean`): `pt_resv2` maps one page in two address spaces, and
     `offer_shared_mem` and `shared_mem_status` refine their specifications.
+  - **Thread data** (`PThreadIntro.lean`, `PQueueIntro.lean`,
+    `PQueueInit.lean`, `PCurID.lean`): thread control blocks, thread queues
+    and the current thread. `enqueue`, `dequeue` and `queue_rmv` on the
+    doubly linked control blocks refine their specifications.
+  - **Queues as lists** (`PAbQueue.lean`, `PAbQueueGen.lean`,
+    `PAbQueueInv.lean`): the layer where a queue is a list of thread ids.
+    Each list operation is matched by the pointer operation, the C code
+    refines the list specifications, and the list view's five invariants are
+    established by initialisation and kept by every operation.
+  - **Steps and data abstraction** (`LayerStep.lean`): running a function's
+    code call by call on the abstract state, and carrying a layer's triples
+    to a layer whose state is a view of it.
   - **Page ownership** (`PTInitGen.lean`): mCertiKOS's owner lists. The
     count-based specifications refine the ones that say which page-table
     entries own each page.
@@ -121,14 +133,16 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
   ticket lock. Lock-array and MCS clients still link by inlining.
 - **Owner bounds for other clients**: the generic fairness theorem has one
   instance, the ticket client.
-- **Thread layer, rest**: no scheduler data structures (ready and sleep
-  queues, context switch), and no thread liveness.
+- **Thread layer, rest**: the scheduler's data (control blocks, queues, the
+  current thread) is ported from mCertiKOS. No context switch, no scheduler
+  functions, and no thread liveness.
 - **Thread-safe CompCertX**: not attempted. It needs a verified compiler.
 - **Printers, rest**: turning tokens into text is still trusted.
 - **The rest of the kernel**: the page allocator, page tables, containers,
-  boot (up to the kernel's page table), shared memory and thread control
-  blocks are ported. Thread queues, the scheduler, IPC, traps and
-  virtualization are not started. The kernel
+  boot (up to the kernel's page table), shared memory, thread control
+  blocks, thread queues (linked, then as lists) and the current thread are
+  ported. The machine model (`CR3`, kernel contexts), the scheduler, IPC,
+  traps and virtualization are not started. The kernel
   guarantees are per CPU, and `PTInv` is not yet shown to hold across other
   CPUs' operations on the allocation table.
   See [KERNEL.md](KERNEL.md).

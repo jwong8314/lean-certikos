@@ -76,8 +76,11 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | **Process management** (`proc`) | | |
 | `PKContext`, `PKContextNew` | kernel contexts, `kctxt_switch`, `kctxt_new` | missing (needs assembly and a machine model) |
 | `PThreadIntro`, `PThreadInit` | thread control blocks | **`PThreadIntro` ported**: `PThreadIntro.lean`. `get_state`, `get_prev`, `get_next`, `set_state`, `set_prev`, `set_next`, `tcb_init` refine their specs; `threadInit_triple` verifies the loop of `thread_init` (`real_tcb`). `thread_init`'s first call is `sharedmem_init`, which needs `pmap_init` (machine model) |
-| `PQueueIntro`, `PQueueInit`, `PAbQueue` | thread queues, then abstract queues | missing |
-| `PCurID`, `PThreadSched`, `PThread` | current thread, `thread_spawn`, `thread_yield`, `thread_sleep`, `thread_wakeup` | missing (`ThreadLayer.lean` is a prototype of a different thing) |
+| `PQueueIntro` | thread queues: `get_head`, `get_tail`, `set_head`, `set_tail`, `tdq_init` | **ported**: `PQueueIntro.lean`. Each accessor refines its spec (`getHead_triple`, `getTail_triple`, `setHead_triple`, `setTail_triple`, `tdqInit_triple`); `tdqueueInit_triple` verifies the loop of `tdqueue_init` (`real_tdq`). `tdqueue_init`'s first call is `thread_init` (machine model) |
+| `PQueueInit` | `enqueue`, `dequeue`, `queue_rmv` on linked control blocks | **ported**: `PQueueInit.lean`. `enqueue_triple`, `dequeue_triple`, `queueRmv_triple`; the specs keep `TCBCorrect_range` and `TDQCorrect_range` (`enqueue_keeps`, `dequeue_keeps`, `queueRmv_keeps`) |
+| `PAbQueue` (`AbQueueGen`) | queues as lists; the refinement from lists to linked control blocks | **ported**: `PAbQueue.lean` (data, specs, relation), `PAbQueueGen.lean` (`enqueue_exists`, `dequeue_exists`, `queue_rmv_exists`, `get_state_exists`, `set_state_exists`), `PAbQueueInv.lean` (the five invariants are established and kept; `enqueue0_triple`, `dequeue0_triple`, `queueRmv0_triple`, `getState0_triple`, `setState0_triple`). Missing: the page-table and shared-memory primitives restated over the list view |
+| `PCurID` | current thread: `get_curid`, `set_curid` | **ported**: `PCurID.lean` (`getCurid_triple`, `setCurid_triple`, `liftA`) |
+| `PThreadSched`, `PThread` | `thread_spawn`, `sched_init`, `thread_wakeup`, `thread_yield`, `thread_sleep` | missing (`ThreadLayer.lean` is a prototype of a different thing). `thread_spawn` and the switches need the machine model |
 | `PIPCIntro`, `PIPC` | synchronous IPC | missing |
 | `PUCtxtIntro`, `PProc` | user contexts, `proc_create` | missing |
 | **Trap handling** (`trap`) | | |
@@ -108,7 +111,7 @@ Even for the ported layers:
 - **Agreed order** (2026-11-19): 0 calling convention for layers, 1 page
   tables, 2 boot and init, 3 shared memory, 4 invariants along the shared
   log, 5 thread data, 6 machine model and scheduler, 7 IPC, 8 processes and
-  traps, 9 security and virtualization. Stages 0 to 4 are done, except for what needs `CR3` (`pt_init`, `pmap_init`, and so the first line of `shared_mem_init`) and the linking step for the rely of stage 4.
+  traps, 9 security and virtualization. Stages 0 to 5 are done, except for what needs `CR3` (`pt_init`, `pmap_init`, and so the first line of `shared_mem_init`, `thread_init` and `tdqueue_init`) and the linking step for the rely of stage 4.
 - **`Layer.lean`: a primitive's interface is a triple.**
   `Triple εR c i M F P s Q` says: in a critical section, on a region matching
   abstract data `d` with precondition `P`, the code `s` runs to completion,
@@ -131,6 +134,17 @@ Even for the ported layers:
 - **`Triple.locked_inv`** (`LogInv.lean`) is `Triple.locked` with the
   invariant on the log: the caller assumes the log has it, not that the
   region matches anything.
+- **`LayerStep.lean`: steps.** `Step εR c i M F s σ d σ' d'` is a triple for
+  one starting point: from locals `σ` and data `d` the code ends with `σ'`
+  and `d'`. Steps compose like an interpreter run (`Step.seq`,
+  `Step.ite_true`, `Step.while_inv`), so a function that makes several calls
+  is run through one step lemma per call, with no intermediate predicates.
+  `Step.triple` turns the result into a triple. Used from the thread queues
+  on.
+- **`Triple.sim`** (`LayerStep.lean`) is data abstraction. When a layer's
+  state is a view of the state below (`R a d`), a triple below gives a triple
+  above, if abstract preconditions give concrete ones and concrete results
+  are views of abstract results. `PAbQueue` gets its triples this way.
 
 ## What the ported files prove
 
@@ -445,6 +459,93 @@ What this does not give:
   `thread_init_spec` is stated with only its loop verified.
 - `PKContext` and `PKContextNew`, which sit below this layer in mCertiKOS,
   are about saved registers and come with the machine model (stage 6).
+- `matchS_frame`, `matchT_frame`: the layers up to this one depend only on
+  the cells up to the end of the control blocks and from the page-table pool
+  on. The cells between are free for the layers above.
+
+### `PQueueIntro.lean`: thread queues
+
+- **State**: `QData` is `TData` with `tdq`, one `TDQValid head tail` per
+  queue, queues `0 … num_chan`. `num_proc` stands for "none". **Region**: two
+  cells per queue at `qb`, after the control blocks (`QLayout`, `MatchTDQ`,
+  `MatchQP`, `MatchQ`).
+- **The five accessors** refine their specifications (`getHead_triple`,
+  `getTail_triple`, `setHead_triple`, `setTail_triple`, `tdqInit_triple`).
+  `set_head` and `set_tail` take the value as a machine word (`sv < 2^32`),
+  which mCertiKOS gets from the C calling convention.
+- **`tdqueueInit_triple`**: the loop of `tdqueue_init` empties every queue
+  (`real_tdq`). It needs no precondition.
+- **Steps for the queue operations**: `getPrevQ`, `getNextQ`, `setPrevQ`,
+  `setNextQ`, `getHeadQ`, `getTailQ`, `setHeadQ`, `setTailQ`, each saying
+  what one accessor does to `QData`.
+- **`liftT`**: a primitive of the layers below keeps its triple in `QData`
+  if its footprint stays out of the queue pool.
+
+### `PQueueInit.lean`: `enqueue`, `dequeue`, `queue_rmv`
+
+- The three specifications are mCertiKOS's (`enqueue_spec` and
+  `dequeue_spec` from `proc/PQueueIntro.v`, `queue_rmv_spec` from
+  `objects/ObjQueue.v`), on the doubly linked control blocks.
+- **`enqueue_triple`, `dequeue_triple`, `queueRmv_triple`**: the C code
+  refines them. The proofs follow the specification's case split and run the
+  code through the accessor steps. `queue_rmv` has five paths; the one where
+  `prev = next` is why its C code tests `prev != next`.
+- `dequeue` and `queue_rmv` assume `TCBCorrect_range`, as mCertiKOS's code
+  proofs do: it puts the `next` and `prev` they follow inside the pool.
+- **`enqueue_keeps`, `dequeue_keeps`, `queueRmv_keeps`**: the specifications
+  keep `TCBCorrect_range` and `TDQCorrect_range`. `real_tcb_correct`,
+  `real_tdq_correct`: initialisation establishes them.
+- `dequeue` leaves its result in the local `proc_index`.
+
+### `PAbQueue.lean`, `PAbQueueGen.lean`, `PAbQueueInv.lean`: queues as lists
+
+- **State**: `AData` is `SData` with `abtcb` (`AbTCBValid state inQ`, `inQ`
+  the queue the thread is on, `-1` for none) and `abq` (`AbQValid l`, the
+  queue's threads, tail first). The pointers are gone.
+- **Specifications**: `get_state0_spec`, `set_state0_spec`, `enqueue0_spec`
+  (cons), `dequeue0_spec` (the last leaves), `queue_rmv0_spec` (remove),
+  `tdqueue_init0_spec`.
+- **The relation** is mCertiKOS's `AbQ_RealQ`, with
+  `abqueue_match_next_prev_rec` transcribed. `rec_iff` restates it: the head
+  is the list's last element, the tail its first, and each `(x, prev, next)`
+  of `links l` is the control block of `x`. `links_append` says appending
+  lists appends their links, with the two ends at the join pointing at each
+  other. The proofs are built on that and are new: mCertiKOS's
+  `AbQueueGen.v` is about 4,700 lines, most of it this refinement.
+- **`enqueue_exists`, `dequeue_exists`, `queue_rmv_exists`,
+  `get_state_exists`, `set_state_exists`**: when the list operation
+  succeeds, the pointer operation succeeds from every related state with the
+  same result, and the results are related. They use `AbQCorrect_range`,
+  `QCount` and `InQ`: a queue's list has no repeats (`q_nodup`) and queues
+  are disjoint (`q_disjoint`), so a control block that changes is seen by one
+  list only.
+- **The invariants** (`AInv`: `AbTCBCorrect_range`, `AbQCorrect_range`,
+  `NotInQ`, `QCount`, `InQ`) are established by initialisation
+  (`tdqueue_init0_inv`) and kept by every operation (`set_state0_keeps`,
+  `enqueue0_keeps`, `dequeue0_keeps`, `queue_rmv0_keeps`).
+- **The code refines the list specifications**: `getState0_triple`,
+  `setState0_triple`, `enqueue0_triple`, `dequeue0_triple`,
+  `queueRmv0_triple`, over `MatchA` (the region matches some pointer state
+  related to the lists). Each is the triple of `PQueueInit` carried across
+  the relation by `Triple.sim`.
+- `RelA` also carries the pointer view's invariants (`TCBCorrect_range`,
+  `TDQCorrect_range`), which mCertiKOS keeps as the lower layer's own.
+- `set_state0_spec` bounds the thread by `num_id` and `set_state_spec` by
+  `num_proc`. They are one constant in mCertiKOS; here the theorem assumes
+  `num_id ≤ num_proc`.
+- Not done: the page-table and shared-memory primitives are not restated
+  over `AData`. `liftT` brings them to `QData`; crossing to the list view
+  needs one more use of `Triple.sim`.
+
+### `PCurID.lean`: the current thread
+
+- **State**: `CData` is `AData` with `cid`. **Region**: one cell at `cidb`,
+  after the queue pool (`CLayout`, `MatchC`).
+- `getCurid_triple`, `setCurid_triple`: `get_curid` and `set_curid` refine
+  their specifications.
+- `liftA`: the primitives of the list view keep their triples in `CData`.
+- `thread_spawn`, `sched_init` and `thread_wakeup`, which mCertiKOS builds
+  on this layer, are the scheduler (stage 6).
 
 ### `MContainerInv.lean` and the end of `MALOp.lean`: the invariants
 
@@ -520,8 +621,14 @@ unused by the ports.
   `Container_valid` or `quota_bounded_AT`.
 - **No machine model.** `set_pt`, `set_pg`, context switch, traps and
   virtualization are about `CR3`, registers, privilege levels and assembly.
-  Until then nothing establishes `pg = true`, which the shared-memory
-  specifications require.
+  Until then nothing establishes `pg = true`, which the shared-memory,
+  thread and queue specifications require.
+- **Thread data** (stage 5): control blocks, queues, the list view and the
+  current thread are ported. The invariants of the list view are proved on
+  the specifications; they are not yet carried on the log as stage 4 does
+  for memory management. The initialisation chain (`thread_init`,
+  `tdqueue_init`) is verified loop by loop, not as one function, because its
+  first call reaches `pmap_init`.
 - **Boot** (stage 2): `mem_init`, `container_init`, `idpde_init`,
   `pt_init_comm` and `pt_init_kern` are ported, code and specification.
   `pt_init` and `pmap_init` wait for the machine model.
@@ -530,7 +637,10 @@ unused by the ports.
 
 See "How the ports are organised" above. Stages 2 to 4 are done except for
 `pt_init` and `pmap_init` (machine model) and the linking step for the rely.
-Stage 5 has started: the thread control blocks are ported
-(`PThreadIntro.lean`). Next: the thread queues (`PQueueIntro`: head and tail
-accessors; `PQueueInit`: `enqueue`, `dequeue`, `queue_rmv`), then the
-abstract queues (`PAbQueue`).
+Stage 5 (thread data) is done: control blocks (`PThreadIntro.lean`), queues
+(`PQueueIntro.lean`, `PQueueInit.lean`), queues as lists (`PAbQueue.lean`,
+`PAbQueueGen.lean`, `PAbQueueInv.lean`) and the current thread
+(`PCurID.lean`). Next is stage 6: the machine model (`CR3`, `set_pt`,
+`set_pg`, kernel contexts), which unblocks `pt_init`, `pmap_init` and the
+initialisation chain, then the scheduler (`thread_spawn`, `sched_init`,
+`thread_wakeup`, `thread_yield`, `thread_sleep`).
