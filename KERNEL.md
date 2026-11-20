@@ -80,7 +80,7 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | `PQueueInit` | `enqueue`, `dequeue`, `queue_rmv` on linked control blocks | **ported**: `PQueueInit.lean`. `enqueue_triple`, `dequeue_triple`, `queueRmv_triple`; the specs keep `TCBCorrect_range` and `TDQCorrect_range` (`enqueue_keeps`, `dequeue_keeps`, `queueRmv_keeps`) |
 | `PAbQueue` (`AbQueueGen`) | queues as lists; the refinement from lists to linked control blocks | **ported**: `PAbQueue.lean` (data, specs, relation), `PAbQueueGen.lean` (`enqueue_exists`, `dequeue_exists`, `queue_rmv_exists`, `get_state_exists`, `set_state_exists`), `PAbQueueInv.lean` (the five invariants are established and kept; `enqueue0_triple`, `dequeue0_triple`, `queueRmv0_triple`, `getState0_triple`, `setState0_triple`). Missing: the page-table and shared-memory primitives restated over the list view |
 | `PCurID` | current thread: `get_curid`, `set_curid` | **ported**: `PCurID.lean` (`getCurid_triple`, `setCurid_triple`, `liftA`) |
-| `PThreadSched`, `PThread` | `thread_spawn`, `sched_init`, `thread_wakeup`, `thread_yield`, `thread_sleep` | **`sched_init` ported**: `PSchedInit.lean` (`sched_init_triple`, `sched_init_inv`). The rest is missing (`ThreadLayer.lean` is a prototype of a different thing). `thread_spawn` and the switches need kernel contexts |
+| `PThreadSched`, `PThread` | `thread_spawn`, `sched_init`, `thread_wakeup`, `thread_yield`, `thread_sleep` | **`sched_init` ported**: `PSchedInit.lean` (`sched_init_triple`, `sched_init_inv`). **`thread_wakeup` ported**: `PThreadSched.lean` (`thread_wakeup_triple`, `thread_wakeup_keeps`). The rest is missing (`ThreadLayer.lean` is a prototype of a different thing). `thread_spawn` and the switches need kernel contexts |
 | `PIPCIntro`, `PIPC` | synchronous IPC | missing |
 | `PUCtxtIntro`, `PProc` | user contexts, `proc_create` | missing |
 | **Trap handling** (`trap`) | | |
@@ -394,6 +394,21 @@ What the model leaves out:
 
 So boot now reaches the states the operations are about: `pg = true`, every
 table initialised, thread 0 running.
+
+### `PThreadSched.lean`: `thread_wakeup`
+
+- `thread_wakeup_spec` is mCertiKOS's: the head of a sleep queue goes to the
+  ready queue (queue `num_chan`).
+- **`thread_wakeup_factors`**: the specification is its three calls,
+  `dequeue`, `set_state(READY)`, `enqueue`, each by its specification over
+  lists. As in mCertiKOS's code proof the invariants are needed: `InQ` says
+  the thread taken off the queue was on it, then `NotInQ` says it has a
+  container, which `set_state` and `enqueue` require.
+- **`thread_wakeup_triple`**: the C code refines the specification. It is
+  the first function verified on the list view alone. The proof calls
+  `dequeue0_triple`, `setState0_triple` and `enqueue0_triple` and never
+  mentions a control block or a queue pointer.
+- `thread_wakeup_keeps`: the specification keeps `AInv`.
 
 ### `MPTResv2.lean`: one page in two address spaces
 
@@ -711,5 +726,6 @@ for the linking step for the rely of stage 4. Stage 6 has started:
   `kctxt_new`). mCertiKOS's are saved registers and assembly. Here a
   context has to be a suspended ClightL computation, so this needs a machine
   that holds several of them and switches between them.
-- then the scheduler: `thread_spawn`, `thread_wakeup`, `thread_sched`,
-  `thread_yield`, `thread_sleep`.
+- then the rest of the scheduler: `thread_spawn`, `thread_sched`,
+  `thread_yield`, `thread_sleep` (`thread_wakeup` is done,
+  `PThreadSched.lean`).

@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-87 Lean files, about 38,200 lines. No `sorry`. The main theorems depend only on
+88 Lean files, about 38,400 lines. No `sorry`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-18)
@@ -141,8 +141,9 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 - **Owner bounds for other clients**: the generic fairness theorem has one
   instance, the ticket client.
 - **Thread layer, rest**: the scheduler's data (control blocks, queues, the
-  current thread) and `sched_init` are ported from mCertiKOS. No context
-  switch, no other scheduler function, and no thread liveness.
+  current thread), `sched_init` and `thread_wakeup` are ported from
+  mCertiKOS. No context switch, so no `thread_yield` or `thread_sleep`, and
+  no thread liveness.
 - **Thread-safe CompCertX**: not attempted. It needs a verified compiler.
 - **Printers, rest**: turning tokens into text is still trusted.
 - **The rest of the kernel**: the page allocator, page tables, containers,
