@@ -82,5 +82,7 @@ import CertiKOS.PSchedInit
 import CertiKOS.PThreadSched
 import CertiKOS.PSchedBoot
 import CertiKOS.KMachine
+import CertiKOS.PKContext
+import CertiKOS.PThreadSwitch
 import CertiKOS.PTInitGen
 import CertiKOS.MPTInit
