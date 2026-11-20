@@ -28,6 +28,11 @@ two runs, follows by applying the function to equal observations.
 * `confidentiality_yield`: **of a yield**: afterwards the process is parked
   and observes the same in both states, whoever was resumed.
 
+* `conf_thread_yield_restore`, `confidentiality_restore`: **when a parked
+  process is resumed** (`ConfidentialityRestore.v`). Two states it could not
+  tell apart while parked: once resumed it still cannot, and it resumes the
+  same kernel computation.
+
 Not here: the page-fault handler (`conf_ptfault_resv`), which needs that a
 fresh page reads the same in both states (mCertiKOS's `dirty_ppage`), and
 user-mode instructions, which are not modelled.
@@ -428,5 +433,55 @@ theorem confidentiality_yield {nc la1 la2 : Nat} {ql1 ql2 : List Nat} {rsK : KCt
   have c2 : e1.cid = e.cid := by rw [(exit_shape g1).1]
   exact conf_thread_yield (by rw [c1]; exact hi) (by rw [c1]; exact hl1) (by rw [c2]; exact hl2)
     (conf_proc_exit_user h1 g1 hi h)
+
+/-! ## A parked process is resumed (`ConfidentialityRestore.v`) -/
+
+/-- `thread_yield` that resumes the observer: it runs again, and sees the
+flags. -/
+theorem obs_resume {nc : Nat} {ql : List Nat} {rsK : KCtx} {d : UData} (hi : i ≠ d.cid) :
+    observe i (putK d (yieldOut nc i ql rsK (toK d))) =
+      { observe i d with observe_cid := true, observe_ikern := some d.ikern, observe_ihost := some d.ihost,
+                         observe_pg := some d.pg, observe_ipt := some d.ipt, observe_init := some d.init } := by
+  apply MyObs.ext13 <;> first
+    | rfl
+    | (show decide (i = i) = true; exact decide_eq_true rfl)
+    | (show setAt d.kctxt d.cid rsK i = d.kctxt i; exact setAt_ne _ _ hi)
+    | (show (if i = i then some _ else none) = some _; exact if_pos rfl)
+
+/-- Confidentiality when the observer is resumed (`conf_thread_yield_restore`):
+two states it could not tell apart while parked, in both of which some other
+process yields to it. It still cannot tell them apart, and it resumes the same
+kernel computation. -/
+theorem conf_thread_yield_restore {nc : Nat} {ql1 ql2 : List Nat} {rs1 rs2 : KCtx} {d1 d2 : UData}
+    (hi : i ≠ d1.cid) (hk : d1.ikern = d2.ikern) (hh : d1.ihost = d2.ihost) (hp : d1.pg = d2.pg)
+    (ht : d1.ipt = d2.ipt) (hn : d1.init = d2.init) (h : ObsEq i d1 d2) :
+    ObsEq i (putK d1 (yieldOut nc i ql1 rs1 (toK d1))) (putK d2 (yieldOut nc i ql2 rs2 (toK d2))) ∧
+      d1.kctxt i = d2.kctxt i := by
+  have hi2 : i ≠ d2.cid := fun e => hi (h.hcid.2 e)
+  refine ⟨(obsEq_convert _ _ _).2 ?_, h.hkctxt⟩
+  rw [obs_resume hi, obs_resume hi2, (obsEq_convert i d1 d2).1 h, hk, hh, hp, ht, hn]
+
+/-- **Confidentiality when a parked process is resumed by a yield.** The two
+yielding processes may have trapped with different registers. -/
+theorem confidentiality_restore {nc : Nat} {ql1 ql2 : List Nat} {rsK1 rsK2 : KCtx} {d d1 e e1 : UData}
+    {rs1 rs2 : UContext} (h1 : proc_exit_user_spec rs1 d = some d1) (g1 : proc_exit_user_spec rs2 e = some e1)
+    (hi : i ≠ d.cid) (hin1 : d.init = true) (hin2 : e.init = true) (hh1 : d.ihost = true)
+    (hh2 : e.ihost = true) (h : ObsEq i d e) :
+    ObsEq i (putK d1 (yieldOut nc i ql1 rsK1 (toK d1))) (putK e1 (yieldOut nc i ql2 rsK2 (toK e1))) ∧
+      d.kctxt i = e.kctxt i := by
+  have hi2 : i ≠ e.cid := fun e' => hi (h.hcid.2 e')
+  obtain ⟨hd1, hpg1⟩ := exit_shape h1
+  obtain ⟨he1, hpg2⟩ := exit_shape g1
+  have h' : ObsEq i d1 e1 :=
+    ((integ_proc_exit_user h1 hi).symm.trans h).trans (integ_proc_exit_user g1 hi2)
+  obtain ⟨a, b⟩ := conf_thread_yield_restore (nc := nc) (ql1 := ql1) (ql2 := ql2) (rs1 := rsK1) (rs2 := rsK2)
+    (d1 := d1) (d2 := e1) (by rw [hd1]; exact hi) (by rw [hd1, he1]) (by rw [hd1, he1]; exact hh1.trans hh2.symm)
+    (by rw [hd1, he1]; exact hpg1.trans hpg2.symm) (by rw [hd1, he1])
+    (by rw [hd1, he1]; exact hin1.trans hin2.symm) h'
+  refine ⟨a, ?_⟩
+  have e1' : d1.kctxt i = d.kctxt i := by rw [hd1]
+  have e2' : e1.kctxt i = e.kctxt i := by rw [he1]
+  rw [← e1', ← e2']
+  exact b
 
 end Security
