@@ -224,9 +224,10 @@ end Specs
 def MatchX (xb vb eb : Nat) (d : XSt) (b : Region) : Prop :=
   (∀ i v, i < VMX_Size' → d.vmx i = some v → b (xb + i) = v) ∧ MatchV vb d.vmcs b ∧ MatchE eb (toE d) b
 
-/-- The footprint: the three blocks. -/
+/-- The footprint: the three blocks (the VMCS with its revision identifier and
+abort indicator). -/
 def XF (xb vb eb : Nat) (k : Nat) : Prop :=
-  (xb ≤ k ∧ k < xb + VMX_Size') ∨ (vb + 2 ≤ k ∧ k < vb + 2 + NENC) ∨ (eb ≤ k ∧ k < eb + NPG)
+  (xb ≤ k ∧ k < xb + VMX_Size') ∨ (vb ≤ k ∧ k < vb + 2 + NENC) ∨ (eb ≤ k ∧ k < eb + NPG)
 
 def FE (eb : Nat) (k : Nat) : Prop := eb ≤ k ∧ k < eb + NPG
 

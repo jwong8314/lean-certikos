@@ -240,7 +240,7 @@ theorem liftV (hL : HL) {s : Stmt APrim} {σ σ' : Locals} {x : XSt} {v : VVMCS.
   refine ⟨h.1, fun l b hlk hcs hM => ?_⟩
   obtain ⟨l1, b1, r1, c1, m1, f1⟩ := h.2 l b hlk hcs hM.2.1
   refine ⟨l1, b1, r1, c1, ⟨fun i w hi hw => ?_, m1, VVMX.matchE_frame hM.2.2 (fun a h1 h2 => f1 a ?_)⟩,
-    fun k hk => f1 k (fun h' => hk (Or.inr (Or.inl h')))⟩
+    fun k hk => f1 k (fun h' => hk (Or.inr (Or.inl ⟨by have := h'.1; omega, h'.2⟩)))⟩
   · unfold VVMX.VMX_Size' at hi
     rw [f1 _ (by omega)]; exact hM.1 i w (by unfold VVMX.VMX_Size'; omega) hw
   · unfold VVMCS.NENC; omega

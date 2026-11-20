@@ -107,6 +107,7 @@ import CertiKOS.SecurityBigstep
 import CertiKOS.VEPT
 import CertiKOS.VVMCS
 import CertiKOS.VVMX
+import CertiKOS.VInit
 import CertiKOS.GMachine
 import CertiKOS.TTop
 import CertiKOS.THyp
