@@ -121,3 +121,4 @@ import CertiKOS.TSecVM
 import CertiKOS.PTInitGen
 import CertiKOS.MPTInit
 import CertiKOS.TInv
+import CertiKOS.TLock
