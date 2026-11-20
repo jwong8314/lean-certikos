@@ -109,5 +109,6 @@ import CertiKOS.VVMCS
 import CertiKOS.VVMX
 import CertiKOS.GMachine
 import CertiKOS.TTop
+import CertiKOS.THyp
 import CertiKOS.PTInitGen
 import CertiKOS.MPTInit

@@ -470,7 +470,8 @@ def nextEipS (xb vb : Nat) : Stmt APrim :=
       (.assign "r" (.bin .add (.var "t") (.var "u"))))
 
 theorem nextEip_step {σ : Locals} {d : XSt} {r : Val} (hs : vmx_get_next_eip_spec d = some r) :
-    ∃ σ', Step εR c i0 MX XFP (nextEipS xb vb) σ d σ' d ∧ σ' "r" = r := by
+    ∃ σ', Step εR c i0 MX XFP (nextEipS xb vb) σ d σ' d ∧ σ' "r" = r ∧
+      ∀ z, z ≠ "t" → z ≠ "u" → z ≠ "r" → σ' z = σ z := by
   unfold vmx_get_next_eip_spec at hs
   by_cases hc : flags d
   · rw [if_pos hc] at hs
@@ -484,7 +485,7 @@ theorem nextEip_step {σ : Locals} {d : XSt} {r : Val} (hs : vmx_get_next_eip_sp
         exact ⟨_, (xload_step hxv hve heb εR c i0 "t" (by decide) (by decide) e1).seq
           ((vread_step hxv hve heb εR c i0 "u" (by decide) (e := .const (BitVec.ofNat 32 C_VMCS_EXIT_INSTRUCTION_LENGTH))
             rfl (by unfold C_VMCS_EXIT_INSTRUCTION_LENGTH NENC; omega) e2).seq (Step.assign "r" (by decide) _)),
-          by simp [Locals.set, Expr.eval, BinOp.eval]⟩
+          by simp [Locals.set, Expr.eval, BinOp.eval], fun z h1 h2 h3 => by simp [Locals.set, h1, h2, h3]⟩
   · rw [if_neg hc] at hs; cases hs
 
 /-! ### The exit qualification -/
@@ -506,7 +507,8 @@ def ioWidthS (xb : Nat) : Stmt APrim :=
         (.ite (.bin .eq (.var "sz") (.const 1)) (.assign "r" (.const 1)) (.assign "r" (.const 2)))))
 
 theorem ioWidth_step {σ : Locals} {d : XSt} {r : Val} (hs : vmx_get_io_width_spec d = some r) :
-    ∃ σ', Step εR c i0 MX XFP (ioWidthS xb) σ d σ' d ∧ σ' "r" = r := by
+    ∃ σ', Step εR c i0 MX XFP (ioWidthS xb) σ d σ' d ∧ σ' "r" = r ∧
+      ∀ z, z ≠ "q" → z ≠ "sz" → z ≠ "r" → σ' z = σ z := by
   unfold vmx_get_io_width_spec at hs
   cases hq : qual d with
   | none => rw [hq] at hs; cases hs
@@ -519,15 +521,18 @@ theorem ioWidth_step {σ : Locals} {d : XSt} {r : Val} (hs : vmx_get_io_width_sp
         = q &&& 7 := by simp [Expr.eval, BinOp.eval, Locals.set]
     by_cases t0 : q &&& 7 = 0
     · rw [if_pos t0] at hs; cases hs
-      exact ⟨_, Q.seq (A.seq (Step.ite_true (eqz_true hsz t0) (Step.assign "r" (by decide) _))), by simp [Locals.set, Expr.eval]⟩
+      exact ⟨_, Q.seq (A.seq (Step.ite_true (eqz_true hsz t0) (Step.assign "r" (by decide) _))), by simp [Locals.set, Expr.eval],
+        fun z h1 h2 h3 => by simp [Locals.set, h1, h2, h3]⟩
     · rw [if_neg t0] at hs
       by_cases t1 : q &&& 7 = 1
       · rw [if_pos t1] at hs; cases hs
         exact ⟨_, Q.seq (A.seq (Step.ite_false (eqz_false hsz t0) (Step.ite_true (eqz_true hsz t1)
-          (Step.assign "r" (by decide) _)))), by simp [Locals.set, Expr.eval]⟩
+          (Step.assign "r" (by decide) _)))), by simp [Locals.set, Expr.eval],
+          fun z h1 h2 h3 => by simp [Locals.set, h1, h2, h3]⟩
       · rw [if_neg t1] at hs; cases hs
         exact ⟨_, Q.seq (A.seq (Step.ite_false (eqz_false hsz t0) (Step.ite_false (eqz_false hsz t1)
-          (Step.assign "r" (by decide) _)))), by simp [Locals.set, Expr.eval]⟩
+          (Step.assign "r" (by decide) _)))), by simp [Locals.set, Expr.eval],
+          fun z h1 h2 h3 => by simp [Locals.set, h1, h2, h3]⟩
 
 /-- `r = ((q >> 3) & 1) == EXIT_QUAL_IO_IN ? 0 : 1;` -/
 def ioWriteS (xb : Nat) : Stmt APrim :=
@@ -536,7 +541,7 @@ def ioWriteS (xb : Nat) : Stmt APrim :=
       (.assign "r" (.const 0)) (.assign "r" (.const 1)))
 
 theorem ioWrite_step {σ : Locals} {d : XSt} {r : Val} (hs : vmx_get_io_write_spec d = some r) :
-    ∃ σ', Step εR c i0 MX XFP (ioWriteS xb) σ d σ' d ∧ σ' "r" = r := by
+    ∃ σ', Step εR c i0 MX XFP (ioWriteS xb) σ d σ' d ∧ σ' "r" = r ∧ ∀ z, z ≠ "q" → z ≠ "r" → σ' z = σ z := by
   unfold vmx_get_io_write_spec at hs
   cases hq : qual d with
   | none => rw [hq] at hs; cases hs
@@ -547,9 +552,11 @@ theorem ioWrite_step {σ : Locals} {d : XSt} {r : Val} (hs : vmx_get_io_write_sp
       simp [Expr.eval, BinOp.eval, Locals.set]
     by_cases t : (q / 8) &&& 1 = 1
     · rw [if_pos t] at hs; cases hs
-      exact ⟨_, Q.seq (Step.ite_true (eqz_true he t) (Step.assign "r" (by decide) _)), by simp [Locals.set, Expr.eval]⟩
+      exact ⟨_, Q.seq (Step.ite_true (eqz_true he t) (Step.assign "r" (by decide) _)), by simp [Locals.set, Expr.eval],
+        fun z h1 h2 => by simp [Locals.set, h1, h2]⟩
     · rw [if_neg t] at hs; cases hs
-      exact ⟨_, Q.seq (Step.ite_false (eqz_false he t) (Step.assign "r" (by decide) _)), by simp [Locals.set, Expr.eval]⟩
+      exact ⟨_, Q.seq (Step.ite_false (eqz_false he t) (Step.assign "r" (by decide) _)), by simp [Locals.set, Expr.eval],
+        fun z h1 h2 => by simp [Locals.set, h1, h2]⟩
 
 /-- `r = (q >> k) & 1;` and `r = q >> 16;` -/
 def qualFieldS (xb : Nat) (e : Expr) : Stmt APrim := .seq (loadQualS xb) (.assign "r" e)
@@ -563,31 +570,34 @@ theorem qualField_step {σ : Locals} {d : XSt} {q : Val} (e : Expr) (hq : qual d
   (qual_step hxv hve heb εR c i0 hq).seq (Step.assign "r" (by decide) e)
 
 theorem ioRep_step {σ : Locals} {d : XSt} {r : Val} (hs : vmx_get_exit_io_rep_spec d = some r) :
-    ∃ σ', Step εR c i0 MX XFP (ioRepS xb) σ d σ' d ∧ σ' "r" = r := by
+    ∃ σ', Step εR c i0 MX XFP (ioRepS xb) σ d σ' d ∧ σ' "r" = r ∧ ∀ z, z ≠ "q" → z ≠ "r" → σ' z = σ z := by
   unfold vmx_get_exit_io_rep_spec at hs
   cases hq : qual d with
   | none => rw [hq] at hs; cases hs
   | some q =>
     rw [hq] at hs; simp only [Option.some.injEq] at hs; subst hs
-    exact ⟨_, qualField_step hxv hve heb εR c i0 _ hq, by simp [Locals.set, Expr.eval, BinOp.eval]⟩
+    exact ⟨_, qualField_step hxv hve heb εR c i0 _ hq, by simp [Locals.set, Expr.eval, BinOp.eval],
+      fun z h1 h2 => by simp [Locals.set, h1, h2]⟩
 
 theorem ioStr_step {σ : Locals} {d : XSt} {r : Val} (hs : vmx_get_exit_io_str_spec d = some r) :
-    ∃ σ', Step εR c i0 MX XFP (ioStrS xb) σ d σ' d ∧ σ' "r" = r := by
+    ∃ σ', Step εR c i0 MX XFP (ioStrS xb) σ d σ' d ∧ σ' "r" = r ∧ ∀ z, z ≠ "q" → z ≠ "r" → σ' z = σ z := by
   unfold vmx_get_exit_io_str_spec at hs
   cases hq : qual d with
   | none => rw [hq] at hs; cases hs
   | some q =>
     rw [hq] at hs; simp only [Option.some.injEq] at hs; subst hs
-    exact ⟨_, qualField_step hxv hve heb εR c i0 _ hq, by simp [Locals.set, Expr.eval, BinOp.eval]⟩
+    exact ⟨_, qualField_step hxv hve heb εR c i0 _ hq, by simp [Locals.set, Expr.eval, BinOp.eval],
+      fun z h1 h2 => by simp [Locals.set, h1, h2]⟩
 
 theorem ioPort_step {σ : Locals} {d : XSt} {r : Val} (hs : vmx_get_exit_io_port_spec d = some r) :
-    ∃ σ', Step εR c i0 MX XFP (ioPortS xb) σ d σ' d ∧ σ' "r" = r := by
+    ∃ σ', Step εR c i0 MX XFP (ioPortS xb) σ d σ' d ∧ σ' "r" = r ∧ ∀ z, z ≠ "q" → z ≠ "r" → σ' z = σ z := by
   unfold vmx_get_exit_io_port_spec at hs
   cases hq : qual d with
   | none => rw [hq] at hs; cases hs
   | some q =>
     rw [hq] at hs; simp only [Option.some.injEq] at hs; subst hs
-    exact ⟨_, qualField_step hxv hve heb εR c i0 _ hq, by simp [Locals.set, Expr.eval, BinOp.eval]⟩
+    exact ⟨_, qualField_step hxv hve heb εR c i0 _ hq, by simp [Locals.set, Expr.eval, BinOp.eval],
+      fun z h1 h2 => by simp [Locals.set, h1, h2]⟩
 
 /-! ### `vmx_set_mmap`: `r = ept_add_mapping(gpa, hpa, mem_type); if (r == 0) r = ept_invalidate_mappings();` -/
 

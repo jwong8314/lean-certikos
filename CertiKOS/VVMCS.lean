@@ -490,7 +490,8 @@ def testBitS (vb enc : Nat) (mask : Val) : Stmt APrim :=
 
 theorem testBit_step (hvb : vb + 2 + NENC ≤ 2 ^ 32) {enc : Nat} {mask : Val} (hk : enc < NENC) {σ : Locals}
     {d : VSt} {r : Val} (hs : testBit enc mask d = some r) :
-    ∃ σ', Step εR c i0 MS F (testBitS vb enc mask) σ d σ' d ∧ σ' "r" = r := by
+    ∃ σ', Step εR c i0 MS F (testBitS vb enc mask) σ d σ' d ∧ σ' "r" = r ∧
+      ∀ z, z ≠ "c" → z ≠ "r" → σ' z = σ z := by
   unfold testBit at hs
   by_cases hc : flags d
   · rw [if_pos hc] at hs
@@ -502,20 +503,22 @@ theorem testBit_step (hvb : vb + 2 + NENC ≤ 2 ^ 32) {enc : Nat} {mask : Val} (
       by_cases hz : cv &&& mask = 0
       · rw [if_pos hz] at hs; cases hs
         exact ⟨_, R.seq (Step.ite_true (by simp [Expr.eval, BinOp.eval, Locals.set, hz]) (Step.assign "r" (by decide) _)),
-          by simp [Locals.set, Expr.eval]⟩
+          by simp [Locals.set, Expr.eval], fun z h1 h2 => by simp [Locals.set, h1, h2]⟩
       · rw [if_neg hz] at hs; cases hs
         exact ⟨_, R.seq (Step.ite_false (by simp [Expr.eval, BinOp.eval, Locals.set]; exact hz) (Step.assign "r" (by decide) _)),
-          by simp [Locals.set, Expr.eval]⟩
+          by simp [Locals.set, Expr.eval], fun z h1 h2 => by simp [Locals.set, h1, h2]⟩
   · rw [if_neg hc] at hs; cases hs
 
 theorem checkPending_step (hvb : vb + 2 + NENC ≤ 2 ^ 32) {σ : Locals} {d : VSt} {r : Val}
     (hs : vmx_check_pending_event_spec d = some r) :
-    ∃ σ', Step εR c i0 MS F (testBitS vb C_VMCS_ENTRY_INTR_INFO VALID) σ d σ' d ∧ σ' "r" = r :=
+    ∃ σ', Step εR c i0 MS F (testBitS vb C_VMCS_ENTRY_INTR_INFO VALID) σ d σ' d ∧ σ' "r" = r ∧
+      ∀ z, z ≠ "c" → z ≠ "r" → σ' z = σ z :=
   testBit_step εR c i0 hvb (by unfold C_VMCS_ENTRY_INTR_INFO NENC; omega) hs
 
 theorem checkIntShadow_step (hvb : vb + 2 + NENC ≤ 2 ^ 32) {σ : Locals} {d : VSt} {r : Val}
     (hs : vmx_check_int_shadow_spec d = some r) :
-    ∃ σ', Step εR c i0 MS F (testBitS vb C_VMCS_GUEST_INTERRUPTIBILITY 3) σ d σ' d ∧ σ' "r" = r :=
+    ∃ σ', Step εR c i0 MS F (testBitS vb C_VMCS_GUEST_INTERRUPTIBILITY 3) σ d σ' d ∧ σ' "r" = r ∧
+      ∀ z, z ≠ "c" → z ≠ "r" → σ' z = σ z :=
   testBit_step εR c i0 hvb (by unfold C_VMCS_GUEST_INTERRUPTIBILITY NENC; omega) hs
 
 /-- \`x = vmread(EXIT_REASON); r = x & 0xffff;\` -/
@@ -524,7 +527,8 @@ def exitReasonS (vb : Nat) : Stmt APrim :=
 
 theorem exitReason_step (hvb : vb + 2 + NENC ≤ 2 ^ 32) {σ : Locals} {d : VSt} {r : Val}
     (hs : vmx_get_exit_reason_spec d = some r) :
-    ∃ σ', Step εR c i0 MS F (exitReasonS vb) σ d σ' d ∧ σ' "r" = r := by
+    ∃ σ', Step εR c i0 MS F (exitReasonS vb) σ d σ' d ∧ σ' "r" = r ∧
+      ∀ z, z ≠ "x" → z ≠ "r" → σ' z = σ z := by
   unfold vmx_get_exit_reason_spec at hs
   by_cases hc : flags d
   · rw [if_pos hc] at hs
@@ -534,7 +538,8 @@ theorem exitReason_step (hvb : vb + 2 + NENC ≤ 2 ^ 32) {σ : Locals} {d : VSt}
       rw [ex] at hs; simp only [Option.some.injEq] at hs; subst hs
       exact ⟨_, (vmread_step (F := F) εR c i0 hvb "x" (by decide) (σ := σ)
         (e := .const (BitVec.ofNat 32 C_VMCS_EXIT_REASON)) rfl (by unfold C_VMCS_EXIT_REASON NENC; omega) ex).seq
-        (Step.assign "r" (by decide) _), by simp [Locals.set, Expr.eval, BinOp.eval]⟩
+        (Step.assign "r" (by decide) _), by simp [Locals.set, Expr.eval, BinOp.eval],
+        fun z h1 h2 => by simp [Locals.set, h1, h2]⟩
   · rw [if_neg hc] at hs; cases hs
 
 /-- \`r = vmread(GUEST_PHYSICAL_ADDRESS)\` -/
