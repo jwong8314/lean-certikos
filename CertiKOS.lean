@@ -97,5 +97,7 @@ import CertiKOS.TTrapArg
 import CertiKOS.TTrap
 import CertiKOS.TDispatch
 import CertiKOS.TSysCall
+import CertiKOS.ObsEq
+import CertiKOS.Integrity
 import CertiKOS.PTInitGen
 import CertiKOS.MPTInit
