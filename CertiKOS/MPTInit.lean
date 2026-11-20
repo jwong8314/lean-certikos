@@ -258,7 +258,7 @@ theorem idpde_init_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage
     (hsz : 0 < size) (hv : MM_valid mm size) (hc : MM_correct mm size) :
     Triple εR c i0
       (fun (d : PTData) b => MatchAll maxpage num_id cb num_proc pb ib fb ida d b ∧ MatchMMap mmb mm size b)
-      (fun _ => True)
+      (fun k => k < cb + 5 * num_id ∨ pb ≤ k)
       (fun _ d => d.init = false ∧ d.pg = false ∧ d.ipt = true ∧ ∀ j, (d.AC j).cused = false)
       (idpdeInitCS mmb maxpage kl kh cb ib)
       (fun _ d _ d' => idpde_init_spec kl kh mm size d = some d') := by
@@ -286,8 +286,11 @@ theorem idpde_init_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpage
     (by show r1.init = true; rw [hr1e]) hipt d.idpde σ2 l1 b1
     (by simp [σ2, Locals.set, hlk1, hlk]) hcs1 hMm (by simp [σ2])
   refine ⟨σ3, l3, b3, Di dm (allP 1024 d.idpde), Runs.seq hr1 (Runs.seq h2 hr3), hcs3,
-    ⟨hM3, matchMM_of_eq hMM1 (fun k hk hk2 => hf3 k (by omega))⟩, ?_, fun _ hk => absurd trivial hk, ?_⟩
+    ⟨hM3, matchMM_of_eq hMM1 (fun k hk hk2 => hf3 k (by omega))⟩, ?_, fun k hk => ?_, ?_⟩
   · rw [hlk3]; simp [σ2, Locals.set, hlk1]
+  · have h1 : ¬ k < cb + 5 * num_id := fun h => hk (Or.inl h)
+    have h2 : ¬ pb ≤ k := fun h => hk (Or.inr h)
+    rw [hf3 k (by omega), hf1 k (by rintro (h | h) <;> omega)]
   · show idpde_init_spec kl kh mm size d = some _
     unfold idpde_init_spec
     rw [if_pos ⟨hin, hpg, hipt⟩, allP_real]
@@ -583,12 +586,12 @@ theorem pt_init_comm_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpa
     (hv : MM_valid mm size) (hc : MM_correct mm size) :
     Triple εR c i0
       (fun (d : PTData) b => MatchAll maxpage num_id cb num_proc pb ib fb ida d b ∧ MatchMMap mmb mm size b)
-      (fun _ => True)
+      (fun k => k < cb + 5 * num_id ∨ pb ≤ k)
       (fun _ d => d.init = false ∧ d.pg = false ∧ d.ipt = true ∧ (∀ j, (d.AC j).cused = false) ∧ NV d.ptpool)
       (ptInitCommCS mmb maxpage kl kh cb num_proc pb ib ida)
       (fun _ d _ d' => pt_init_comm_spec num_proc kl kh mm size d = some d') := by
   rintro σ l b d hlk hcs hMM ⟨hin, hpg, hipt, hun, hnv⟩
-  obtain ⟨σ1, l1, b1, d1, hr1, hcs1, ⟨hM1, hMM1⟩, hlk1, -, hq1⟩ :=
+  obtain ⟨σ1, l1, b1, d1, hr1, hcs1, ⟨hM1, hMM1⟩, hlk1, hf1, hq1⟩ :=
     idpde_init_triple εR c i0 hL hcm hmb hnum hmp hkl hkl' hkh hsz hv hc σ l b d hlk hcs hMM
       ⟨hin, hpg, hipt, hun⟩
   have hd1 : d1 = { d with
@@ -607,8 +610,10 @@ theorem pt_init_comm_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpa
     (by rw [hd1]; exact hpg) (by rw [hd1]) (by rw [hd1]; exact hipt) hnv σ2 l1 b1
     (by simp [σ2, Locals.set, hlk1, hlk]) hcs1 (by rw [hd1] at hM1 ⊢; exact hM1) (by simp [σ2])
   refine ⟨σ3, l3, b3, Dp d1 (allQ num_proc d.ptpool), Runs.seq hr1 (Runs.seq h2 hr3), hcs3,
-    ⟨hM3, matchMM_of_eq hMM1 (fun k hk hk2 => hf3 k (by omega))⟩, ?_, fun _ hk => absurd trivial hk, ?_⟩
+    ⟨hM3, matchMM_of_eq hMM1 (fun k hk hk2 => hf3 k (by omega))⟩, ?_, fun k hk => ?_, ?_⟩
   · rw [hlk3]; simp [σ2, Locals.set, hlk1]
+  · have h2 : ¬ pb ≤ k := fun h => hk (Or.inr h)
+    rw [hf3 k (by omega), hf1 k hk]
   · show pt_init_comm_spec num_proc kl kh mm size d = some _
     unfold pt_init_comm_spec
     rw [if_pos ⟨hin, hpg, hipt⟩, allQ_real hnp, hd1]
@@ -735,12 +740,12 @@ theorem pt_init_kern_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpa
     (hv : MM_valid mm size) (hc : MM_correct mm size) :
     Triple εR c i0
       (fun (d : PTData) b => MatchAll maxpage num_id cb num_proc pb ib fb ida d b ∧ MatchMMap mmb mm size b)
-      (fun _ => True)
+      (fun k => k < cb + 5 * num_id ∨ pb ≤ k)
       (fun _ d => d.init = false ∧ d.pg = false ∧ d.ipt = true ∧ (∀ j, (d.AC j).cused = false) ∧ NV d.ptpool)
       (ptInitKernCS mmb maxpage kl kh cb num_proc pb ib ida)
       (fun _ d _ d' => pt_init_kern_spec num_proc kl kh mm size d = some d') := by
   rintro σ l b d hlk hcs hMM ⟨hin, hpg, hipt, hun, hnv⟩
-  obtain ⟨σ1, l1, b1, d1, hr1, hcs1, ⟨hM1, hMM1⟩, hlk1, -, hq1⟩ :=
+  obtain ⟨σ1, l1, b1, d1, hr1, hcs1, ⟨hM1, hMM1⟩, hlk1, hf1, hq1⟩ :=
     pt_init_comm_triple εR c i0 hL hida hnp hcm hmb hnum hmp hkl hkl' hkh hsz hv hc σ l b d hlk hcs hMM
       ⟨hin, hpg, hipt, hun, hnv⟩
   have hd1 : d1 = { d with
@@ -763,8 +768,10 @@ theorem pt_init_kern_triple (εR : REnv) (c : CPU) (i0 : Nat) (hL : Layout maxpa
     (by simp [σ3, Locals.set]) (by simp [σ3])
   refine ⟨σ4, l4, b4, Dp d1 (kernQ 704 (real_ptp num_proc d.ptpool)),
     Runs.seq hr1 (Runs.seq (Runs.assign _ _) (Runs.seq (Runs.assign _ _) hr4)), hcs4,
-    ⟨hM4, matchMM_of_eq hMM1 (fun k hk hk2 => hf4 k (by omega))⟩, ?_, fun _ hk => absurd trivial hk, ?_⟩
+    ⟨hM4, matchMM_of_eq hMM1 (fun k hk hk2 => hf4 k (by omega))⟩, ?_, fun k hk => ?_, ?_⟩
   · rw [hlk4]; simp [σ3, Locals.set, hlk1]
+  · have h2 : ¬ pb ≤ k := fun h => hk (Or.inr h)
+    rw [hf4 k (by omega), hf1 k hk]
   · show pt_init_kern_spec num_proc kl kh mm size d = some _
     unfold pt_init_kern_spec real_pt
     rw [if_pos ⟨hin, hpg, hipt⟩, kernQ_calc, hd1]
