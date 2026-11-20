@@ -232,7 +232,8 @@ theorem kctxt_new_run (code : Nat → Stmt KPrim)
     ∃ (σ' : Locals) (l' : RLog) (b' : Region),
       KStar εR c code ⟨⟨kctxtNewK cb mc num_proc, K, σ⟩, d.kctxt, l⟩ ⟨⟨.skip, K, σ'⟩, d'.kctxt, l'⟩ ∧
       CS1 c i0 l' b' ∧ MC d'.toCData b' ∧ σ' "lk" = σ "lk" ∧ σ' "r" = BitVec.ofNat 32 i ∧
-      ∀ k, ¬ (cb ≤ k ∧ k < cb + 5 * num_id) → b' k = b k := by
+      (∀ k, ¬ (cb ≤ k ∧ k < cb + 5 * num_id) → b' k = b k) ∧
+      ∀ z, frS z (ptNewS cb mc) = true → z ≠ "_" → σ' z = σ z := by
   have hnp : num_proc < 2 ^ 32 := np_lt hL.qlay
   unfold kctxt_new_spec at hs
   cases hp : pt_new_spec num_id mc id q d.toPTData with
@@ -276,7 +277,9 @@ theorem kctxt_new_run (code : Nat → Stmt KPrim)
       (setAt d.kctxt i' { d.kctxt i' with cont := .stop }) l1
     rw [er', ee, setAt_eq, setAt_setAt] at k6
     refine ⟨(σ1.set "_" 0).set "_" 0, l1, b1,
-      k1.trans (.step k2 (.step k3 (.step k4 (.step k5 (.single k6))))), hcs1, hM1, ?_, ?_, hf1⟩
+      k1.trans (.step k2 (.step k3 (.step k4 (.step k5 (.single k6))))), hcs1, hM1, ?_, ?_, hf1,
+      fun z hz hne => by
+        rw [Locals.set_other _ _ hne, Locals.set_other _ _ hne]; exact hr.frame hz⟩
     · simp [Locals.set, hlk1]
     · simp [Locals.set, hr1]
 
@@ -295,7 +298,9 @@ theorem thread_spawn_run (code : Nat → Stmt KPrim)
         ⟨⟨.skip, K, σ'⟩, d'.kctxt, l'⟩ ∧
       CS1 c i0 l' b' ∧ MC d'.toCData b' ∧ σ' "lk" = σ "lk" ∧ σ' "r" = BitVec.ofNat 32 i ∧
       AInv num_proc num_chan d'.toAData ∧
-      ∀ k, ¬ SpawnF cb num_id tb num_proc qb num_chan k → b' k = b k := by
+      (∀ k, ¬ SpawnF cb num_id tb num_proc qb num_chan k → b' k = b k) ∧
+      ∀ z, frS z (ptNewS cb mc) = true → frS z (spawnTailS tb qb num_proc num_chan) = true → z ≠ "_" →
+        σ' z = σ z := by
   have hnp : num_proc < 2 ^ 32 := np_lt hL.qlay
   unfold thread_spawn_spec at hs
   cases hk : kctxt_new_spec num_id mc code entry id q d with
@@ -374,7 +379,7 @@ theorem thread_spawn_run (code : Nat → Stmt KPrim)
           obtain ⟨a1, hss, henq⟩ := park_factors (np := num_proc) (nc := num_chan) (a := d1.toAData)
             (cid := i') (q := num_chan) (sv := 0) (ts := .READY) epg eipt hi'lt (Nat.le_refl _) hcu1 hai1 rfl hq
           -- the machine run
-          obtain ⟨σ1, l1, b1, hks, hcs1, hM1, hlk1, hr1, hf1⟩ := kctxt_new_run εR c i0 code hL hnum hnn
+          obtain ⟨σ1, l1, b1, hks, hcs1, hM1, hlk1, hr1, hf1, hfrk⟩ := kctxt_new_run εR c i0 code hL hnum hnn
             (K := .seq (mapS .base (spawnTailS tb qb num_proc num_chan)) K) hid hent hlk hcs hM h1 h2 h3 hk0
           have hlk1' : (σ1 "lk").toNat = i0 := by rw [hlk1]; exact hlk
           obtain ⟨l2, b2, r2, c2, m2, f2⟩ := setStateC εR c i0 hL (σ := σ1) (ie := .var "r") (ve := .const 0)
@@ -391,7 +396,8 @@ theorem thread_spawn_run (code : Nat → Stmt KPrim)
               (asg_run "proc_index" (.var "r") (by simp [Expr.eval, Locals.set, hr1])) r3))
           refine ⟨σ3, l3, b3, ?_, c3, m3, by rw [k3]; simp [Locals.set, hlk1], hr3, enqueue0_keeps henq hI2,
             fun k hk => by
-              rw [f3 k (fun h => hk (Or.inr h)), f2 k (fun h => hk (Or.inr h)), hf1 k (fun h => hk (Or.inl h))]⟩
+              rw [f3 k (fun h => hk (Or.inr h)), f2 k (fun h => hk (Or.inr h)), hf1 k (fun h => hk (Or.inl h))],
+            fun z hz1 hz2 hne => (htail.frame hz2).trans (hfrk z hz1 hne)⟩
           exact (KStar.single (kstep_seq _ _ K σ d.kctxt l)).trans
             (hks.trans ((KStar.single (kstep_skip_seq _ K σ1 d1.kctxt l1)).trans (kstar_base htail K d1.kctxt)))
 

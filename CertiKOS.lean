@@ -91,5 +91,7 @@ import CertiKOS.PIPC
 import CertiKOS.PIPCRecv
 import CertiKOS.PProcInit
 import CertiKOS.PUCtxtIntro
+import CertiKOS.UMachine
+import CertiKOS.PProc
 import CertiKOS.PTInitGen
 import CertiKOS.MPTInit

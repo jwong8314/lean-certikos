@@ -155,11 +155,13 @@ theorem matchC_all {d : CData} {b : Region} (hM : MC d b) :
   have eP : d.toPTData = q.toPTData := congrArg SData.toPTData hS
   rw [eP]; exact hQ.t.s.all
 
-/-- A new page-table state under the same threads, queues and current thread. -/
+/-- A new page-table state under the same threads, queues and current thread.
+The cells between the containers and the shared-memory table (the memory map
+and the two register words) may change. -/
 theorem matchC_setPT (hL : CLayout maxpage num_id cb num_proc pb ib fb sb tb num_chan qb cidb) {d : CData}
     {b b' : Region} {p : PTData} (hM : MC d b)
     (hA' : MatchAll maxpage num_id cb num_proc pb ib fb ida p b')
-    (hgap : ∀ k, cb + 5 * num_id ≤ k → k < pb → b' k = b k) (hpg : p.pg = true → d.pg = true) :
+    (hgap : ∀ k, sb ≤ k → k < pb → b' k = b k) (hpg : p.pg = true → d.pg = true) :
     MC { d with toPTData := p } b' := by
   obtain ⟨⟨q, hQ, hS, hR, hInv⟩, hcid⟩ := hM
   have hSL := hL.qlay.tlay.slay
@@ -199,6 +201,7 @@ theorem stepPC (hL : CLayout maxpage num_id cb num_proc pb ib fb sb tb num_chan 
     (h : Step εR c i0 (MatchAll maxpage num_id cb num_proc pb ib fb ida) F s σ d.toPTData σ' p)
     (hF : ∀ k, F k → k < cb + 5 * num_id ∨ pb ≤ k) (hpg : p.pg = d.pg) :
     Step εR c i0 MC F s σ d σ' { d with toPTData := p } := by
+  have := hL.qlay.tlay.slay.hsb
   refine ⟨h.1, fun l b hlk hcs hM => ?_⟩
   obtain ⟨l', b', hr, hcs', hA', hf⟩ := h.2 l b hlk hcs (matchC_all hM)
   exact ⟨l', b', hr, hcs', matchC_setPT hL hM hA' (fun k h1 h2 => hf k (fun hk => by have := hF k hk; omega))
