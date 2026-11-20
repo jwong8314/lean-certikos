@@ -370,7 +370,7 @@ Theorem add_mapping_ref : forall d d' m s gpa hpa memtype r, MatchE d m ->
   s "gpa" = gpa -> s "hpa" = hpa -> s "memtype" = memtype ->
   ept_add_mapping_spec maxpage gpa hpa memtype d = Some (d', r) ->
   exists s' m', exec addMappingS s m s' m' /\ MatchE d' m' /\ s' "r" = r /\
-    (forall z, z <> "r" -> s' z = s z).
+    (forall z, z <> "r" -> s' z = s z) /\ (forall a, (a < eb \/ eb + NPG <= a) -> m' a = m a).
 Proof.
   intros d d' m s gpa hpa memtype r HM Hs Hh Hm H; unfold ept_add_mapping_spec in H.
   destruct (flags d); [|discriminate].
@@ -381,13 +381,14 @@ Proof.
     [|discriminate].
   inversion H; subst d' r; clear H.
   set (va := wor (wor (wand hpa EPT_ADDR_MASK) EPT_PG_IGNORE_PAT_or_PERM) (wshl memtype EPT_PG_MEMORY_TYPE)).
-  exists (lset s "r" 0), (upd m (eb + gpa) va); split; [|split; [|split]].
+  exists (lset s "r" 0), (upd m (eb + gpa) va); split; [|split; [|split; [|split]]].
   - apply ESeq with (s1 := s) (m1 := upd m (eb + gpa) va).
     + apply exec_store; [apply eval_addr; [lia | auto] | simpl; rewrite Hh, Hm; reflexivity].
     + apply exec_assign; reflexivity.
   - eapply match_store; eauto; lia.
   - apply lset_same.
   - intros z Hz; apply lset_other; auto.
+  - intros a Ha; apply upd_other; unfold NPG in *; lia.
 Qed.
 
 (** *** [ept_invalidate_mappings]: [invept] is a hardware TLB flush. *)
