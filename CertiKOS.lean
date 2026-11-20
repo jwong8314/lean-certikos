@@ -71,5 +71,6 @@ import CertiKOS.MMInv
 import CertiKOS.PThreadIntro
 import CertiKOS.LayerStep
 import CertiKOS.PQueueIntro
+import CertiKOS.PQueueInit
 import CertiKOS.PTInitGen
 import CertiKOS.MPTInit

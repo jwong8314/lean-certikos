@@ -151,4 +151,43 @@ theorem Step.iffM {M' : D → Region → Prop} {s : Stmt APrim} {σ σ' : Locals
 
 end Rules
 
+/-! ## Guards that compare machine words -/
+
+theorem w32_inj {a b : Nat} (ha : a < 2 ^ 32) (hb : b < 2 ^ 32)
+    (h : (BitVec.ofNat 32 a : Val) = BitVec.ofNat 32 b) : a = b := by
+  have := congrArg BitVec.toNat h
+  simp only [BitVec.toNat_ofNat] at this
+  rwa [Nat.mod_eq_of_lt ha, Nat.mod_eq_of_lt hb] at this
+
+/-- `x == b` holds. -/
+theorem eqc_true {σ : Locals} {x : Ident} {a b : Nat} (h : σ x = BitVec.ofNat 32 a) (e : a = b) :
+    ¬ (Expr.bin .eq (.var x) (.const (BitVec.ofNat 32 b))).eval σ = 0 := eq_true (by rw [h, e])
+
+/-- `x == b` fails. -/
+theorem eqc_false {σ : Locals} {x : Ident} {a b : Nat} (h : σ x = BitVec.ofNat 32 a) (ha : a < 2 ^ 32)
+    (hb : b < 2 ^ 32) (e : a ≠ b) : (Expr.bin .eq (.var x) (.const (BitVec.ofNat 32 b))).eval σ = 0 :=
+  eq_false (by rw [h]; exact fun h' => e (w32_inj ha hb h'))
+
+/-- `x != b` holds. -/
+theorem nec_true {σ : Locals} {x : Ident} {a b : Nat} (h : σ x = BitVec.ofNat 32 a) (ha : a < 2 ^ 32)
+    (hb : b < 2 ^ 32) (e : a ≠ b) : ¬ (Expr.bin .ne (.var x) (.const (BitVec.ofNat 32 b))).eval σ = 0 :=
+  ne_true (by rw [h]; exact fun h' => e (w32_inj ha hb h'))
+
+/-- `x != b` fails. -/
+theorem nec_false {σ : Locals} {x : Ident} {a b : Nat} (h : σ x = BitVec.ofNat 32 a) (e : a = b) :
+    (Expr.bin .ne (.var x) (.const (BitVec.ofNat 32 b))).eval σ = 0 := ne_false (by rw [h, e])
+
+/-- `x != y` holds. -/
+theorem nev_true {σ : Locals} {x y : Ident} {a b : Nat} (hx : σ x = BitVec.ofNat 32 a)
+    (hy : σ y = BitVec.ofNat 32 b) (ha : a < 2 ^ 32) (hb : b < 2 ^ 32) (e : a ≠ b) :
+    ¬ (Expr.bin .ne (.var x) (.var y)).eval σ = 0 := by
+  have : σ x ≠ σ y := by rw [hx, hy]; exact fun h' => e (w32_inj ha hb h')
+  simp [Expr.eval, BinOp.eval, this]
+
+/-- `x != y` fails. -/
+theorem nev_false {σ : Locals} {x y : Ident} {a b : Nat} (hx : σ x = BitVec.ofNat 32 a)
+    (hy : σ y = BitVec.ofNat 32 b) (e : a = b) : (Expr.bin .ne (.var x) (.var y)).eval σ = 0 := by
+  have : σ x = σ y := by rw [hx, hy, e]
+  simp [Expr.eval, BinOp.eval, this]
+
 end Layer
