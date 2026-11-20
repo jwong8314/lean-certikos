@@ -112,3 +112,35 @@ Proof. intros; subst; constructor. Qed.
 
 Lemma exec_store : forall a v s m k w, eval s a = k -> eval s v = w -> exec (Store a v) s m s (upd m k w).
 Proof. intros; subst; constructor. Qed.
+
+(** ** The locals a statement may change *)
+
+Fixpoint assigns (c : stmt) : list string :=
+  match c with
+  | Skip | Store _ _ => nil
+  | Assign x _ | Load x _ => cons x nil
+  | Seq a b | Ite _ a b => app (assigns a) (assigns b)
+  | While _ b => assigns b
+  end.
+
+(** A local that a statement never assigns keeps its value. *)
+Lemma exec_assigns : forall c s m s' m', exec c s m s' m' ->
+  forall z, ~ List.In z (assigns c) -> s' z = s z.
+Proof.
+  induction 1; intros z Hz; simpl in Hz; try reflexivity.
+  - apply lset_other; intros ->; apply Hz; left; reflexivity.
+  - apply lset_other; intros ->; apply Hz; left; reflexivity.
+  - rewrite IHexec2, IHexec1; auto; intro H'; apply Hz; apply List.in_or_app; auto.
+  - apply IHexec; intro H'; apply Hz; apply List.in_or_app; auto.
+  - apply IHexec; intro H'; apply Hz; apply List.in_or_app; auto.
+  - rewrite IHexec2, IHexec1; auto.
+Qed.
+
+(** Deciding that a local is not assigned. *)
+Lemma not_assigned : forall z l, List.existsb (String.eqb z) l = false -> ~ List.In z l.
+Proof.
+  intros z l H Hin.
+  assert (T : List.existsb (String.eqb z) l = true)
+    by (apply List.existsb_exists; exists z; split; [exact Hin | apply String.eqb_refl]).
+  rewrite H in T; discriminate.
+Qed.

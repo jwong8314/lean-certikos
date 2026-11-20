@@ -245,6 +245,18 @@ Definition MatchV (v : VMCS) (m : mem) : Prop :=
 
 Definition MatchS (d : VSt) (m : mem) : Prop := MatchV (vmcs d) m.
 
+(** The cells outside the VMCS block are left alone. *)
+Definition FrameV (m m' : mem) : Prop := forall a, (a < vb \/ vb + 2 + NENC <= a) -> m' a = m a.
+
+Lemma frame_upd : forall m k w, vb + 2 <= k < vb + 2 + NENC -> FrameV m (upd m k w).
+Proof. intros m k w Hk a Ha; apply upd_other; lia. Qed.
+
+Lemma frame_trans : forall m1 m2 m3, FrameV m1 m2 -> FrameV m2 m3 -> FrameV m1 m3.
+Proof. intros m1 m2 m3 F1 F2 a Ha; rewrite F2 by auto; auto. Qed.
+
+Lemma frame_refl : forall m, FrameV m m.
+Proof. intros m a _; reflexivity. Qed.
+
 (** [vmread(e)] and [vmwrite(e, v)]: the cell of field [e]. *)
 Definition encE (e : expr) : expr := Bin Add (Const (vb + 2)) e.
 Definition vmreadS (x : string) (e : expr) : stmt := Load x (encE e).
@@ -355,7 +367,7 @@ Qed.
 
 Theorem writez64_ref : forall d d' m s enc value, MatchS d m -> s "enc" = enc ->
   s "lo" = value mod W -> s "hi" = (value / W) mod W ->
-  vmcs_writez64_spec enc value d = Some d' -> exists m', exec writez64S s m s m' /\ MatchS d' m'.
+  vmcs_writez64_spec enc value d = Some d' -> exists m', exec writez64S s m s m' /\ MatchS d' m' /\ FrameV m m'.
 Proof.
   intros d d' m s enc value HM Hs Hlo Hhi H; unfold vmcs_writez64_spec in H.
   apply flags_true in H; destruct H as [_ H]; apply valid_true in H; destruct H as [Hve H].
@@ -366,7 +378,8 @@ Proof.
     + apply vmwrite_run; auto.
     + apply (vmwrite_run _ s _ _ (enc + 1) ((value / W) mod W)); auto.
       simpl; rewrite Hs; apply norm_small; unfold NENC, W in *; lia.
-  - apply match_write64; auto.
+  - split; [apply match_write64; auto|].
+    repeat (eapply frame_trans; [|apply frame_upd; lia]); apply frame_refl.
 Qed.
 
 (** *** [vmx_set_intercept_intwin] *)
@@ -382,7 +395,7 @@ Definition setIntwinS : stmt :=
 
 Theorem set_intwin_ref : forall d d' m s enable, MatchS d m -> s "enable" = enable ->
   vmx_set_intercept_intwin_spec enable d = Some d' ->
-  exists s' m', exec setIntwinS s m s' m' /\ MatchS d' m'.
+  exists s' m', exec setIntwinS s m s' m' /\ MatchS d' m' /\ FrameV m m'.
 Proof.
   intros d d' m s enable HM Hs H; unfold vmx_set_intercept_intwin_spec in H.
   apply flags_true in H; destruct H as [_ H].
@@ -399,7 +412,7 @@ Proof.
       apply ESeq with (s1 := lset (lset s "c" c) "c" c') (m1 := m).
       * apply EIteT; [simpl; rewrite Ee, T; discriminate | apply exec_assign; simpl; rewrite lset_same; reflexivity].
       * apply vmwrite_run; auto; apply lset_same.
-    + apply match_write; auto.
+    + split; [apply match_write; auto | apply frame_upd; lia].
   - inversion H; subst d'; clear H.
     set (c' := wand c NOT_PROCBASED_INT_WINDOW_EXITING).
     exists (lset (lset s "c" c) "c" c'), (upd m (vb + 2 + C_VMCS_PRI_PROC_BASED_CTLS) c'); split.
@@ -407,7 +420,7 @@ Proof.
       apply ESeq with (s1 := lset (lset s "c" c) "c" c') (m1 := m).
       * apply EIteF; [simpl; rewrite Ee, T; reflexivity | apply exec_assign; simpl; rewrite lset_same; reflexivity].
       * apply vmwrite_run; auto; apply lset_same.
-    + apply match_write; auto.
+    + split; [apply match_write; auto | apply frame_upd; lia].
 Qed.
 
 (** *** [vmx_set_desc] *)
@@ -469,7 +482,7 @@ Qed.
 Theorem set_desc_ref : forall d d' m s seg sel base lim ar, MatchS d m ->
   s "seg" = seg -> s "sel" = norm sel -> s "base" = norm base -> s "lim" = norm lim -> s "ar" = norm ar ->
   vmx_set_desc_spec seg sel base lim ar d = Some d' ->
-  exists s' m', exec setDescS s m s' m' /\ MatchS d' m'.
+  exists s' m', exec setDescS s m s' m' /\ MatchS d' m' /\ FrameV m m'.
 Proof.
   intros d d' m s seg sel base lim ar HM Hseg Hsel Hb Hl Ha H; unfold vmx_set_desc_spec in H.
   apply flags_true in H; destruct H as [_ H].
@@ -500,10 +513,12 @@ Proof.
       apply EIteF; [simpl; rewrite G by auto; rewrite Hseg; replace (seg =? 8) with false by (symmetry; apply Z.eqb_neq; lia); reflexivity|].
       apply EIteF; [simpl; rewrite G by auto; rewrite Hseg; replace (seg =? 9) with false by (symmetry; apply Z.eqb_neq; lia); reflexivity|].
       apply ESeq with (s1 := s1) (m1 := m3); apply vmwrite_run; simpl; auto; rewrite G by auto; auto.
-    + exact (match_write _ _ es (norm sel) (match_write _ _ ea (norm ar) M2 Ra) Rsl).
+    + split; [exact (match_write _ _ es (norm sel) (match_write _ _ ea (norm ar) M2 Ra) Rsl)|].
+      unfold m3, m2, m1; repeat (eapply frame_trans; [|apply frame_upd; lia]); apply frame_refl.
   - apply Z.ltb_ge in S8.
     inversion Ed; subst dt; clear Ed.
-    exists s1, m2; split; [|exact M2].
+    exists s1, m2; split; [|split; [exact M2|]].
+    2: unfold m2, m1; repeat (eapply frame_trans; [|apply frame_upd; lia]); apply frame_refl.
     apply ESeq with (s1 := s1) (m1 := m); [exact Ex1|].
     apply ESeq with (s1 := s1) (m1 := m1); [apply vmwrite_run; simpl; auto; rewrite G by auto; auto|].
     apply ESeq with (s1 := s1) (m1 := m2); [apply vmwrite_run; simpl; auto; rewrite G by auto; auto|].
@@ -534,7 +549,7 @@ Definition injectEventS : stmt :=
 Theorem inject_event_ref : forall d d' m s type vector errcode ev, MatchS d m ->
   s "type" = type -> s "vector" = vector -> s "errcode" = norm errcode -> s "ev" = ev ->
   vmx_inject_event_spec type vector errcode ev d = Some d' ->
-  exists s' m', exec injectEventS s m s' m' /\ MatchS d' m'.
+  exists s' m', exec injectEventS s m s' m' /\ MatchS d' m' /\ FrameV m m'.
 Proof.
   intros d d' m s type vector errcode ev HM Ht Hv He Hev H; unfold vmx_inject_event_spec in H.
   apply flags_true in H; destruct H as [_ H].
@@ -561,7 +576,8 @@ Proof.
         apply ESeq with (s1 := s2) (m1 := m1).
         -- apply vmwrite_run; auto; simpl; unfold s2; rewrite lset_same; reflexivity.
         -- apply vmwrite_run; auto; simpl; rewrite Q2 by discriminate; auto.
-      * exact (match_write _ _ _ _ (match_write _ _ _ _ HM R1) R2).
+      * split; [exact (match_write _ _ _ _ (match_write _ _ _ _ HM R1) R2)|].
+        unfold m1; repeat (eapply frame_trans; [|apply frame_upd; unfold C_VMCS_ENTRY_EXCEPTION_ERROR, C_VMCS_ENTRY_INTR_INFO in *; lia]); apply frame_refl.
     + inversion H; subst d'; clear H.
       exists s2, (upd m (vb + 2 + C_VMCS_ENTRY_INTR_INFO) i2); split.
       * apply ESeq with (s1 := s1) (m1 := m); [exact L|].
@@ -569,9 +585,9 @@ Proof.
         apply ESeq with (s1 := s2) (m1 := m); [exact A|].
         apply EIteF; [simpl; rewrite Q2 by discriminate; rewrite Hev, Tev; reflexivity|].
         apply vmwrite_run; auto; simpl; unfold s2; apply lset_same.
-      * exact (match_write _ _ _ _ HM R1).
+      * split; [exact (match_write _ _ _ _ HM R1) | apply frame_upd; lia].
   - inversion H; subst d'; clear H.
-    exists s1, m; split; [|exact HM].
+    exists s1, m; split; [|split; [exact HM | apply frame_refl]].
     apply ESeq with (s1 := s1) (m1 := m); [exact L|].
     apply EIteF; [simpl; unfold s1; rewrite lset_same, T; reflexivity | constructor].
 Qed.
@@ -664,7 +680,7 @@ Lemma tsc_valid : valid_enc C_VMCS_TSC_OFFSET = true.
 Proof. reflexivity. Qed.
 
 Theorem set_tsc_ref : forall d d' m s v, MatchS d m -> s "lo" = v mod W -> s "hi" = (v / W) mod W ->
-  vmx_set_tsc_offset_spec v d = Some d' -> exists s' m', exec setTscS s m s' m' /\ MatchS d' m'.
+  vmx_set_tsc_offset_spec v d = Some d' -> exists s' m', exec setTscS s m s' m' /\ MatchS d' m' /\ FrameV m m'.
 Proof.
   intros d d' m s v HM Hlo Hhi H; unfold vmx_set_tsc_offset_spec in H.
   apply flags_true in H; destruct H as [Hf H].
@@ -672,8 +688,8 @@ Proof.
     by (unfold vmcs_writez64_spec; rewrite Hf, tsc_valid; exact H).
   destruct (writez64_ref d d' m (lset s "enc" C_VMCS_TSC_OFFSET) C_VMCS_TSC_OFFSET v HM (lset_same _ _ _)
     ltac:(rewrite lset_other by discriminate; auto) ltac:(rewrite lset_other by discriminate; auto) H')
-    as [m' [Ex HM']].
-  exists (lset s "enc" C_VMCS_TSC_OFFSET), m'; split; [|exact HM'].
+    as [m' [Ex [HM' Fr]]].
+  exists (lset s "enc" C_VMCS_TSC_OFFSET), m'; split; [|split; [exact HM' | exact Fr]].
   apply ESeq with (s1 := lset s "enc" C_VMCS_TSC_OFFSET) (m1 := m); [apply exec_assign; reflexivity | exact Ex].
 Qed.
 
