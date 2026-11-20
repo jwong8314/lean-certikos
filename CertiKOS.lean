@@ -77,5 +77,6 @@ import CertiKOS.PAbQueueGen
 import CertiKOS.PAbQueueInv
 import CertiKOS.PCurID
 import CertiKOS.MCPU
+import CertiKOS.MInit
 import CertiKOS.PTInitGen
 import CertiKOS.MPTInit
