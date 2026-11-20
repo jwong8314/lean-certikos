@@ -99,5 +99,6 @@ import CertiKOS.TDispatch
 import CertiKOS.TSysCall
 import CertiKOS.ObsEq
 import CertiKOS.Integrity
+import CertiKOS.Confidentiality
 import CertiKOS.PTInitGen
 import CertiKOS.MPTInit
