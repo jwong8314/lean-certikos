@@ -67,20 +67,20 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | `MPTIntro` | `pt_read`, `pt_read_pde`, `pt_rmv_aux`, `pt_rmv_pde`, `pt_insert_aux`, `pt_insert_pde`, `idpde_init` | **ported**: `MPTOp.lean`. The six operations refine `ptRead_spec` … `ptInsertPDE_spec`, each verified against the accessor's triple. `idpde_init` is in `MPTInit.lean` (`idpde_init_triple`) |
 | `MPTOp` | `pt_alloc_pde`, `pt_free_pde`, `pt_init_comm` | **ported**: `MPTCommon.lean`. `pt_alloc_pde` refines `ptAllocPDE_spec` (through the specs of `container_alloc`, `pt_insert_pde`, and 1024 calls of `rmv_PTE`); `pt_free_pde` refines `ptFreePDE_spec` (through `pt_read_pde`, `pt_rmv_pde`, `pfree`). `pt_init_comm` is in `MPTInit.lean` (`pt_init_comm_triple`) |
 | `MPTCommon` | `pt_insert`, `pt_rmv` with reference counts, `pt_init_kern` | **ported**: `MPTKern.lean`. `pt_insert` refines `ptInsert_spec` (`ptInsert_triple`) and `pt_rmv` refines `ptRmv_spec` (`ptRmv_triple`), both keeping the page's count in the allocation table. `pt_init_kern` is in `MPTInit.lean` (`pt_init_kern_triple`) |
-| `MPTKern`, `MPTInit` | kernel page table, `pt_init`, paging on (`set_pg`, `set_cr3`) | missing: these are boot, and loading `CR3` needs the machine model |
-| `MPTNew` | `pt_new`, `pt_resv`, `pt_resv2`, `pmap_init` | **ported**: `MPTNew.lean`. `pt_new` refines `pt_new_spec`; `pt_resv` refines `ptResv_spec` (stated over `container_alloc_spec` and `ptInsert_spec`); `pt_resv` under the lock is `MMInv.ptResv_locked_inv`. `pt_resv2` is in `MPTResv2.lean` (`ptResv2_triple`). Missing: `pmap_init` (machine model) |
+| `MPTKern`, `MPTInit` | kernel page table, `pt_init`, paging on (`set_pg`, `set_cr3`) | **ported**: `MCPU.lean`. `CR3` and the paging bit are two words of the kernel region; `set_pt` refines `setPT'_spec`, `set_pg` refines `setPG1_spec`, and `pt_init` refines `pt_init_spec` (`pt_init_triple`). `pt_init_factors`: the specification is its three calls, using `real_pt_PMap_valid` and `real_pt_PMap_kern` |
+| `MPTNew` | `pt_new`, `pt_resv`, `pt_resv2`, `pmap_init` | **ported**: `MPTNew.lean`. `pt_new` refines `pt_new_spec`; `pt_resv` refines `ptResv_spec` (stated over `container_alloc_spec` and `ptInsert_spec`); `pt_resv` under the lock is `MMInv.ptResv_locked_inv`. `pt_resv2` is in `MPTResv2.lean` (`ptResv2_triple`). `pmap_init` only calls `pt_init` (`MCPU.lean`) |
 | `MShareIntro` | the shared-memory table and its seven accessors | **ported**: `MShareIntro.lean`. Each accessor refines its spec (`getState_triple`, `getSeen_triple`, `getLoc_triple`, `setState_triple`, `setSeen_triple`, `setLoc_triple`, `clear_triple`) |
-| `MShareOp` | `shared_mem_to_pending`, `shared_mem_to_dead`, `shared_mem_to_ready`, `get_shared_mem_status_seen`, `shared_mem_init` | **ported**: `MShareOp.lean` (`toPending_triple`, `toDead_triple`, `toReady_triple`, `statusSeen_triple`). `shared_mem_init`: its loop is verified (`smInit_triple` in `MShare.lean`); its call to `pmap_init` waits for the machine model |
+| `MShareOp` | `shared_mem_to_pending`, `shared_mem_to_dead`, `shared_mem_to_ready`, `get_shared_mem_status_seen`, `shared_mem_init` | **ported**: `MShareOp.lean` (`toPending_triple`, `toDead_triple`, `toReady_triple`, `statusSeen_triple`). `shared_mem_init` as a whole function is `sharedmem_init_triple` in `MInit.lean` |
 | `MShare` | `shared_mem_status`, `offer_shared_mem` | **ported**: `MShare.lean` (`status_triple`, `offer_triple`) |
 | abstract ownership (`PTInitGen`) | the logical table `LAT` with its owner lists, `consistent_pmap`, `consistent_pmap_domain`; `alloc_spec`, `ptInsert0_spec`, `ptRmv0_spec`, `ptResv_spec` over owner lists | **ported**: `PTInitGen.lean`. The count-based specs refine the owner-list ones: `alloc_exist`, `ptInsertPTE_exist`, `ptAllocPDE_exist`, `ptInsert_exist`, `ptRmv_exist`, `ptResv_exist`. Missing: `ptFreePDE0_spec`, and that the owner-list specs preserve the upper invariant |
 | **Process management** (`proc`) | | |
 | `PKContext`, `PKContextNew` | kernel contexts, `kctxt_switch`, `kctxt_new` | missing (needs assembly and a machine model) |
-| `PThreadIntro`, `PThreadInit` | thread control blocks | **`PThreadIntro` ported**: `PThreadIntro.lean`. `get_state`, `get_prev`, `get_next`, `set_state`, `set_prev`, `set_next`, `tcb_init` refine their specs; `threadInit_triple` verifies the loop of `thread_init` (`real_tcb`). `thread_init`'s first call is `sharedmem_init`, which needs `pmap_init` (machine model) |
-| `PQueueIntro` | thread queues: `get_head`, `get_tail`, `set_head`, `set_tail`, `tdq_init` | **ported**: `PQueueIntro.lean`. Each accessor refines its spec (`getHead_triple`, `getTail_triple`, `setHead_triple`, `setTail_triple`, `tdqInit_triple`); `tdqueueInit_triple` verifies the loop of `tdqueue_init` (`real_tdq`). `tdqueue_init`'s first call is `thread_init` (machine model) |
+| `PThreadIntro`, `PThreadInit` | thread control blocks | **`PThreadIntro` ported**: `PThreadIntro.lean`. `get_state`, `get_prev`, `get_next`, `set_state`, `set_prev`, `set_next`, `tcb_init` refine their specs; `threadInit_triple` verifies the loop of `thread_init` (`real_tcb`). `thread_init` as a whole function is `thread_init_triple` in `MInit.lean` |
+| `PQueueIntro` | thread queues: `get_head`, `get_tail`, `set_head`, `set_tail`, `tdq_init` | **ported**: `PQueueIntro.lean`. Each accessor refines its spec (`getHead_triple`, `getTail_triple`, `setHead_triple`, `setTail_triple`, `tdqInit_triple`); `tdqueueInit_triple` verifies the loop of `tdqueue_init` (`real_tdq`). `tdqueue_init` as a whole function is `tdqueue_init_triple` in `MInit.lean` |
 | `PQueueInit` | `enqueue`, `dequeue`, `queue_rmv` on linked control blocks | **ported**: `PQueueInit.lean`. `enqueue_triple`, `dequeue_triple`, `queueRmv_triple`; the specs keep `TCBCorrect_range` and `TDQCorrect_range` (`enqueue_keeps`, `dequeue_keeps`, `queueRmv_keeps`) |
 | `PAbQueue` (`AbQueueGen`) | queues as lists; the refinement from lists to linked control blocks | **ported**: `PAbQueue.lean` (data, specs, relation), `PAbQueueGen.lean` (`enqueue_exists`, `dequeue_exists`, `queue_rmv_exists`, `get_state_exists`, `set_state_exists`), `PAbQueueInv.lean` (the five invariants are established and kept; `enqueue0_triple`, `dequeue0_triple`, `queueRmv0_triple`, `getState0_triple`, `setState0_triple`). Missing: the page-table and shared-memory primitives restated over the list view |
 | `PCurID` | current thread: `get_curid`, `set_curid` | **ported**: `PCurID.lean` (`getCurid_triple`, `setCurid_triple`, `liftA`) |
-| `PThreadSched`, `PThread` | `thread_spawn`, `sched_init`, `thread_wakeup`, `thread_yield`, `thread_sleep` | missing (`ThreadLayer.lean` is a prototype of a different thing). `thread_spawn` and the switches need the machine model |
+| `PThreadSched`, `PThread` | `thread_spawn`, `sched_init`, `thread_wakeup`, `thread_yield`, `thread_sleep` | **`sched_init` ported**: `PSchedInit.lean` (`sched_init_triple`, `sched_init_inv`). The rest is missing (`ThreadLayer.lean` is a prototype of a different thing). `thread_spawn` and the switches need kernel contexts |
 | `PIPCIntro`, `PIPC` | synchronous IPC | missing |
 | `PUCtxtIntro`, `PProc` | user contexts, `proc_create` | missing |
 | **Trap handling** (`trap`) | | |
@@ -95,23 +95,23 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 
 Even for the ported layers:
 
-- `ikern` and `ihost` are dropped from the specifications (no machine model).
+- `ikern` and `ihost` are dropped from the specifications (the machine
+  model so far has `CR3` and the paging bit only).
 - Indices are `Nat` rather than `Z`.
 - The objects live in lock regions, not in CompCert memory.
 - `high_level_invariant`: the parts about the allocation table and the
   containers are proved preserved by the specifications
   (`MContainerInv.lean`). The allocation-table invariant and the quota bound
   are carried along the shared log (`LogInv.lean`, `MMInv.lean`).
-- Boot: `mem_init`, `container_init`, `idpde_init`, `pt_init_comm` and
-  `pt_init_kern` are ported with their C code. `pt_init` and `pmap_init` are
-  not: they need the machine model.
+- Boot is ported in full, code and specification, from `mem_init` up to
+  `sched_init` (`MCPU.lean`, `MInit.lean`, `PSchedInit.lean`).
 
 ## How the ports are organised
 
 - **Agreed order** (2026-11-19): 0 calling convention for layers, 1 page
   tables, 2 boot and init, 3 shared memory, 4 invariants along the shared
   log, 5 thread data, 6 machine model and scheduler, 7 IPC, 8 processes and
-  traps, 9 security and virtualization. Stages 0 to 5 are done, except for what needs `CR3` (`pt_init`, `pmap_init`, and so the first line of `shared_mem_init`, `thread_init` and `tdqueue_init`) and the linking step for the rely of stage 4.
+  traps, 9 security and virtualization. Stages 0 to 5 are done, except for the linking step for the rely of stage 4. Stage 6 has started (`CR3`, the paging bit, and all of boot).
 - **`Layer.lean`: a primitive's interface is a triple.**
   `Triple εR c i M F P s Q` says: in a critical section, on a region matching
   abstract data `d` with precondition `P`, the code `s` runs to completion,
@@ -331,9 +331,69 @@ What differs from the sources:
 - **`pt_init_kern_triple`: the C code refines `pt_init_kern_spec`**, through
   `pt_init_comm_triple` and 704 calls of `set_PDE`.
 
-Still missing for boot: `pt_init` (`pt_init_kern(); set_pt(0); set_pg();`)
-and `pmap_init`, which only calls it. They load `CR3` and turn paging on, so
-they wait for the machine model (stage 6).
+`pt_init` (`pt_init_kern(); set_pt(0); set_pg();`) and `pmap_init`, which
+only calls it, load `CR3` and turn paging on. They are in `MCPU.lean`.
+
+The three triples of this file name their footprint: cells below the end of
+the containers and from the page-table pool on. That is what lets the
+control registers, which sit between, survive them.
+
+### `MCPU.lean`: `CR3`, the paging bit, `pt_init`
+
+The first part of the machine model (stage 6).
+
+- **The model.** mCertiKOS's bottom layer has two trusted primitives,
+  `set_cr3` and `set_pg`, whose specifications are part of its machine
+  model. Here the two registers are two words of the kernel region, at
+  `cpub` and `cpub + 1`, and the primitives write them. `MatchCPU` ties them
+  to the abstract state: `CR3` holds the address of directory `PT`
+  (`relate_PT`), and the paging word is nonzero exactly when `pg` holds.
+  Before this file no cell constrained `pg` or `PT`.
+- `PMap_common`, `PMap_kern`, `PMap_usr`, `PMap_valid` are mCertiKOS's.
+  `real_pt_get` gives every entry of the initial page tables;
+  `real_pt_PMap_valid` and `real_pt_PMap_kern` follow (the second for
+  `kern_low = 262144`, `kern_high = 983040`, mCertiKOS's constants).
+- `setPT_triple`, `setPG_triple`: `set_pt` and `set_pg` refine `setPT'_spec`
+  and `setPG1_spec`.
+- **`pt_init_factors`**: `pt_init_spec` is `pt_init_kern_spec`, then
+  `setPT'_spec 0`, then `setPG1_spec`. The side conditions of the last two
+  say the kernel's page table is valid and maps the kernel by the identity,
+  which is what makes turning paging on safe in mCertiKOS.
+- **`pt_init_triple`**: `pt_init` refines `pt_init_spec`. Afterwards `pg` is
+  true in the abstract state and in the region.
+
+What the model leaves out:
+
+- One `CR3` and one paging bit, as in single-core mCertiKOS, not one per
+  CPU. The registers are written with the kernel lock held.
+- No access goes through the page table. Kernel code runs on the identity
+  map; user-mode accesses are not modelled yet. So `PMap_kern` is a
+  condition the code meets, not one the semantics here depends on.
+- `ikern`, `ihost`, the trap state and kernel contexts are not in it yet.
+
+### `MInit.lean`, `PSchedInit.lean`: initialisation as whole functions
+
+- **`KLayout`: one layout for the whole kernel region.** In order: the
+  allocation table, the containers, the boot loader's memory map, `CR3` and
+  the paging bit, the shared-memory table, the control blocks, the queues,
+  the current thread, the page-table pool, the identity map, flat memory.
+  Earlier the memory map and the tables above it were constrained by
+  separate hypotheses.
+- **`sharedmem_init_triple`, `thread_init_triple`, `tdqueue_init_triple`**:
+  each `*_init` is the one below followed by its own loop, and refines its
+  specification from the state the boot loader leaves (`init = false`,
+  paging off, no container in use, no page table). Each proof calls the
+  triple of the function below, not its code.
+- **`tdqueue_init0_triple`**: the same code refines the specification over
+  lists. The relation `RelA` holds before boot as well: its pointer-view
+  invariants are conditional on `pg`, as in mCertiKOS.
+- **`sched_init_triple`**: `tdqueue_init(mbi_adr); set_curid(0);
+  set_state(0, TSTATE_RUN);` refines `sched_init_spec`.
+  **`sched_init_inv`**: the state it reaches satisfies the list view's
+  invariants.
+
+So boot now reaches the states the operations are about: `pg = true`, every
+table initialised, thread 0 running.
 
 ### `MPTResv2.lean`: one page in two address spaces
 
@@ -619,28 +679,37 @@ unused by the ports.
   and for an environment that does not release the lock. Only the
   allocation-table invariant and the quota bound are carried, not
   `Container_valid` or `quota_bounded_AT`.
-- **No machine model.** `set_pt`, `set_pg`, context switch, traps and
-  virtualization are about `CR3`, registers, privilege levels and assembly.
-  Until then nothing establishes `pg = true`, which the shared-memory,
-  thread and queue specifications require.
+- **The machine model is partial.** `CR3` and the paging bit are in
+  (`MCPU.lean`), one copy, as words of the kernel region. Context switch,
+  traps and virtualization need registers, privilege levels and assembly,
+  which are not modelled. No memory access goes through the page table.
 - **Thread data** (stage 5): control blocks, queues, the list view and the
   current thread are ported. The invariants of the list view are proved on
   the specifications; they are not yet carried on the log as stage 4 does
-  for memory management. The initialisation chain (`thread_init`,
-  `tdqueue_init`) is verified loop by loop, not as one function, because its
-  first call reaches `pmap_init`.
-- **Boot** (stage 2): `mem_init`, `container_init`, `idpde_init`,
-  `pt_init_comm` and `pt_init_kern` are ported, code and specification.
-  `pt_init` and `pmap_init` wait for the machine model.
+  for memory management.
+- **Boot**: ported in full, from `mem_init` to `sched_init`. What it
+  assumes of the boot loader's state is stated as preconditions (`PreInit`
+  in `MMInv.lean`, `MatchMMap`, paging off). `boot_locked_inv` (stage 4)
+  still covers `pt_init_kern` only; it is not yet restated for
+  `sched_init`.
+- **The primitives over the upper states.** The page-table and
+  shared-memory triples are stated over their own layer's state. `liftT` and
+  `liftA` carry a triple up one layer, and `MatchCPU` has to be carried too
+  (it survives any triple that keeps `pg`, `PT` and the two register cells).
+  This has been done where a proof needed it (boot), not for every
+  primitive.
 
 ## Order
 
-See "How the ports are organised" above. Stages 2 to 4 are done except for
-`pt_init` and `pmap_init` (machine model) and the linking step for the rely.
-Stage 5 (thread data) is done: control blocks (`PThreadIntro.lean`), queues
-(`PQueueIntro.lean`, `PQueueInit.lean`), queues as lists (`PAbQueue.lean`,
-`PAbQueueGen.lean`, `PAbQueueInv.lean`) and the current thread
-(`PCurID.lean`). Next is stage 6: the machine model (`CR3`, `set_pt`,
-`set_pg`, kernel contexts), which unblocks `pt_init`, `pmap_init` and the
-initialisation chain, then the scheduler (`thread_spawn`, `sched_init`,
-`thread_wakeup`, `thread_yield`, `thread_sleep`).
+See "How the ports are organised" above. Stages 0 to 5 are done, except
+for the linking step for the rely of stage 4. Stage 6 has started:
+
+- done: `CR3` and the paging bit, `set_pt`, `set_pg`, `pt_init`,
+  `pmap_init` (`MCPU.lean`); the initialisation chain as whole functions
+  (`MInit.lean`); `sched_init` (`PSchedInit.lean`).
+- next: kernel contexts (`PKContext`, `PKContextNew`: `kctxt_switch`,
+  `kctxt_new`). mCertiKOS's are saved registers and assembly. Here a
+  context has to be a suspended ClightL computation, so this needs a machine
+  that holds several of them and switches between them.
+- then the scheduler: `thread_spawn`, `thread_wakeup`, `thread_sched`,
+  `thread_yield`, `thread_sleep`.

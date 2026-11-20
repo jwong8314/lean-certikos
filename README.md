@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-84 Lean files, about 37,100 lines. No `sorry`. The main theorems depend only on
+87 Lean files, about 38,200 lines. No `sorry`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-18)
@@ -115,6 +115,13 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
     Each list operation is matched by the pointer operation, the C code
     refines the list specifications, and the list view's five invariants are
     established by initialisation and kept by every operation.
+  - **Machine model, first part, and boot** (`MCPU.lean`, `MInit.lean`,
+    `PSchedInit.lean`): `CR3` and the paging bit as two words of the kernel
+    region, with mCertiKOS's `set_cr3` and `set_pg`. `pt_init` turns paging
+    on, and the whole chain `sharedmem_init`, `thread_init`, `tdqueue_init`,
+    `sched_init` refines its specifications, under one layout of the kernel
+    region. Boot ends with paging on, every table initialised, thread 0
+    running.
   - **Steps and data abstraction** (`LayerStep.lean`): running a function's
     code call by call on the abstract state, and carrying a layer's triples
     to a layer whose state is a view of it.
@@ -134,15 +141,16 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 - **Owner bounds for other clients**: the generic fairness theorem has one
   instance, the ticket client.
 - **Thread layer, rest**: the scheduler's data (control blocks, queues, the
-  current thread) is ported from mCertiKOS. No context switch, no scheduler
-  functions, and no thread liveness.
+  current thread) and `sched_init` are ported from mCertiKOS. No context
+  switch, no other scheduler function, and no thread liveness.
 - **Thread-safe CompCertX**: not attempted. It needs a verified compiler.
 - **Printers, rest**: turning tokens into text is still trusted.
 - **The rest of the kernel**: the page allocator, page tables, containers,
   boot (up to the kernel's page table), shared memory, thread control
   blocks, thread queues (linked, then as lists) and the current thread are
-  ported. The machine model (`CR3`, kernel contexts), the scheduler, IPC,
-  traps and virtualization are not started. The kernel
+  ported, and boot is complete. The machine model has `CR3` and the paging
+  bit only, one copy rather than one per CPU. Kernel contexts, the
+  scheduler, IPC, traps and virtualization are not started. The kernel
   guarantees are per CPU, and `PTInv` is not yet shown to hold across other
   CPUs' operations on the allocation table.
   See [KERNEL.md](KERNEL.md).
