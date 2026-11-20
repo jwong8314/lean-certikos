@@ -5,10 +5,10 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-93 Lean files, about 39,800 lines. No `sorry`. The main theorems depend only on
+98 Lean files, about 41,800 lines. No `sorry`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
-## Status (2026-11-18)
+## Status (2026-11-19)
 
 **Done**
 
@@ -131,6 +131,13 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
     `thread_spawn`, `thread_wakeup`, `thread_sched`, `thread_yield` and
     `thread_sleep` do what mCertiKOS's specifications say, and keep the
     queue invariants.
+  - **Synchronous IPC** (`PIPCIntro.lean`, `FlatMem.lean`, `PIPC.lean`,
+    `PIPCRecv.lean`, `PProcInit.lean`): each thread has a channel. A sender
+    publishes its buffer there and sleeps; the receiver copies the buffer
+    between the two address spaces, leaves the count, and wakes the sender.
+    `syncsendto_chan_pre`, `syncsendto_chan_post` and `syncreceive_chan`
+    refine mCertiKOS's specifications, and so does `proc_init`, which ends
+    boot.
   - **Steps and data abstraction** (`LayerStep.lean`): running a function's
     code call by call on the abstract state, and carrying a layer's triples
     to a layer whose state is a view of it.
@@ -159,10 +166,10 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 - **The rest of the kernel**: the page allocator, page tables, containers,
   boot (up to the kernel's page table), shared memory, thread control
   blocks, thread queues (linked, then as lists) and the current thread are
-  ported, boot is complete, and so is the scheduler. The machine model has
-  `CR3`, the paging bit and kernel contexts, one copy rather than one per
-  CPU, and no privilege levels. IPC, traps and virtualization are not
-  started. The kernel
+  ported, boot is complete, and so are the scheduler and synchronous IPC.
+  The machine model has `CR3`, the paging bit and kernel contexts, one copy
+  rather than one per CPU, and no privilege levels. Processes, traps and
+  virtualization are not started. The kernel
   guarantees are per CPU, and `PTInv` is not yet shown to hold across other
   CPUs' operations on the allocation table.
   See [KERNEL.md](KERNEL.md).

@@ -81,7 +81,7 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | `PAbQueue` (`AbQueueGen`) | queues as lists; the refinement from lists to linked control blocks | **ported**: `PAbQueue.lean` (data, specs, relation), `PAbQueueGen.lean` (`enqueue_exists`, `dequeue_exists`, `queue_rmv_exists`, `get_state_exists`, `set_state_exists`), `PAbQueueInv.lean` (the five invariants are established and kept; `enqueue0_triple`, `dequeue0_triple`, `queueRmv0_triple`, `getState0_triple`, `setState0_triple`). Missing: the page-table and shared-memory primitives restated over the list view |
 | `PCurID` | current thread: `get_curid`, `set_curid` | **ported**: `PCurID.lean` (`getCurid_triple`, `setCurid_triple`, `liftA`) |
 | `PThreadSched`, `PThread` | `thread_spawn`, `sched_init`, `thread_wakeup`, `thread_sched`, `thread_yield`, `thread_sleep` | **ported**: `PSchedInit.lean` (`sched_init_triple`, `sched_init_inv`), `PThreadSched.lean` (`thread_wakeup_triple`), `PThreadSwitch.lean` (`thread_sched_run`, `thread_yield_run`, `thread_sleep_run`), `PThreadSpawn.lean` (`thread_spawn_run`). `ThreadLayer.lean` is an earlier prototype of a different thing. Not done: that a parked thread is resumed, and reasoning about one thread alone |
-| `PIPCIntro`, `PIPC` | synchronous IPC | missing |
+| `PIPCIntro`, `PIPC` | synchronous IPC: the channel pool and its accessors, `get_kernel_pa`, `syncsendto_chan_pre`, `syncsendto_chan_post`, `syncreceive_chan`, `proc_init` | **ported**: `PIPCIntro.lean` (the seven accessors and `get_kernel_pa` refine their specs; `liftCI`), `PIPC.lean` (`syncSendPre_triple`, `syncSendPost_triple`), `FlatMem.lean` (`flatmem_copy` as a loop, `flatmemCopy_triple`), `PIPCRecv.lean` (`syncReceive_triple`), `PProcInit.lean` (`proc_init_triple`, `proc_init_inv`). Not done: the two halves of a send joined with the sleep between them, which mCertiKOS does in the trap layer |
 | `PUCtxtIntro`, `PProc` | user contexts, `proc_create` | missing |
 | **Trap handling** (`trap`) | | |
 | `TTrapArg`, `TTrap`, `TDispatch`, `TSysCall` | system-call arguments, handlers, dispatch | missing |
@@ -104,14 +104,15 @@ Even for the ported layers:
   (`MContainerInv.lean`). The allocation-table invariant and the quota bound
   are carried along the shared log (`LogInv.lean`, `MMInv.lean`).
 - Boot is ported in full, code and specification, from `mem_init` up to
-  `sched_init` (`MCPU.lean`, `MInit.lean`, `PSchedInit.lean`).
+  `proc_init` (`MCPU.lean`, `MInit.lean`, `PSchedInit.lean`,
+  `PProcInit.lean`).
 
 ## How the ports are organised
 
 - **Agreed order** (2026-11-19): 0 calling convention for layers, 1 page
   tables, 2 boot and init, 3 shared memory, 4 invariants along the shared
   log, 5 thread data, 6 machine model and scheduler, 7 IPC, 8 processes and
-  traps, 9 security and virtualization. Stages 0 to 6 are done, except for the linking step for the rely of stage 4 and what the machine model still lacks (privilege levels, traps).
+  traps, 9 security and virtualization. Stages 0 to 7 are done, except for the linking step for the rely of stage 4 and what the machine model still lacks (privilege levels, traps).
 - **`Layer.lean`: a primitive's interface is a triple.**
   `Triple εR c i M F P s Q` says: in a critical section, on a region matching
   abstract data `d` with precondition `P`, the code `s` runs to completion,
@@ -498,6 +499,67 @@ thread_sleep:  cid = get_curid(); set_state(cid, SLEEP); enqueue(chan, cid); thr
   mentions a control block or a queue pointer.
 - `thread_wakeup_keeps`: the specification keeps `AInv`.
 
+### `PIPCIntro.lean`: the IPC channels
+
+- **State**: `IData` is `CData` with `syncchpool`. Each thread has a channel
+  `SyncChanValid to paddr count`: who it is sending to, the kernel's address
+  of its buffer, and the length. The three fields are machine words, as in
+  mCertiKOS. **Region**: three cells per channel at `ipb`, after the
+  current-thread word (`ILayout`, `MatchI`).
+- The six accessors and `init_sync_chan` refine their specifications
+  (`getSyncTo_triple` … `initSync_triple`).
+- **`getKernelPa_triple`**: `get_kernel_pa` refines `get_kernel_pa_spec`. It
+  gives the kernel's address of a user address, read through the page table.
+  It calls `pt_read` by its triple, carried up by `liftPC` and `liftCI`.
+- `stepCI`, `liftCI`: steps and triples of the layers below hold in `IData`,
+  if they do not write the pool.
+- `syncInit_step`: the loop of `proc_init` gives `real_syncchpool`.
+
+### `FlatMem.lean`: `flatmem_copy`
+
+- `flatmem_copy_spec` is mCertiKOS's: copy `count` words (at most 1024)
+  between two allocated pages below `adr_low`.
+- **`flat_write`**: writing a word of an allocated page keeps the whole
+  memory-management region matching. The second-level page tables are in
+  hidden pages (`PGHide`), so the write cannot land in one.
+- **`flatmemCopy_triple`**: the loop refines the specification.
+- What differs: in mCertiKOS `flatmem_copy` is a primitive of the bottom
+  layer, without code. Here it is a loop over the cells of flat memory. Flat
+  memory is indexed by word here and by byte there.
+
+### `PIPC.lean`, `PIPCRecv.lean`: synchronous send and receive
+
+- A send is two calls around a sleep. `syncsendto_chan_pre` publishes the
+  buffer in the sender's channel: the receiver, the kernel's address of the
+  buffer, the length. `syncsendto_chan_post` runs after the sender is woken.
+  It reads the count the receiver left, or reports that nobody received.
+- `syncreceive_chan`: if the sender is sending to the caller, copy its buffer
+  (`flatmem_copy`), write the count into the sender's channel, mark the
+  channel answered, and wake the sender (`thread_wakeup`).
+- **`syncSendPre_triple`, `syncSendPost_triple`, `syncReceive_triple`**: the
+  three functions refine their specifications. Every call inside goes through
+  the callee's step or triple: `get_curid`, `get_state`, the channel
+  accessors, `get_kernel_pa`, `flatmem_copy`, `thread_wakeup`.
+- `stepPC` (`PIPCRecv.lean`) is `liftPC` for steps.
+- What differs: the code is the Clight that mCertiKOS verifies. The C in its
+  comments differs from it in two places (what `syncsendto_chan_pre` returns,
+  and the argument order of `flatmem_copy`). The code compares against
+  `num_chan` where the specifications say `num_proc`; they are one constant
+  in mCertiKOS, and the theorems assume `num_proc ≤ num_chan`.
+  `syncReceive_triple` assumes the queue invariants (`AInv`), which
+  `thread_wakeup` needs.
+- Not done: the two halves of a send joined with the sleep between them and
+  a receive by another thread. mCertiKOS does that in the trap layer.
+
+### `PProcInit.lean`: `proc_init`
+
+- `proc_init_spec` is `sched_init_spec` followed by `real_syncchpool`
+  (`proc_init_eq`).
+- **`proc_init_triple`**: `sched_init`, then `init_sync_chan` for every
+  channel, refines it, from the region as the boot loader leaves it.
+- `proc_init_inv`: afterwards the queue invariants hold, thread 0 is the
+  current thread and is running, and every channel is valid and idle.
+
 ### `MPTResv2.lean`: one page in two address spaces
 
 - `ptResv2_spec` and the C code of `pt_resv2`: allocate a page, map it in the
@@ -798,20 +860,26 @@ unused by the ports.
   the specifications. Boot establishes them on the log
   (`sched_locked_inv`); the operations under the lock that keep them there
   (as `ptResv_locked_inv` does for memory management) are not stated yet.
-- **Boot**: ported in full, from `mem_init` to `sched_init`. What it
+- **Boot**: ported in full, from `mem_init` to `proc_init`. What it
   assumes of the boot loader's state is stated as preconditions (`PreInit`
   in `MMInv.lean`, `MatchMMap`, paging off). `sched_locked_inv`
-  (`PSchedBoot.lean`) runs it under the lock and leaves the invariants on
-  the log.
-- **The primitives over the upper states.** `liftPC` carries any triple of
-  the page-table layers to the state with the current thread. The
-  shared-memory triples (stated over `SData`) do not have their version yet,
-  and `MatchCPU` has to be carried separately (it survives any triple that
-  keeps `pg`, `PT` and the two register cells).
+  (`PSchedBoot.lean`) runs `sched_init` under the lock and leaves the
+  invariants on the log; `proc_init` has its triple but not yet that
+  version.
+- **The primitives over the upper states.** `liftPC` and `stepPC` carry
+  any triple or step of the page-table layers to the state with the current
+  thread, and `liftCI`, `stepCI` from there to the state with the channels.
+  The shared-memory triples (stated over `SData`) do not have their version
+  yet, and `MatchCPU` has to be carried separately (it survives any triple
+  that keeps `pg`, `PT` and the two register cells).
+- **Two top states.** The scheduler runs on `KData` (`CData` with the kernel
+  contexts) and IPC on `IData` (`CData` with the channels). They are not
+  joined yet, and the scheduler's run theorems do not state which cells they
+  write, which joining them needs. This is the first step of stage 8.
 
 ## Order
 
-See "How the ports are organised" above. Stages 0 to 6 are done, with these
+See "How the ports are organised" above. Stages 0 to 7 are done, with these
 left open inside them:
 
 - stage 4: the rely on the other CPUs is assumed, not derived by linking;
@@ -823,5 +891,13 @@ Stage 6 in files: `MCPU.lean` (`CR3`, paging, `pt_init`), `MInit.lean`,
 `PKContext.lean` (kernel contexts), `PThreadSched.lean`,
 `PThreadSwitch.lean`, `PThreadSpawn.lean` (the scheduler).
 
-Next is stage 7, IPC: the channel pool and its accessors (`PIPCIntro`), then
-`sendto_chan`, `receive_chan` and the synchronous send and receive (`PIPC`).
+Stage 7 in files: `PIPCIntro.lean` (the channels, `get_kernel_pa`),
+`FlatMem.lean` (`flatmem_copy`), `PIPC.lean`, `PIPCRecv.lean` (send and
+receive), `PProcInit.lean` (`proc_init`). These are the four primitives that
+mCertiKOS's `PIPC` layer adds. Its asynchronous `sendto_chan` and
+`receive_chan` are commented out in the sources and are not ported.
+
+Next is stage 8, processes and traps: one state with both the channels and
+the kernel contexts, user contexts (`PUCtxtIntro`), `proc_create` (`PProc`),
+then the trap layers, which need `ikern`, `ihost` and the trap state in the
+machine model.
