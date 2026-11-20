@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-89 Lean files, about 38,500 lines. No `sorry`. The main theorems depend only on
+93 Lean files, about 39,800 lines. No `sorry`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-18)
@@ -123,6 +123,14 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
     region. Boot ends with paging on, every table initialised, thread 0
     running, and (`PSchedBoot.lean`) run under the lock it leaves the
     memory-management and queue invariants on the shared log.
+  - **Kernel contexts and the scheduler** (`KMachine.lean`,
+    `PKContext.lean`, `PThreadSched.lean`, `PThreadSwitch.lean`,
+    `PThreadSpawn.lean`): a kernel context is a suspended ClightL
+    computation, and the kernel machine has a step that parks the running
+    one and resumes another (mCertiKOS's `cswitch`, which is assembly).
+    `thread_spawn`, `thread_wakeup`, `thread_sched`, `thread_yield` and
+    `thread_sleep` do what mCertiKOS's specifications say, and keep the
+    queue invariants.
   - **Steps and data abstraction** (`LayerStep.lean`): running a function's
     code call by call on the abstract state, and carrying a layer's triples
     to a layer whose state is a view of it.
@@ -141,18 +149,20 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
   ticket lock. Lock-array and MCS clients still link by inlining.
 - **Owner bounds for other clients**: the generic fairness theorem has one
   instance, the ticket client.
-- **Thread layer, rest**: the scheduler's data (control blocks, queues, the
-  current thread), `sched_init` and `thread_wakeup` are ported from
-  mCertiKOS. No context switch, so no `thread_yield` or `thread_sleep`, and
-  no thread liveness.
+- **Thread layer, rest**: the scheduler is ported from mCertiKOS, with
+  kernel contexts as suspended computations. Its theorems are per call.
+  There is no reasoning about one thread with the others as its
+  environment, no proof that a parked thread runs again, and no thread
+  liveness.
 - **Thread-safe CompCertX**: not attempted. It needs a verified compiler.
 - **Printers, rest**: turning tokens into text is still trusted.
 - **The rest of the kernel**: the page allocator, page tables, containers,
   boot (up to the kernel's page table), shared memory, thread control
   blocks, thread queues (linked, then as lists) and the current thread are
-  ported, and boot is complete. The machine model has `CR3` and the paging
-  bit only, one copy rather than one per CPU. Kernel contexts, the
-  scheduler, IPC, traps and virtualization are not started. The kernel
+  ported, boot is complete, and so is the scheduler. The machine model has
+  `CR3`, the paging bit and kernel contexts, one copy rather than one per
+  CPU, and no privilege levels. IPC, traps and virtualization are not
+  started. The kernel
   guarantees are per CPU, and `PTInv` is not yet shown to hold across other
   CPUs' operations on the allocation table.
   See [KERNEL.md](KERNEL.md).

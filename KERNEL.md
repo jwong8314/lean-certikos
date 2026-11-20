@@ -74,13 +74,13 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | `MShare` | `shared_mem_status`, `offer_shared_mem` | **ported**: `MShare.lean` (`status_triple`, `offer_triple`) |
 | abstract ownership (`PTInitGen`) | the logical table `LAT` with its owner lists, `consistent_pmap`, `consistent_pmap_domain`; `alloc_spec`, `ptInsert0_spec`, `ptRmv0_spec`, `ptResv_spec` over owner lists | **ported**: `PTInitGen.lean`. The count-based specs refine the owner-list ones: `alloc_exist`, `ptInsertPTE_exist`, `ptAllocPDE_exist`, `ptInsert_exist`, `ptRmv_exist`, `ptResv_exist`. Missing: `ptFreePDE0_spec`, and that the owner-list specs preserve the upper invariant |
 | **Process management** (`proc`) | | |
-| `PKContext`, `PKContextNew` | kernel contexts, `kctxt_switch`, `kctxt_new` | missing (needs assembly and a machine model) |
+| `PKContext`, `PKContextNew` | kernel contexts, `kctxt_switch`, `kctxt_new` | **ported, with a different kind of context**: `KMachine.lean` (a kernel context is a suspended ClightL computation; `cswitch`, `set_SP`, `set_RA` are steps of the kernel machine), `PKContext.lean` (`kctxt_switch_refines`, `kctxt_sp_refines`, `kctxt_ra_refines`), `PThreadSpawn.lean` (`kctxt_new_run`). mCertiKOS's is six saved registers and twenty assembly instructions |
 | `PThreadIntro`, `PThreadInit` | thread control blocks | **`PThreadIntro` ported**: `PThreadIntro.lean`. `get_state`, `get_prev`, `get_next`, `set_state`, `set_prev`, `set_next`, `tcb_init` refine their specs; `threadInit_triple` verifies the loop of `thread_init` (`real_tcb`). `thread_init` as a whole function is `thread_init_triple` in `MInit.lean` |
 | `PQueueIntro` | thread queues: `get_head`, `get_tail`, `set_head`, `set_tail`, `tdq_init` | **ported**: `PQueueIntro.lean`. Each accessor refines its spec (`getHead_triple`, `getTail_triple`, `setHead_triple`, `setTail_triple`, `tdqInit_triple`); `tdqueueInit_triple` verifies the loop of `tdqueue_init` (`real_tdq`). `tdqueue_init` as a whole function is `tdqueue_init_triple` in `MInit.lean` |
 | `PQueueInit` | `enqueue`, `dequeue`, `queue_rmv` on linked control blocks | **ported**: `PQueueInit.lean`. `enqueue_triple`, `dequeue_triple`, `queueRmv_triple`; the specs keep `TCBCorrect_range` and `TDQCorrect_range` (`enqueue_keeps`, `dequeue_keeps`, `queueRmv_keeps`) |
 | `PAbQueue` (`AbQueueGen`) | queues as lists; the refinement from lists to linked control blocks | **ported**: `PAbQueue.lean` (data, specs, relation), `PAbQueueGen.lean` (`enqueue_exists`, `dequeue_exists`, `queue_rmv_exists`, `get_state_exists`, `set_state_exists`), `PAbQueueInv.lean` (the five invariants are established and kept; `enqueue0_triple`, `dequeue0_triple`, `queueRmv0_triple`, `getState0_triple`, `setState0_triple`). Missing: the page-table and shared-memory primitives restated over the list view |
 | `PCurID` | current thread: `get_curid`, `set_curid` | **ported**: `PCurID.lean` (`getCurid_triple`, `setCurid_triple`, `liftA`) |
-| `PThreadSched`, `PThread` | `thread_spawn`, `sched_init`, `thread_wakeup`, `thread_yield`, `thread_sleep` | **`sched_init` ported**: `PSchedInit.lean` (`sched_init_triple`, `sched_init_inv`). **`thread_wakeup` ported**: `PThreadSched.lean` (`thread_wakeup_triple`, `thread_wakeup_keeps`). The rest is missing (`ThreadLayer.lean` is a prototype of a different thing). `thread_spawn` and the switches need kernel contexts |
+| `PThreadSched`, `PThread` | `thread_spawn`, `sched_init`, `thread_wakeup`, `thread_sched`, `thread_yield`, `thread_sleep` | **ported**: `PSchedInit.lean` (`sched_init_triple`, `sched_init_inv`), `PThreadSched.lean` (`thread_wakeup_triple`), `PThreadSwitch.lean` (`thread_sched_run`, `thread_yield_run`, `thread_sleep_run`), `PThreadSpawn.lean` (`thread_spawn_run`). `ThreadLayer.lean` is an earlier prototype of a different thing. Not done: that a parked thread is resumed, and reasoning about one thread alone |
 | `PIPCIntro`, `PIPC` | synchronous IPC | missing |
 | `PUCtxtIntro`, `PProc` | user contexts, `proc_create` | missing |
 | **Trap handling** (`trap`) | | |
@@ -111,7 +111,7 @@ Even for the ported layers:
 - **Agreed order** (2026-11-19): 0 calling convention for layers, 1 page
   tables, 2 boot and init, 3 shared memory, 4 invariants along the shared
   log, 5 thread data, 6 machine model and scheduler, 7 IPC, 8 processes and
-  traps, 9 security and virtualization. Stages 0 to 5 are done, except for the linking step for the rely of stage 4. Stage 6 has started (`CR3`, the paging bit, and all of boot).
+  traps, 9 security and virtualization. Stages 0 to 6 are done, except for the linking step for the rely of stage 4 and what the machine model still lacks (privilege levels, traps).
 - **`Layer.lean`: a primitive's interface is a triple.**
   `Triple εR c i M F P s Q` says: in a critical section, on a region matching
   abstract data `d` with precondition `P`, the code `s` runs to completion,
@@ -405,6 +405,83 @@ table initialised, thread 0 running.
   (`MMI`) and the list view's invariants (`AInv`). This is
   `MMInv.boot_locked_inv` for the whole of boot. The rely on the other CPUs
   is assumed, as everywhere in stage 4.
+
+### `KMachine.lean`: kernel contexts (machine model, second part)
+
+mCertiKOS's kernel context is six saved registers, and `cswitch` is twenty
+assembly instructions that store them and load six others. What that means
+is control: execution continues where the other context left off. ClightL
+has no registers, stack or code pointers, so this could not be transcribed.
+It was decided on 2026-11-19 to model it as follows.
+
+- **A kernel context is a suspended ClightL computation** (`KCtx`): the
+  statement to run, the continuation (the stack and return address), and the
+  locals (the saved registers).
+- **`kstep`**: the kernel machine. Its state is the running computation, the
+  pool of kernel contexts, and the shared log. Ordinary steps are ClightL's.
+  Three calls are the machine's own: `cswitch(n, n')` parks the running
+  computation in slot `n`, about to return `0` from the call, and resumes
+  slot `n'`; `set_SP(n)` gives context `n` an empty stack; `set_RA(n, f)`
+  makes it start at function `f`, a number looked up in the machine's text.
+- **`KStar.of_runs`**: code of the layers below runs on the kernel machine
+  as it did, under any continuation, and leaves the pool alone. So every
+  triple proved before applies unchanged.
+
+What it leaves out: the pool belongs to one CPU's machine, so threads do not
+move between CPUs. The switch is one trusted step, where mCertiKOS verifies
+assembly.
+
+### `PKContext.lean`: the context primitives
+
+- `KData` is `CData` with the pool. `kctxt_switch_spec`, `kctxt_sp_spec`,
+  `kctxt_ra_spec` keep mCertiKOS's shape; only the type of a context
+  changes. The specifications never look inside one.
+- `kctxt_switch_refines`, `kctxt_sp_refines`, `kctxt_ra_refines`: the three
+  machine calls refine them.
+
+### `PThreadSwitch.lean`: `thread_sched`, `thread_yield`, `thread_sleep`
+
+mCertiKOS writes these three in assembly. They are transcribed call by call:
+
+```
+thread_sched:  new = dequeue(num_chan); set_state(new, RUN); old = get_curid();
+               set_curid(new); kctxt_switch(old, new)
+thread_yield:  cid = get_curid(); set_state(cid, READY); enqueue(num_chan, cid); thread_sched()
+thread_sleep:  cid = get_curid(); set_state(cid, SLEEP); enqueue(chan, cid); thread_sched()
+```
+
+- `thread_sched_spec`, `thread_yield_spec`, `thread_sleep_spec` are
+  mCertiKOS's, and so is `CurIDValid`.
+- **`thread_sched_run`, `thread_yield_run`, `thread_sleep_run`**: run on the
+  kernel machine, each ends with the head of the ready queue running, the
+  caller parked in its own slot as a computation about to return from the
+  call, and the region matching the new state. `thread_sched_eq`,
+  `thread_yield_eq`, `thread_sleep_eq`: that state is the specification's.
+- Each also gives the invariants of the new state (`AInv`, `CurIDValid`,
+  the current thread in range).
+- The proofs use the triples of the list view and one machine step. The
+  invariants are used as in mCertiKOS: the thread taken from the ready queue
+  is on it (`InQ`), so it has a container (`NotInQ`) and is not the current
+  thread (`CurIDValid`).
+- As in mCertiKOS, `thread_yield` and `thread_sleep` are undefined when the
+  ready queue is empty.
+- What differs: the lock is held across the switch, so the thread resumed
+  finds it held (the CPU holds it, not the thread). `clear_cr2` is left out.
+  The context saved has the locals as the scheduler's code left them; the
+  theorems say which locals that code writes.
+
+### `PThreadSpawn.lean`: `kctxt_new`, `thread_spawn`, and passthrough
+
+- **`liftPC`**: a triple of the page-table layers holds in the state with
+  threads, queues and the current thread, if it writes only cells of those
+  layers and keeps `pg`. It crosses the shared-memory table, the control
+  blocks, the queues, the list view and the current thread at once. This is
+  the passthrough that was missing; `pt_new` is its first use (`ptNewC`).
+- **`kctxt_new_run`**: `pt_new`, then `set_SP` and `set_RA`: a child
+  container, and a context that starts at `entry` on an empty stack.
+- **`thread_spawn_run`**: then the new thread is ready, at the back of the
+  ready queue. `split_child_free` (the slot a split gives is unused) with
+  `NotInQ` puts the new thread on no queue, which `enqueue` requires.
 
 ### `PThreadSched.lean`: `thread_wakeup`
 
@@ -706,9 +783,16 @@ unused by the ports.
   allocation-table invariant and the quota bound are carried, not
   `Container_valid` or `quota_bounded_AT`.
 - **The machine model is partial.** `CR3` and the paging bit are in
-  (`MCPU.lean`), one copy, as words of the kernel region. Context switch,
-  traps and virtualization need registers, privilege levels and assembly,
-  which are not modelled. No memory access goes through the page table.
+  (`MCPU.lean`), one copy, as words of the kernel region. Kernel contexts
+  are in (`KMachine.lean`), as suspended computations in a pool that belongs
+  to one CPU. Traps and virtualization need privilege levels and user-mode
+  execution, which are not modelled. No memory access goes through the page
+  table.
+- **Threads.** The scheduler functions are verified against their
+  specifications, which say what one call does to the state and which
+  context runs next. Not done: that a parked thread is resumed (it needs
+  the others to yield), reasoning about one thread with the others as its
+  environment (CertiKOS's thread-local layer), and liveness.
 - **Thread data** (stage 5): control blocks, queues, the list view and the
   current thread are ported. The invariants of the list view are proved on
   the specifications. Boot establishes them on the log
@@ -719,26 +803,25 @@ unused by the ports.
   in `MMInv.lean`, `MatchMMap`, paging off). `sched_locked_inv`
   (`PSchedBoot.lean`) runs it under the lock and leaves the invariants on
   the log.
-- **The primitives over the upper states.** The page-table and
-  shared-memory triples are stated over their own layer's state. `liftT` and
-  `liftA` carry a triple up one layer, and `MatchCPU` has to be carried too
-  (it survives any triple that keeps `pg`, `PT` and the two register cells).
-  This has been done where a proof needed it (boot), not for every
-  primitive.
+- **The primitives over the upper states.** `liftPC` carries any triple of
+  the page-table layers to the state with the current thread. The
+  shared-memory triples (stated over `SData`) do not have their version yet,
+  and `MatchCPU` has to be carried separately (it survives any triple that
+  keeps `pg`, `PT` and the two register cells).
 
 ## Order
 
-See "How the ports are organised" above. Stages 0 to 5 are done, except
-for the linking step for the rely of stage 4. Stage 6 has started:
+See "How the ports are organised" above. Stages 0 to 6 are done, with these
+left open inside them:
 
-- done: `CR3` and the paging bit, `set_pt`, `set_pg`, `pt_init`,
-  `pmap_init` (`MCPU.lean`); the initialisation chain as whole functions
-  (`MInit.lean`); `sched_init` (`PSchedInit.lean`), and under the lock
-  (`PSchedBoot.lean`).
-- next: kernel contexts (`PKContext`, `PKContextNew`: `kctxt_switch`,
-  `kctxt_new`). mCertiKOS's are saved registers and assembly. Here a
-  context has to be a suspended ClightL computation, so this needs a machine
-  that holds several of them and switches between them.
-- then the rest of the scheduler: `thread_spawn`, `thread_sched`,
-  `thread_yield`, `thread_sleep` (`thread_wakeup` is done,
-  `PThreadSched.lean`).
+- stage 4: the rely on the other CPUs is assumed, not derived by linking;
+- stage 6: `ikern`, `ihost` and the trap state are not in the machine model;
+  the scheduler theorems are per call, with no thread-local reasoning.
+
+Stage 6 in files: `MCPU.lean` (`CR3`, paging, `pt_init`), `MInit.lean`,
+`PSchedInit.lean`, `PSchedBoot.lean` (boot), `KMachine.lean`,
+`PKContext.lean` (kernel contexts), `PThreadSched.lean`,
+`PThreadSwitch.lean`, `PThreadSpawn.lean` (the scheduler).
+
+Next is stage 7, IPC: the channel pool and its accessors (`PIPCIntro`), then
+`sendto_chan`, `receive_chan` and the synchronous send and receive (`PIPC`).
