@@ -87,7 +87,7 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | `TTrapArg`, `TTrap`, `TDispatch`, `TSysCall` | system-call arguments, handlers, dispatch, the kernel's entry points | **ported**: `TTrapArg.lean` (`uctx_arg1` … `uctx_arg6`, `uctx_set_errno`, `uctx_set_retval1` … `5`), `TTrap.lean` (`trap_sendtochan_pre`, `trap_sendtochan_post`, `sys_receive_chan`, `sys_get_quota`, `ptfault_resv`), `TDispatch.lean` (`container_can_consume`, `sys_proc_create`, `syscall_dispatch_c`), `TSysCall.lean` (`syscall_dispatch`, `pgf_handler`, `sys_yield`, from user mode back to user mode). Missing: `SYS_share` and `SYS_print` in the dispatcher, and the virtualization handlers |
 | **Other** | | |
 | `objects/ObjVMX`, `ObjVMCS`, `ObjEPT` | virtualization | missing |
-| `security` | noninterference (`ObsEq`, `Integrity`, `Confidentiality`, `Security`) | **partly ported**: `ObsEq.lean` (the observation function and observable equivalence), `Integrity.lean` (integrity of the three entry points: `integrity_syscall`, `integrity_pgf`, `integrity_yield`), `Confidentiality.lean` (`confidentiality_syscall`, `confidentiality_yield`). Missing: confidentiality of the page-fault handler, the step where a parked process is resumed (`ConfidentialityRestore`), and the combination into noninterference (`Security.v`) |
+| `security` | noninterference (`ObsEq`, `Integrity`, `Confidentiality`, `ConfidentialityRestore`, `Security`) | **ported up to the unwinding conditions**: `ObsEq.lean` (the observation function), `Integrity.lean`, `Confidentiality.lean`, `ConfidentialityPF.lean` (the page fault), `Security.lean` (`KPass`: one passage through the kernel; `integ`, `conf`, `conf_restore`). Missing: the theorem for whole executions (`SecurityBigstep.v`, `end_to_end_security`), which needs a model of user programs; integrity and confidentiality of user-mode instructions; preservation of the security invariants |
 | `layerlib`: `LAsm`, `CompCertiKOS` | layered assembly, the compiler | missing: no machine model, no verified compiler |
 | layer calculus | linking layers vertically with `high_level_invariant` | partial: each port states refinement to the spec; invariant preservation and layer linking are not done per layer |
 
@@ -653,7 +653,7 @@ through the kernel.
   proved but not wired to an entry point; in the mCertiKOS sources read here
   those entry points are commented out too.
 
-### `ObsEq.lean`, `Integrity.lean`, `Confidentiality.lean`: security
+### `ObsEq.lean`, `Integrity.lean`, `Confidentiality.lean`, `ConfidentialityPF.lean`, `Security.lean`: security
 
 mCertiKOS's security proof (Costanzo, Shao and Gu, PLDI'16) is stated over the
 top layer's specifications, and so is the port.
@@ -670,22 +670,38 @@ top layer's specifications, and so is the port.
   that is neither process). `ptResv_frame` is the fact behind the page-fault
   case: `pt_resv` changes only the caller's page table and container, and
   pages that were free.
-- **Confidentiality** (`Confidentiality.lean`): what the running process
-  observes after a passage through the kernel depends only on what it
-  observed before, and so do the registers it gets back.
-  `confidentiality_syscall`, `confidentiality_yield`.
+- **Confidentiality** (`Confidentiality.lean`, `ConfidentialityPF.lean`):
+  what the running process observes after a passage through the kernel
+  depends only on what it observed before, and so do the registers it gets
+  back. `confidentiality_syscall`, `confidentiality_pgf`,
+  `confidentiality_yield`.
 - The confidentiality proofs go through a stronger statement than
   mCertiKOS's: the observation after is a function of the observation before
-  (`obs_syscall`, with `obsDispatch`, `obsExit`, `obsStart`). These functions
-  are the kernel as a process sees it.
-- What is assumed, as in mCertiKOS: the container invariant, that the
-  observer's container is in use, and that the pages a process maps are not
-  free (`MappedUsed`; in mCertiKOS this follows from the owner lists).
-- Not done: confidentiality of the page-fault handler (it needs that a fresh
-  page reads the same in any two states, mCertiKOS's `dirty_ppage`); the step
-  where a parked process becomes the running one; user-mode instructions
-  (not modelled); and the combination of the three properties into
-  noninterference for whole executions.
+  (`obs_syscall`, with `obsDispatch`, `obsExit`, `obsStart`; `resv_obs` for
+  the page fault). These functions are the kernel as a process sees it.
+- **The page fault** is the interesting case. Which physical page the
+  process gets depends on what the others have allocated. The observation
+  hides physical pages, and a fresh page holds no data, so the process sees
+  the same thing whichever page it got. `resvKind_obs`: whether a page is
+  mapped, and whether a table had to be allocated too, is determined by what
+  the process observed (its quota and the permissions of its address space).
+- **Resumption** (`confidentiality_restore`): two states a parked process
+  could not tell apart; when a yield resumes it in both, it still cannot,
+  and it resumes the same kernel computation.
+- **`Security.lean`** puts these on one transition relation. `KPass t d d'
+  rs'` is one passage through the kernel for the trap `t` (a system call, a
+  page fault, or a yield, with the registers at the trap). `integ`, `conf`
+  and `conf_restore` are the three unwinding conditions, mCertiKOS's lemmas
+  of the same names.
+- What is assumed (`SecInv`), as in mCertiKOS's `secure_inv`: the container
+  invariant, that the observer's and the caller's containers are in use, that
+  the pages a process maps are not free (`MappedUsed`; in mCertiKOS it
+  follows from the owner lists), and that a free page holds no data
+  (`FreeNone`, mCertiKOS's `dirty_ppage`).
+- Not done: that a passage preserves `SecInv`; integrity and confidentiality
+  of user-mode instructions (user code is not modelled); and the unwinding
+  theorem that turns the three conditions into noninterference for whole
+  executions.
 
 ### `MPTResv2.lean`: one page in two address spaces
 
@@ -1042,9 +1058,9 @@ Stage 8 in files: `PUCtxtIntro.lean` (the top state, user contexts),
 the kernel), `TTrapArg.lean`, `TTrap.lean`, `TDispatch.lean` (system calls),
 `TSysCall.lean` (the three entry points).
 
-Stage 9 has started with security: `ObsEq.lean`, `Integrity.lean`,
-`Confidentiality.lean`. Integrity holds for all three entry points, and
-confidentiality for the system call and the yield. Left in security:
-confidentiality of the page fault, the resumption of a parked process, and
-the combination into noninterference. Then virtualization (`ObjVMX`,
-`ObjVMCS`, `ObjEPT` and the handlers that use them), which is not started.
+Stage 9, security: `ObsEq.lean`, `Integrity.lean`, `Confidentiality.lean`,
+`ConfidentialityPF.lean`, `Security.lean`. The three unwinding conditions
+hold for a passage through the kernel. Left in security: that the security
+invariants are preserved, and the theorem for whole executions, which needs
+a model of user programs. Then virtualization (`ObjVMX`, `ObjVMCS`, `ObjEPT`
+and the handlers that use them), which is not started.
