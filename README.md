@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-126 Lean files, about 52,500 lines, and a Coq development of the
+128 Lean files, about 53,300 lines, and a Coq development of the
 virtualization layers in `coq/` (about 3,700 lines). No `sorry`, no `Admitted`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
@@ -207,8 +207,10 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
   ported, boot is complete, and so are the scheduler, synchronous IPC,
   processes and the system-call path up to mCertiKOS's top layer. The
   machine model has `CR3`, the paging bit, kernel contexts and user mode, one
-  copy rather than one per CPU. Still open there: taking the lock at the kernel boundary,
-  and carrying the invariants from one trap to the next. Security is
+  copy rather than one per CPU. The entry points take the kernel lock at the
+  boundary (`acquire; entry; release`, `TLock.lean`), and the invariants they
+  assume are carried from one trap to the next on the shared log (`KInv`,
+  `TInv.lean`; `Good`, `TLock.lean`). Security is
   proved at the top layer's specifications, with user programs as functions
   of what they can see; user-mode instructions are not modelled, the security
   invariants are assumed rather than shown preserved, and the result is not

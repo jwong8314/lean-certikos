@@ -32,6 +32,13 @@ free, the region last released matches a state `d` with `Good d`.
   user mode, the lock released and idle, the last released region `Good` for
   the state the specifications give.
 * `pgf_locked`: **a page fault**, likewise.
+* `yield_locked`: **a yield.** The caller is parked holding the lock; the
+  head of the ready queue, parked by an earlier yield or new, is resumed and
+  releases the lock on its way to user mode (`resume_start`).
+
+What is assumed at each trap is what `Triple.locked_inv` assumes: the rely
+on the other CPUs (`RelyJ`, with the invariant) and the fairness of the
+lock. The machine still has one copy of the per-CPU state.
 
 So the invariant is carried from one trap to the next, and each trap is
 bracketed by the lock.

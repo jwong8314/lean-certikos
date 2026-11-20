@@ -113,7 +113,7 @@ Even for the ported layers:
 - **Agreed order** (2026-11-19): 0 calling convention for layers, 1 page
   tables, 2 boot and init, 3 shared memory, 4 invariants along the shared
   log, 5 thread data, 6 machine model and scheduler, 7 IPC, 8 processes and
-  traps, 9 security and virtualization. Stages 0 to 8 are done, and stage 9 up to the points listed under it, except for the linking step for the rely of stage 4 and what the machine model still lacks (the lock at the kernel boundary, interrupts, memory accesses through the page table).
+  traps, 9 security and virtualization. Stages 0 to 8 are done, and stage 9 up to the points listed under it, except for the linking step for the rely of stage 4 and what the machine model still lacks (interrupts, memory accesses through the page table, one copy of the per-CPU state per CPU).
 - **`Layer.lean`: a primitive's interface is a triple.**
   `Triple εR c i M F P s Q` says: in a critical section, on a region matching
   abstract data `d` with precondition `P`, the code `s` runs to completion,
@@ -1119,11 +1119,13 @@ unused by the ports.
   finished kernel computation can enter the guest, and a VM exit enters the
   kernel. Not modelled: what user and guest code do, interrupts, and memory
   accesses through the page table.
-- **The lock at the kernel boundary.** Every theorem about kernel code is
-  inside a critical section. The kernel entry points are proved from "lock
-  held at the trap" to "lock held at the return"; acquiring at the trap and
-  releasing before the return, as `Triple.locked` does for plain code, is not
-  done on the machine with user mode.
+- **The lock at the kernel boundary** (`TLock.lean`): each entry point is
+  `acquire(lk); entry; release(lk)`. `syscall_locked`, `pgf_locked`,
+  `yield_locked` go from user mode to user mode on the machine, assuming at
+  each trap what `Triple.locked_inv` assumes (the rely on the other CPUs with
+  the invariant, `RelyJ`, and the lock's fairness). A yield parks the caller
+  holding the lock; the thread resumed releases it. A new thread starts at
+  `code pstart`, which is taken to be `proc_start_user; release`.
 - **Threads.** The scheduler functions are verified against their
   specifications, which say what one call does to the state and which
   context runs next. `sys_yield_ustar` follows one switch through: the
@@ -1148,12 +1150,17 @@ unused by the ports.
   The shared-memory triples (stated over `SData`) do not have their version
   yet, and `MatchCPU` has to be carried separately (it survives any triple
   that keeps `pg`, `PT` and the two register cells).
-- **Invariants at the top.** The entry-point theorems take the invariants
-  as hypotheses on the state at the trap. That each passage through the
-  kernel re-establishes them, so that they hold at the next trap, is proved
-  only in part: the queue invariants are stated after a yield and after
-  `proc_create`, but not after the dispatcher as a whole, and the container
-  invariants are not stated after `proc_create`.
+- **Invariants at the top** (`TInv.lean`, `TLock.lean`): `KInv` gathers
+  what the entry points assume (a valid running process, the queue and
+  container invariants, the allocation table's invariant, every container
+  within quota). `exit_keeps`, `dispatch_keeps` (with `create_keeps`),
+  `pgf_keeps`, `start_keeps` show the passages re-establish it, and the yield
+  through `sys_yield_run`. On the machine, the invariant is on the log
+  (`Good`: the region matches, the ELF table, `KInv`, user mode, and
+  `PoolInv`, every thread on the ready queue resumable), so the conclusion of
+  one locked entry point is the hypothesis of the next. Not carried: the
+  security invariants (`SecInv`: `MappedUsed`, `FreeNone`), which the
+  security theorems still assume at each step.
 
 ## Order
 
@@ -1163,9 +1170,8 @@ left open inside them:
 - stage 4: the rely on the other CPUs is assumed, not derived by linking;
 - stage 6: the scheduler theorems are per call, with no thread-local
   reasoning;
-- stage 8: the dispatcher lacks `SYS_share` and `SYS_print`; the lock is not
-  acquired and released at the kernel boundary; the invariants are assumed at
-  each trap rather than carried from one to the next.
+- stage 8: the security invariants are assumed at each step rather than
+  carried (the kernel's own invariants are carried, `TInv`, `TLock`).
 
 Stage 6 in files: `MCPU.lean` (`CR3`, paging, `pt_init`), `MInit.lean`,
 `PSchedInit.lean`, `PSchedBoot.lean` (boot), `KMachine.lean`,

@@ -39,7 +39,8 @@ What differs:
 * The fault address is the local `vaddr` at the trap (`CR2`), not a field
   `ti` of the state.
 * All of this is inside a critical section: the lock is held on entry and
-  still held on exit.
+  still held on exit. `TLock.lean` puts the lock around the entry points,
+  and `TInv.lean` shows the invariants assumed here are re-established.
 -/
 
 set_option linter.deprecated false

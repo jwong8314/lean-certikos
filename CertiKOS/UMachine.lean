@@ -27,11 +27,9 @@ So `ikern` is the kind of state the machine is in. What the user program does
 between an `iret` and the next trap is not modelled, as in mCertiKOS, where
 user code is the context the kernel is linked with.
 
-What this leaves out: the lock. Every theorem about kernel code so far is
-inside a critical section, and the kernel is entered and left with the lock
-held by the CPU; acquiring it at the trap and releasing it at the `iret` is
-not part of this machine yet. Interrupts are not modelled: a trap happens
-only from user mode.
+The lock is not part of the machine: the entry points take it themselves
+(`TLock.lean`: `acquire(lk); entry; release(lk)`). Interrupts are not
+modelled: a trap happens only from user mode.
 -/
 
 set_option linter.deprecated false

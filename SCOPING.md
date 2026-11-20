@@ -132,6 +132,8 @@ A first P0 spike is in `CertiKOS/` and builds with Lean 4.35.0. It has no `sorry
 | `THyp3.lean` | **`SYS_hvm_mmap`**: `readU`, `resvU` (page-table calls on the top state), `mmap_triple`. |
 | `TRunVM.lean` | **`SYS_hvm_run_vm`**: `run_vm_enters` (to guest mode), `vm_exit_returns` (back to the caller). |
 | `TSecVM.lean` | **Integrity around the guest**: `integ_run_vm`, `integ_vm_exit`, `integ_visit`. |
+| `TInv.lean` | **The kernel's invariant from one trap to the next**: `KInv`; `exit_keeps`, `create_keeps`, `dispatch_keeps`, `pgf_keeps`, `start_keeps`. |
+| `TLock.lean` | **The lock at the kernel boundary**: `lockedK` (`acquire; entry; release`), `Good`, `PoolInv`; `syscall_locked`, `pgf_locked`, `yield_locked`. |
 | `VInit.lean` | **`vmx_init`, ported from `coq/Init.v`**: `defaults`, `vmx_init0_spec`, `vmxInit_step`. |
 | `VEPT4.lean` | **The EPT's upper tables, ported from `coq/EPT4.v`**: `MatchUp`, `up_store`, `SameShape`, `matchUp_shape`, `setEPML4_step`, `setEPDPTE_run`, `setEPDTE_step`, `initUp_run`. |
 | `LayerStep.lean` | **Steps and data abstraction.** `Step` (a triple for one starting point), `Step.seq`, `Step.ite_true`, `Step.ite_false`, `Step.while_inv`, `Step.triple`, `Step.lift`; `Triple.sim` (a layer whose state is a view of the state below inherits its triples); guards on machine words (`eqc_true`, `nec_false`, `nev_true`, …). |
