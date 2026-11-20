@@ -298,6 +298,10 @@ theorem KData.ext5 {d1 d2 : KData} (h1 : d1.toSData = d2.toSData) (h2 : d1.abtcb
   change k1 = k2 at h5
   subst h1; subst h2; subst h3; subst h4; subst h5; rfl
 
+/-- The cells the scheduler may write: the control blocks, the queues, and the
+current-thread word. -/
+def SchedF (tb num_proc qb num_chan cidb : Nat) (k : Nat) : Prop := QTF tb num_proc qb num_chan k ∨ k = cidb
+
 section Code
 variable {maxpage num_id cb num_proc pb ib fb ida sb tb num_chan qb cidb : Nat}
 variable (εR : REnv) (c : CPU) (i0 : Nat)
@@ -320,28 +324,29 @@ theorem dequeueC (hL : CLayout maxpage num_id cb num_proc pb ib fb sb tb num_cha
     (hcs : CS1 c i0 l b) (hM : MC d b) (hcn : σ "chan_index" = BitVec.ofNat 32 n)
     (hI : AInv num_proc num_chan d.toAData) (hs : dequeue0_spec num_proc num_chan n d.toAData = some (a1, r)) :
     ∃ σ' l' b', Runs (rprimsA εR c) (dequeueS tb qb num_proc) σ l σ' l' ∧ CS1 c i0 l' b' ∧
-      MC ({ d with toAData := a1 } : CData) b' ∧ σ' "lk" = σ "lk" ∧ σ' "proc_index" = BitVec.ofNat 32 r := by
-  obtain ⟨σ', l', b', d', hr, hcs', hM', hlk', -, a, hd', r', hq, hpi⟩ :=
+      MC ({ d with toAData := a1 } : CData) b' ∧ σ' "lk" = σ "lk" ∧ σ' "proc_index" = BitVec.ofNat 32 r ∧
+      ∀ k, ¬ QTF tb num_proc qb num_chan k → b' k = b k := by
+  obtain ⟨σ', l', b', d', hr, hcs', hM', hlk', hf, a, hd', r', hq, hpi⟩ :=
     liftA εR c i0 hL (dequeue0_triple εR c i0 hL.qlay n) (qtf_ne hL) σ l b d hlk hcs hM ⟨hcn, hI, a1, r, hs⟩
   rw [hs] at hq
   injection hq with e
   injection e with e1 e2
   subst e1; subst e2; subst hd'
-  exact ⟨σ', l', b', hr, hcs', hM', hlk', hpi⟩
+  exact ⟨σ', l', b', hr, hcs', hM', hlk', hpi, hf⟩
 
 theorem setStateC (hL : CLayout maxpage num_id cb num_proc pb ib fb sb tb num_chan qb cidb) {σ : Locals}
     {l : RLog} {b : Region} {d : CData} {ie ve : Expr} {n sv : Nat} {a1 : AData} (hlk : (σ "lk").toNat = i0)
     (hcs : CS1 c i0 l b) (hM : MC d b) (he : ie.eval σ = BitVec.ofNat 32 n)
     (hve : ve.eval σ = BitVec.ofNat 32 sv) (hs : set_state0_spec num_proc n sv d.toAData = some a1) :
     ∃ l' b', Runs (rprimsA εR c) (setTStateS tb ie ve) σ l (σ.set "_" 0) l' ∧ CS1 c i0 l' b' ∧
-      MC ({ d with toAData := a1 } : CData) b' := by
-  obtain ⟨σ', l', b', d', hr, hcs', hM', hlk', -, a, hd', hq, hσ⟩ :=
+      MC ({ d with toAData := a1 } : CData) b' ∧ ∀ k, ¬ QTF tb num_proc qb num_chan k → b' k = b k := by
+  obtain ⟨σ', l', b', d', hr, hcs', hM', hlk', hf, a, hd', hq, hσ⟩ :=
     liftA εR c i0 hL (setState0_triple εR c i0 hL.qlay ie ve num_proc n sv (Nat.le_refl _)) (tf_ne hL) σ l b d
       hlk hcs hM ⟨he, hve, a1, hs⟩
   rw [hs] at hq
   injection hq with e
   subst e; subst hd'; subst hσ
-  exact ⟨l', b', hr, hcs', hM'⟩
+  exact ⟨l', b', hr, hcs', hM', fun k hk => hf k (fun h => hk (Or.inl h))⟩
 
 theorem enqueueC (hL : CLayout maxpage num_id cb num_proc pb ib fb sb tb num_chan qb cidb) {σ : Locals}
     {l : RLog} {b : Region} {d : CData} {n i : Nat} {a1 : AData} (hlk : (σ "lk").toNat = i0)
@@ -349,14 +354,15 @@ theorem enqueueC (hL : CLayout maxpage num_id cb num_proc pb ib fb sb tb num_cha
     (hpi : σ "proc_index" = BitVec.ofNat 32 i) (hI : AInv num_proc num_chan d.toAData)
     (hs : enqueue0_spec num_proc num_chan n i d.toAData = some a1) :
     ∃ σ' l' b', Runs (rprimsA εR c) (enqueueS tb qb num_proc) σ l σ' l' ∧ CS1 c i0 l' b' ∧
-      MC ({ d with toAData := a1 } : CData) b' ∧ σ' "lk" = σ "lk" := by
-  obtain ⟨σ', l', b', d', hr, hcs', hM', hlk', -, a, hd', hq⟩ :=
+      MC ({ d with toAData := a1 } : CData) b' ∧ σ' "lk" = σ "lk" ∧
+      ∀ k, ¬ QTF tb num_proc qb num_chan k → b' k = b k := by
+  obtain ⟨σ', l', b', d', hr, hcs', hM', hlk', hf, a, hd', hq⟩ :=
     liftA εR c i0 hL (enqueue0_triple εR c i0 hL.qlay n i) (qtf_ne hL) σ l b d hlk hcs hM
       ⟨hcn, hpi, hI, a1, hs⟩
   rw [hs] at hq
   injection hq with e
   subst e; subst hd'
-  exact ⟨σ', l', b', hr, hcs', hM', hlk'⟩
+  exact ⟨σ', l', b', hr, hcs', hM', hlk', hf⟩
 
 /-! ### `thread_sched` -/
 
@@ -373,27 +379,31 @@ theorem schedBody_run (hL : CLayout maxpage num_id cb num_proc pb ib fb sb tb nu
       σ' "lk" = σ "lk" ∧ σ' "old" = BitVec.ofNat 32 d.cid ∧ σ' "proc_index" = BitVec.ofNat 32 la ∧
       AInv num_proc num_chan ({ d.toAData with
         abtcb := setAt d.abtcb la (.AbTCBValid .RUN (-1))
-        abq := setAt d.abq num_chan (.AbQValid (remove la ql)) } : AData) ∧ la < num_proc := by
+        abq := setAt d.abq num_chan (.AbQValid (remove la ql)) } : AData) ∧ la < num_proc ∧
+      ∀ k, ¬ SchedF tb num_proc qb num_chan cidb k → b' k = b k := by
   have hnp : num_proc < 2 ^ 32 := np_lt hL.qlay
   obtain ⟨hpg, hipt, hq, hla, hne, hcu, ⟨s, b0, hai⟩, -, -⟩ := hP
   have hlt : la < num_proc := q_lt hI.qc (Nat.le_refl _) hq (last_mem hla hne)
   obtain ⟨a1, hdq, hss⟩ := sched_factors (np := num_proc) (nc := num_chan) (a := d.toAData) hpg hipt hq hla
     hne hlt hcu hai
-  obtain ⟨σ2, l2, b2, r2, c2, m2, k2, p2⟩ := dequeueC εR c i0 hL
+  obtain ⟨σ2, l2, b2, r2, c2, m2, k2, p2, f2⟩ := dequeueC εR c i0 hL
     (σ := σ.set "chan_index" (BitVec.ofNat 32 num_chan)) (by simpa [Locals.set] using hlk) hcs hM
     (by simp [Locals.set]) hI hdq
   have hI1 := (dequeue0_keeps hdq hI).1
   have hlk2 : (σ2 "lk").toNat = i0 := by rw [k2]; simpa [Locals.set] using hlk
-  obtain ⟨l3, b3, r3, c3, m3⟩ := setStateC εR c i0 hL (σ := σ2) (ie := .var "proc_index") (ve := .const 1)
+  obtain ⟨l3, b3, r3, c3, m3, f3⟩ := setStateC εR c i0 hL (σ := σ2) (ie := .var "proc_index") (ve := .const 1)
     (n := la) (sv := 1) hlk2 c2 m2 p2 rfl hss
-  obtain ⟨l4, b4, r4, c4, m4, -⟩ := (getCuridC εR c i0 hL (F := fun _ => False) "old" (by decide)
+  obtain ⟨l4, b4, r4, c4, m4, f4⟩ := (getCuridC εR c i0 hL (F := fun _ => False) "old" (by decide)
     (σ2.set "_" 0) _).2 l3 b3 (by simpa [Locals.set] using hlk2) c3 m3
-  obtain ⟨l5, b5, r5, c5, m5, -⟩ := (setCuridC εR c i0 hL (F := fun k => k = cidb) (fun _ h => h)
+  obtain ⟨l5, b5, r5, c5, m5, f5⟩ := (setCuridC εR c i0 hL (F := fun k => k = cidb) (fun _ h => h)
     (ve := .var "proc_index") (σ := (σ2.set "_" 0).set "old" (BitVec.ofNat 32 d.cid)) (i := la)
     (by simp [Expr.eval, Locals.set, p2]) (by omega)).2 l4 b4
     (by simpa [Locals.set] using hlk2) c4 m4
   exact ⟨_, l5, b5, Runs.seq (Runs.assign _ _) (Runs.seq r2 (Runs.seq r3 (Runs.seq r4 r5))), c5, m5,
-    by simp [Locals.set, k2], by simp [Locals.set], by simp [Locals.set, p2], set_state0_keeps hss hI1, hlt⟩
+    by simp [Locals.set, k2], by simp [Locals.set], by simp [Locals.set, p2], set_state0_keeps hss hI1, hlt,
+    fun k hk => by
+      rw [f5 k (fun h => hk (Or.inr h)), f4 k (fun h => h), f3 k (fun h => hk (Or.inl h)),
+        f2 k (fun h => hk (Or.inl h))]⟩
 
 /-- **`thread_sched` on the kernel machine.** The head `la` of the ready
 queue runs; the caller is parked in its slot; the region matches
@@ -408,10 +418,12 @@ theorem thread_sched_run (code : Nat → Stmt KPrim)
         ⟨d.kctxt la, (schedOut num_chan la ql ⟨.skip, K, σf.set "_" 0⟩ d).kctxt, l'⟩ ∧
       CS1 c i0 l' b' ∧ MC (schedOut num_chan la ql ⟨.skip, K, σf.set "_" 0⟩ d).toCData b' ∧
       AInv num_proc num_chan (schedOut num_chan la ql ⟨.skip, K, σf.set "_" 0⟩ d).toAData ∧
-      CurIDValid (schedOut num_chan la ql ⟨.skip, K, σf.set "_" 0⟩ d).toCData ∧ la < num_proc := by
+      CurIDValid (schedOut num_chan la ql ⟨.skip, K, σf.set "_" 0⟩ d).toCData ∧ la < num_proc ∧
+      ∀ k, ¬ SchedF tb num_proc qb num_chan cidb k → b' k = b k := by
   have hnp : num_proc < 2 ^ 32 := np_lt hL.qlay
-  obtain ⟨σ', l', b', hr, hcs', hM', hlk', hold, hpi, hI', hlt⟩ := schedBody_run εR c i0 hL hlk hcs hM hI hcid hP
-  refine ⟨σ', l', b', fun z hz => hr.frame hz, ?_, hcs', hM', hI', ⟨hP.hcu, setAt_eq _ _ _⟩, hlt⟩
+  obtain ⟨σ', l', b', hr, hcs', hM', hlk', hold, hpi, hI', hlt, hfp⟩ :=
+    schedBody_run εR c i0 hL hlk hcs hM hI hcid hP
+  refine ⟨σ', l', b', fun z hz => hr.frame hz, ?_, hcs', hM', hI', ⟨hP.hcu, setAt_eq _ _ _⟩, hlt, hfp⟩
   refine (kstar_seq hr _ K d.kctxt).trans (.single ?_)
   have e1 : ((Expr.var "old").eval σ').toNat = d.cid := by
     show (σ' "old").toNat = _
@@ -438,21 +450,22 @@ theorem park_run (hL : CLayout maxpage num_id cb num_proc pb ib fb sb tb num_cha
       σ' "lk" = σ "lk" ∧
       AInv num_proc num_chan ({ d.toAData with
         abtcb := setAt d.abtcb d.cid (.AbTCBValid ts q)
-        abq := setAt d.abq q (.AbQValid (d.cid :: lq)) } : AData) := by
+        abq := setAt d.abq q (.AbQValid (d.cid :: lq)) } : AData) ∧
+      ∀ k, ¬ QTF tb num_proc qb num_chan k → b' k = b k := by
   have hnp : num_proc < 2 ^ 32 := np_lt hL.qlay
   obtain ⟨a1, hss, henq⟩ := park_factors (np := num_proc) (nc := num_chan) (a := d.toAData) hpg hipt hcid hq
     hcv.1 hcv.2 hts hlq
-  obtain ⟨l1, b1, r1, c1, m1, -⟩ := (getCuridC εR c i0 hL (F := fun _ => False) "proc_index" (by decide)
+  obtain ⟨l1, b1, r1, c1, m1, f1⟩ := (getCuridC εR c i0 hL (F := fun _ => False) "proc_index" (by decide)
     σ d).2 l b hlk hcs hM
-  obtain ⟨l2, b2, r2, c2, m2⟩ := setStateC εR c i0 hL (σ := σ.set "proc_index" (BitVec.ofNat 32 d.cid))
+  obtain ⟨l2, b2, r2, c2, m2, f2⟩ := setStateC εR c i0 hL (σ := σ.set "proc_index" (BitVec.ofNat 32 d.cid))
     (ie := .var "proc_index") (ve := .const (BitVec.ofNat 32 sv)) (n := d.cid) (sv := sv)
     (by simpa [Locals.set] using hlk) c1 m1 (by simp [Expr.eval, Locals.set]) rfl hss
   have hI1 := set_state0_keeps hss hI
-  obtain ⟨σ3, l3, b3, r3, c3, m3, k3⟩ := enqueueC εR c i0 hL
+  obtain ⟨σ3, l3, b3, r3, c3, m3, k3, f3⟩ := enqueueC εR c i0 hL
     (σ := (σ.set "proc_index" (BitVec.ofNat 32 d.cid)).set "_" 0) (n := q) (i := d.cid)
     (by simpa [Locals.set] using hlk) c2 m2 (by simp [Locals.set, hcn]) (by simp [Locals.set]) hI1 henq
   exact ⟨σ3, l3, b3, Runs.seq r1 (Runs.seq r2 r3), c3, m3, by rw [k3]; simp [Locals.set],
-    enqueue0_keeps henq hI1⟩
+    enqueue0_keeps henq hI1, fun k hk => by rw [f3 k hk, f2 k hk, f1 k (fun h => h)]⟩
 
 /-! ### `thread_yield` and `thread_sleep` -/
 
@@ -470,7 +483,8 @@ theorem thread_yield_run (code : Nat → Stmt KPrim)
         ⟨d.kctxt la, (yieldOut num_chan la ql ⟨.skip, K, σf.set "_" 0⟩ d).kctxt, l'⟩ ∧
       CS1 c i0 l' b' ∧ MC (yieldOut num_chan la ql ⟨.skip, K, σf.set "_" 0⟩ d).toCData b' ∧
       AInv num_proc num_chan (yieldOut num_chan la ql ⟨.skip, K, σf.set "_" 0⟩ d).toAData ∧
-      CurIDValid (yieldOut num_chan la ql ⟨.skip, K, σf.set "_" 0⟩ d).toCData ∧ la < num_proc := by
+      CurIDValid (yieldOut num_chan la ql ⟨.skip, K, σf.set "_" 0⟩ d).toCData ∧ la < num_proc ∧
+      ∀ k, ¬ SchedF tb num_proc qb num_chan cidb k → b' k = b k := by
   have hmem := last_mem hla hne
   have hlt : la < num_proc := q_lt hI.qc (Nat.le_refl _) hq hmem
   obtain ⟨s, hai⟩ := hI.inq la num_chan ql hlt (Nat.le_refl _) hq hmem
@@ -481,7 +495,7 @@ theorem thread_yield_run (code : Nat → Stmt KPrim)
     rw [e, hai] at h
     injection h with e1 e2
     omega
-  obtain ⟨σ1, l1, b1, r1, c1, m1, k1, hI1⟩ := park_run εR c i0 hL
+  obtain ⟨σ1, l1, b1, r1, c1, m1, k1, hI1, fp1⟩ := park_run εR c i0 hL
     (σ := σ.set "chan_index" (BitVec.ofNat 32 num_chan)) (sv := 0) (ts := .READY) (q := num_chan) (lq := ql)
     (by simpa [Locals.set] using hlk) hcs hM (by simp [Locals.set]) (Nat.le_refl _) hI hcid hpg hipt hcv rfl hq
   have hP : SchedPre num_proc num_chan (parkOut num_chan .READY ql d).toCData (d.cid :: ql) la :=
@@ -489,7 +503,7 @@ theorem thread_yield_run (code : Nat → Stmt KPrim)
       ⟨s, num_chan, by show setAt d.abtcb d.cid _ la = _; rw [setAt_ne _ _ (Ne.symm hne2)]; exact hai⟩,
       ⟨.READY, num_chan, setAt_eq _ _ _, by decide⟩, hne2⟩
   have hlk1 : (σ1 "lk").toNat = i0 := by rw [k1]; simpa [Locals.set] using hlk
-  obtain ⟨σf, l', b', hfr, hks, hcs', hM', hI', hcv', hlt'⟩ :=
+  obtain ⟨σf, l', b', hfr, hks, hcs', hM', hI', hcv', hlt', fp2⟩ :=
     thread_sched_run εR c i0 code hL (σ := σ1) (K := K) (d := parkOut num_chan .READY ql d) hlk1 c1 m1 hI1
       hcid hP
   have e : ∀ rs, schedOut num_chan la (d.cid :: ql) rs (parkOut num_chan .READY ql d) =
@@ -500,7 +514,8 @@ theorem thread_yield_run (code : Nat → Stmt KPrim)
   rw [e] at hks hM' hI' hcv'
   have hbody : Runs (rprimsA εR c) (yieldBodyS tb qb num_proc num_chan cidb) σ l σ1 l1 :=
     Runs.seq (Runs.assign _ _) r1
-  refine ⟨σf, l', b', fun z hz1 hz2 => (hfr z hz2).trans (hbody.frame hz1), ?_, hcs', hM', hI', hcv', hlt⟩
+  refine ⟨σf, l', b', fun z hz1 hz2 => (hfr z hz2).trans (hbody.frame hz1), ?_, hcs', hM', hI', hcv', hlt,
+    fun k hk => by rw [fp2 k hk, fp1 k (fun h => hk (Or.inl h))]⟩
   exact (kstar_seq hbody _ K d.kctxt).trans hks
 
 /-- **`thread_sleep` on the kernel machine.** The channel is in `chan_index`. -/
@@ -519,7 +534,8 @@ theorem thread_sleep_run (code : Nat → Stmt KPrim)
         ⟨d.kctxt la, (sleepOut num_chan n la ql ql' ⟨.skip, K, σf.set "_" 0⟩ d).kctxt, l'⟩ ∧
       CS1 c i0 l' b' ∧ MC (sleepOut num_chan n la ql ql' ⟨.skip, K, σf.set "_" 0⟩ d).toCData b' ∧
       AInv num_proc num_chan (sleepOut num_chan n la ql ql' ⟨.skip, K, σf.set "_" 0⟩ d).toAData ∧
-      CurIDValid (sleepOut num_chan n la ql ql' ⟨.skip, K, σf.set "_" 0⟩ d).toCData ∧ la < num_proc := by
+      CurIDValid (sleepOut num_chan n la ql ql' ⟨.skip, K, σf.set "_" 0⟩ d).toCData ∧ la < num_proc ∧
+      ∀ k, ¬ SchedF tb num_proc qb num_chan cidb k → b' k = b k := by
   have hmem := last_mem hla hne
   have hlt : la < num_proc := q_lt hI.qc (Nat.le_refl _) hq hmem
   obtain ⟨s, hai⟩ := hI.inq la num_chan ql hlt (Nat.le_refl _) hq hmem
@@ -530,7 +546,7 @@ theorem thread_sleep_run (code : Nat → Stmt KPrim)
     rw [e, hai] at h
     injection h with e1 e2
     omega
-  obtain ⟨σ1, l1, b1, r1, c1, m1, k1, hI1⟩ := park_run εR c i0 hL (σ := σ) (sv := 2) (ts := .SLEEP) (q := n)
+  obtain ⟨σ1, l1, b1, r1, c1, m1, k1, hI1, fp1⟩ := park_run εR c i0 hL (σ := σ) (sv := 2) (ts := .SLEEP) (q := n)
     (lq := ql') hlk hcs hM hcn (Nat.le_of_lt hn) hI hcid hpg hipt hcv rfl hq'
   have hP : SchedPre num_proc num_chan (parkOut n .SLEEP ql' d).toCData ql la :=
     ⟨hpg, hipt, by show setAt d.abq n _ num_chan = _; rw [setAt_ne _ _ (Nat.ne_of_gt hn)]; exact hq,
@@ -538,9 +554,10 @@ theorem thread_sleep_run (code : Nat → Stmt KPrim)
       ⟨s, num_chan, by show setAt d.abtcb d.cid _ la = _; rw [setAt_ne _ _ (Ne.symm hne2)]; exact hai⟩,
       ⟨.SLEEP, n, setAt_eq _ _ _, by decide⟩, hne2⟩
   have hlk1 : (σ1 "lk").toNat = i0 := by rw [k1]; exact hlk
-  obtain ⟨σf, l', b', hfr, hks, hcs', hM', hI', hcv', hlt'⟩ :=
+  obtain ⟨σf, l', b', hfr, hks, hcs', hM', hI', hcv', hlt', fp2⟩ :=
     thread_sched_run εR c i0 code hL (σ := σ1) (K := K) (d := parkOut n .SLEEP ql' d) hlk1 c1 m1 hI1 hcid hP
-  refine ⟨σf, l', b', fun z hz1 hz2 => (hfr z hz2).trans (r1.frame hz1), ?_, hcs', hM', hI', hcv', hlt⟩
+  refine ⟨σf, l', b', fun z hz1 hz2 => (hfr z hz2).trans (r1.frame hz1), ?_, hcs', hM', hI', hcv', hlt,
+    fun k hk => by rw [fp2 k hk, fp1 k (fun h => hk (Or.inl h))]⟩
   exact (kstar_seq r1 _ K d.kctxt).trans hks
 
 end Code
