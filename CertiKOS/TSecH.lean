@@ -19,7 +19,10 @@ here it is left out, see `ObsEq`) and the virtual machine.
 * `integ_dispatch_h`: **every system call the top state's dispatcher
   handles keeps the observation of every process other than the caller**,
   except `SYS_share`, whose purpose is to change process 2's address space,
-  and `SYS_spawn`, whose integrity is `integ_trap_proc_create`.
+  `SYS_recv`, which copies into the caller's buffer (a page the caller may
+  share with the observer) and wakes the sender, and `SYS_spawn`, whose
+  integrity is `integ_trap_proc_create`. mCertiKOS's security proof is about
+  its verified dispatcher (`sys_dispatch_c_spec`), which has no `SYS_recv`.
 
 What this does not say: there is one virtual machine, and, as in mCertiKOS,
 any process may make hypercalls. Guests are not isolated from one another,
@@ -100,10 +103,10 @@ theorem integ_mmap {np mp : Nat} {d d' : HData} (hmu : MappedUsed i d.toPTData) 
       · unfold mmapTail at h; exact integ_hcall h hi
   · exact integ_hcall h hi
 
-/-- **Every call of the dispatcher's table but `SYS_share` keeps every other
+/-- **Every call of the dispatcher's table but `SYS_share` and `SYS_recv` keeps every other
 process's observation.** -/
-theorem integ_dispatch_h {np mp a : Nat} {d d' : HData} (ha : a ≠ 27) (hmu : MappedUsed i d.toPTData)
-    (h : chainF (hspecs np mp) a d = some d') (hi : i ≠ d.cid) : ObsEq i d.toUData d'.toUData := by
+theorem integ_dispatch_h {np mp nc a : Nat} {d d' : HData} (ha : a ≠ 27) (hr : a ≠ 9)
+    (hmu : MappedUsed i d.toPTData) (h : chainF (hspecs np mp nc) a d = some d') (hi : i ≠ d.cid) : ObsEq i d.toUData d'.toUData := by
   have H : ∀ (f : HData → Option HData), (∀ d d', f d = some d' → i ≠ d.cid → ObsEq i d.toUData d'.toUData) →
       ∀ d d', f d = some d' → i ≠ d.cid → ObsEq i d.toUData d'.toUData := fun f hf => hf
   simp only [hspecs, chainF] at h
@@ -171,6 +174,7 @@ theorem integ_dispatch_h {np mp a : Nat} {d d' : HData} (ha : a ≠ 27) (hmu : M
     | none => rw [hq] at h; cases h
     | some u => rw [hq] at h; simp only [Option.some.injEq] at h; rw [← h]; exact integ_trap_get_quota hq hi
   rw [if_neg e26] at h
+  rw [if_neg hr] at h
   rw [if_neg ha] at h
   by_cases e28 : a = 28
   · rw [if_pos e28] at h; exact integ_print h hi
