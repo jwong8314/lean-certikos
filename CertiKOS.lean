@@ -117,5 +117,6 @@ import CertiKOS.THyp3
 import CertiKOS.TDispatchH
 import CertiKOS.TSecH
 import CertiKOS.TRunVM
+import CertiKOS.TSecVM
 import CertiKOS.PTInitGen
 import CertiKOS.MPTInit
