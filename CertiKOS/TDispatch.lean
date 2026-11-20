@@ -353,7 +353,7 @@ theorem sysProcCreate_run (code : Nat → Stmt KPrim)
         ⟨⟨sysProcCreateK cb mc tb qb num_proc num_chan cidb ucb elb num_id pstart, K, σ⟩, d.kctxt, l⟩
         ⟨⟨.skip, K, σ'⟩, d'.kctxt, l'⟩ ∧
       CS1 c i0 l' b' ∧ MU d' b' ∧ MatchELF num_id elb elf b' ∧ σ' "lk" = σ "lk" ∧
-      ∀ k, ¬ CreateF cb num_id tb num_proc qb num_chan ucb k → b' k = b k := by
+      (∀ k, ¬ CreateF cb num_id tb num_proc qb num_chan ucb k → b' k = b k) ∧ d'.cid = d.cid := by
   have hCL := hL.ilay.clay
   have := hL.hub0; have := hL.hue; have := hL.ilay.hib0; have := hCL.hcb; have := hCL.qlay.hqb
   have := hCL.qlay.tlay.htb; have := hCL.qlay.tlay.slay.hsb; have := hCL.qlay.tlay.slay.hse
@@ -437,7 +437,13 @@ theorem sysProcCreate_run (code : Nat → Stmt KPrim)
                 obtain ⟨U1, e1⟩ := set_reg_shape hr1
                 obtain ⟨U2, e2'⟩ := set_reg_shape hs
                 rw [e2', e1]
-              refine ⟨σ5, l5, b5, ?_, c5, m5, fun i hi => ?_, ?_, fun k hk => ?_⟩
+              have hcid' : d'.cid = d.cid := by
+                obtain ⟨U1, e1⟩ := set_reg_shape hr1
+                obtain ⟨U2, e2'⟩ := set_reg_shape hs
+                rw [e2', e1]
+                show d1.cid = d.cid
+                exact proc_create_cid hpc
+              refine ⟨σ5, l5, b5, ?_, c5, m5, fun i hi => ?_, ?_, fun k hk => ?_, hcid'⟩
               · rw [hk']
                 exact k1.trans (.step k2 ((kstar_seq hargs _ K d.kctxt).trans
                   ((KStar.single (kstep_seq _ _ K _ d.kctxt l2)).trans (hks.trans
@@ -467,8 +473,11 @@ theorem sysProcCreate_run (code : Nat → Stmt KPrim)
       have hk' : d'.kctxt = d.kctxt := by
         obtain ⟨U1, e1⟩ := set_reg_shape hs'
         rw [e1]
+      have hcid' : d'.cid = d.cid := by
+        obtain ⟨U1, e1⟩ := set_reg_shape hs'
+        rw [e1]
       refine ⟨(σ1.set "curid" (BitVec.ofNat 32 d.cid)).set "_" 0, l2, b2, ?_, c2, m2, fun i hi => ?_, ?_,
-        fun k hk => f2 k (fun h => hk (Or.inr h))⟩
+        fun k hk => f2 k (fun h => hk (Or.inr h)), hcid'⟩
       · rw [hk']
         exact k1.trans (.step k2 (kstar_base r2 K d.kctxt))
       · rw [f2 _ (fun h => by unfold UCF at h; omega)]
@@ -501,7 +510,7 @@ theorem sysDispatch_run (code : Nat → Stmt KPrim)
         ⟨⟨sysDispatchK cb mc tb qb num_proc num_chan cidb ucb elb num_id pstart, K, σ⟩, d.kctxt, l⟩
         ⟨⟨.skip, K, σ'⟩, d'.kctxt, l'⟩ ∧
       CS1 c i0 l' b' ∧ MU d' b' ∧ MatchELF num_id elb elf b' ∧ σ' "lk" = σ "lk" ∧
-      ∀ k, ¬ CreateF cb num_id tb num_proc qb num_chan ucb k → b' k = b k := by
+      (∀ k, ¬ CreateF cb num_id tb num_proc qb num_chan ucb k → b' k = b k) ∧ d'.cid = d.cid := by
   have hCL := hL.ilay.clay
   have := hL.hub0; have := hL.hue; have := hL.ilay.hib0; have := hCL.hcb; have := hCL.qlay.hqb
   have := hCL.qlay.tlay.htb; have := hCL.qlay.tlay.slay.hsb; have := hCL.qlay.tlay.slay.hse
@@ -538,9 +547,9 @@ theorem sysDispatch_run (code : Nat → Stmt KPrim)
           ((σ.set "curid" (BitVec.ofNat 32 d.cid)).set "arg1" (BitVec.ofNat 32 a)) = 0 :=
         eqc_true (b := 2) harg h2
       rw [if_neg hg] at k2
-      obtain ⟨σ', l', b', hks, hcs', hM', hE', hlk', hf'⟩ := sysProcCreate_run εR c i0 code hL hnum hnn hel0 hel1
-        hov hps (K := K) hlk1 c1 m1 hE hcp hI hCV hcu hs
-      exact ⟨σ', l', b', k1.trans (.step k2 hks), hcs', hM', hE', by rw [hlk']; simp [Locals.set], hf'⟩
+      obtain ⟨σ', l', b', hks, hcs', hM', hE', hlk', hf', hc'⟩ := sysProcCreate_run εR c i0 code hL hnum hnn
+        hel0 hel1 hov hps (K := K) hlk1 c1 m1 hE hcp hI hCV hcu hs
+      exact ⟨σ', l', b', k1.trans (.step k2 hks), hcs', hM', hE', by rw [hlk']; simp [Locals.set], hf', hc'⟩
     · rw [if_neg h2] at hs
       have hg : (Expr.bin .eq (.var "arg1") (.const 2)).eval
           ((σ.set "curid" (BitVec.ofNat 32 d.cid)).set "arg1" (BitVec.ofNat 32 a)) = 0 :=
@@ -558,7 +567,9 @@ theorem sysDispatch_run (code : Nat → Stmt KPrim)
           obtain ⟨U, e⟩ := get_quota_shape hs
           rw [e]
         refine ⟨σ2, l2, b2, ?_, c2, m2, fun i hi => ?_, by rw [k2']; simp [Locals.set],
-          fun k hk => f2 k (fun h => hk (Or.inr h))⟩
+          fun k hk => f2 k (fun h => hk (Or.inr h)), by
+            obtain ⟨U, e⟩ := get_quota_shape hs
+            rw [e]⟩
         · rw [hk']
           exact k1.trans (.step k2 (kstar_base (Runs.ite_true (eqc_true (b := 26) harg h26) r2) K d.kctxt))
         · rw [f2 _ (fun h => by unfold UCF at h; omega)]
@@ -573,7 +584,9 @@ theorem sysDispatch_run (code : Nat → Stmt KPrim)
           rw [e]
         refine ⟨((((σ.set "curid" (BitVec.ofNat 32 d.cid)).set "arg1" (BitVec.ofNat 32 a)).set "curid"
           (BitVec.ofNat 32 d.cid)).set "_" 0), l2, b2, ?_, c2, m2, fun i hi => ?_, by simp [Locals.set],
-          fun k hk => f2 k (fun h => hk (Or.inr h))⟩
+          fun k hk => f2 k (fun h => hk (Or.inr h)), by
+            obtain ⟨U, e⟩ := set_reg_shape hs
+            rw [e]⟩
         · rw [hk']
           exact k1.trans (.step k2 (kstar_base (Runs.ite_false
             (eqc_false (b := 26) harg ha32 (by decide) h26) r2) K d.kctxt))

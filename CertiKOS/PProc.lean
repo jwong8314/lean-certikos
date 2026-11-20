@@ -19,7 +19,9 @@ Ported from `objects/ObjProc.v`: `proc_create_spec`, `proc_exit_user_spec`,
 * `procExitUser_triple`: **`proc_exit_user` refines its specification**: the
   registers of the trap are saved, and the kernel's page table is loaded.
 * `procStartUser_run`: **`proc_start_user` refines its specification**: the
-  process's page table is loaded and its registers are in `u0` … `u16`.
+  process's page table is loaded and its registers are in `u0` … `u16`. It
+  needs the region to match the top state and the paging bit to be set; what
+  `CR3` held before does not matter.
 * `start_user_ustar`: on the machine with user mode, a kernel computation
   that ends with `proc_start_user` on an empty stack leaves the kernel with
   the process's user context.
@@ -232,8 +234,8 @@ theorem matchU_putC (hL : ULayout maxpage num_id cb num_proc pb ib fb sb tb num_
 /-- **A new page table in `CR3`, and new mode flags.** No cell holds `ipt`
 or `ikern`, and only the word at `cpub` holds `PT`. -/
 theorem matchUP_cpu (hL : ULayout maxpage num_id cb num_proc pb ib fb sb tb num_chan qb cidb ipb ucb)
-    (hcp0 : cb + 5 * num_id ≤ cpub) (hcp1 : cpub + 2 ≤ sb) {d : UData} {b b' : Region} (hM : MUP d b)
-    (n : Nat) (t k : Bool) (hfr : ∀ j, j ≠ cpub → b' j = b j)
+    (hcp0 : cb + 5 * num_id ≤ cpub) (hcp1 : cpub + 2 ≤ sb) {d : UData} {b b' : Region} (hM : MU d b)
+    (hpg : d.pg = true ↔ b (cpub + 1) ≠ 0) (n : Nat) (t k : Bool) (hfr : ∀ j, j ≠ cpub → b' j = b j)
     (hc : n < num_proc → b' cpub = BitVec.ofNat 32 (pb + n * 1024)) :
     MUP ({ d with PT := n, ipt := t, ikern := k } : UData) b' := by
   have hCL := hL.ilay.clay
@@ -241,7 +243,7 @@ theorem matchUP_cpu (hL : ULayout maxpage num_id cb num_proc pb ib fb sb tb num_
   have := hL.hub0; have := hL.hue; have := hL.ilay.hib0; have := hL.ilay.hie
   have := hCL.qlay.tlay.slay.hsb; have := hCL.qlay.tlay.slay.hse; have := hCL.qlay.tlay.htb
   have := hCL.qlay.tlay.hte; have := hCL.qlay.hqb; have := hCL.qlay.hqe; have := hCL.hcb; have := hCL.hce
-  obtain ⟨⟨⟨hC, hS⟩, hU⟩, hP⟩ := hM
+  obtain ⟨⟨hC, hS⟩, hU⟩ := hM
   have hA := matchAll_gap hLay (matchC_all hC) (b' := b') (fun j hj => hfr j (by omega))
   have hA' : MatchAll maxpage num_id cb num_proc pb ib fb ida
       ({ d.toPTData with PT := n, ipt := t } : PTData) b' :=
@@ -255,7 +257,7 @@ theorem matchUP_cpu (hL : ULayout maxpage num_id cb num_proc pb ib fb sb tb num_
     exact hU i m hi hm v hv
   · show d.pg = true ↔ b' (cpub + 1) ≠ 0
     rw [hfr _ (by omega)]
-    exact hP.2
+    exact hpg
 
 variable (εR : REnv) (c : CPU) (i0 : Nat) {F : Nat → Prop}
 
@@ -387,7 +389,7 @@ theorem procExitUser_triple (hL : ULayout maxpage num_id cb num_proc pb ib fb sb
     subst hs
     -- `trap_in`: now in kernel mode
     have hM0 : MUP ({ d with ikern := true } : UData) b :=
-      matchUP_cpu hL hcp0 hcp1 hM d.PT d.ipt true (fun _ _ => rfl) hM.2.1
+      matchUP_cpu hL hcp0 hcp1 hM.1 hM.2.2 d.PT d.ipt true (fun _ _ => rfl) hM.2.1
     -- `save_uctx`
     obtain ⟨σ1, l1, b1, d1, r1, c1, m1, k1, f1, hd1, fr1⟩ := saveUctx_triple εR c i0 hL rs σ l b
       ({ d with ikern := true } : UData) hlk hcs hM0.1
@@ -404,7 +406,7 @@ theorem procExitUser_triple (hL : ULayout maxpage num_id cb num_proc pb ib fb sb
     obtain ⟨l2, r2, c2⟩ := setPT_run (pb := pb) εR c i0 hcpub c1 hlk1 (ie := .const 0) (n := 0) rfl
     refine ⟨σ1.set "_" 0, l2, _, _, Runs.seq r1 r2, c2,
       matchUP_cpu hL hcp0 hcp1 (d := ({ d with ikern := true, uctxt := setAt d.uctxt d.cid rs } : UData))
-        ⟨m1, hcpu1⟩ 0 true true (fun j hj => sc_ne _ _ hj) (fun _ => sc_eq _ _ _), ?_, fun k hk => ?_, hs0,
+        m1 hcpu1.2 0 true true (fun j hj => sc_ne _ _ hj) (fun _ => sc_eq _ _ _), ?_, fun k hk => ?_, hs0,
       fun z h1 h2 => ?_⟩
     · rw [Locals.set_other _ _ (by decide)]; exact k1
     · rw [sc_ne _ _ (fun e => hk (Or.inr e))]
@@ -417,8 +419,9 @@ process's page table is in `CR3` and its registers are in the locals `u0` …
 `u16`. -/
 theorem procStartUser_run (hL : ULayout maxpage num_id cb num_proc pb ib fb sb tb num_chan qb cidb ipb ucb)
     (hcp0 : cb + 5 * num_id ≤ cpub) (hcp1 : cpub + 2 ≤ sb) {σ : Locals} {l : RLog} {b : Region}
-    {d d' : UData} {rs : UContext} (hlk : (σ "lk").toNat = i0) (hcs : CS1 c i0 l b) (hM : MUP d b)
-    (hcid : d.cid < num_proc) (hs : proc_start_user_spec d = some (d', rs)) :
+    {d d' : UData} {rs : UContext} (hlk : (σ "lk").toNat = i0) (hcs : CS1 c i0 l b) (hM : MU d b)
+    (hpg : d.pg = true ↔ b (cpub + 1) ≠ 0) (hcid : d.cid < num_proc)
+    (hs : proc_start_user_spec d = some (d', rs)) :
     ∃ (σ' : Locals) (l' : RLog) (b' : Region),
       Runs (rprimsA εR c) (procStartUserS cidb ucb pb cpub) σ l σ' l' ∧ CS1 c i0 l' b' ∧ MUP d' b' ∧
       (∀ n, n < 17 → ∀ v, rs n = some v → σ' (ureg n) = v) ∧ ∀ k, k ≠ cpub → b' k = b k := by
@@ -434,8 +437,8 @@ theorem procStartUser_run (hL : ULayout maxpage num_id cb num_proc pb ib fb sb t
     subst hd; subst hr
     -- `cid = get_curid()`
     obtain ⟨l1, b1, r1, c1, m1, f1⟩ := (getCuridU εR c i0 hL (F := fun _ => False) "curid" (by decide) σ d).2
-      l b hlk hcs hM.1
-    have hb1 : b1 = b := funext (fun k => f1 k (fun h => h))
+      l b hlk hcs hM
+    have hb1 : b = b1 := (funext (fun k => f1 k (fun h => h))).symm
     subst hb1
     -- `set_pt(cid)`
     obtain ⟨l2, r2, c2⟩ := setPT_run (pb := pb) εR c i0 hcpub c1
@@ -446,10 +449,10 @@ theorem procStartUser_run (hL : ULayout maxpage num_id cb num_proc pb ib fb sb t
       (σ := (σ.set "curid" (BitVec.ofNat 32 d.cid)).set "_" 0) (cid := d.cid)
       (by simpa [Locals.set] using hlk) (by simp [Locals.set]) hcid 17 (Nat.le_refl _)
     refine ⟨σ3, l2, _, Runs.seq r1 (Runs.seq r2 r3), c2,
-      matchUP_cpu hL hcp0 hcp1 hM d.cid false false (fun j hj => sc_ne _ _ hj) (fun _ => sc_eq _ _ _),
+      matchUP_cpu hL hcp0 hcp1 hM hpg d.cid false false (fun j hj => sc_ne _ _ hj) (fun _ => sc_eq _ _ _),
       fun n hn v hv => ?_, fun k hk => sc_ne _ _ hk⟩
     rw [v3 n hn, sc_ne _ _ (by omega)]
-    exact hM.1.2 d.cid n hcid hn v hv
+    exact hM.2 d.cid n hcid hn v hv
   · cases hs
 
 /-- **Leaving the kernel.** A kernel computation that is `proc_start_user` on
@@ -459,13 +462,15 @@ theorem start_user_ustar (code : Nat → Stmt KPrim) (entry : Nat → Nat) (lk :
     (hL : ULayout maxpage num_id cb num_proc pb ib fb sb tb num_chan qb cidb ipb ucb)
     (hcp0 : cb + 5 * num_id ≤ cpub) (hcp1 : cpub + 2 ≤ sb) {σ : Locals} {l : RLog} {b : Region}
     {d d' : UData} {rs : UContext} (pool : Nat → KCtx) (hlk : (σ "lk").toNat = i0) (hcs : CS1 c i0 l b)
-    (hM : MUP d b) (hcid : d.cid < num_proc) (hs : proc_start_user_spec d = some (d', rs)) :
+    (hM : MU d b) (hpg : d.pg = true ↔ b (cpub + 1) ≠ 0) (hcid : d.cid < num_proc)
+    (hs : proc_start_user_spec d = some (d', rs)) :
     ∃ (ur : Nat → Val) (l' : RLog) (b' : Region),
       UStar εR c code entry lk (.kern ⟨⟨mapS .base (procStartUserS cidb ucb pb cpub), .stop, σ⟩, pool, l⟩)
         (.user ur pool l') ∧
       CS1 c i0 l' b' ∧ MUP d' b' ∧ (∀ n, n < 17 → ∀ v, rs n = some v → ur n = v) ∧
       ∀ k, k ≠ cpub → b' k = b k := by
-  obtain ⟨σ', l', b', hr, hcs', hM', hreg, hf⟩ := procStartUser_run εR c i0 hL hcp0 hcp1 hlk hcs hM hcid hs
+  obtain ⟨σ', l', b', hr, hcs', hM', hreg, hf⟩ :=
+    procStartUser_run εR c i0 hL hcp0 hcp1 hlk hcs hM hpg hcid hs
   exact ⟨regsOf σ', l', b', UStar.iret (kstar_base hr .stop pool), hcs', hM', hreg, hf⟩
 
 end Code
