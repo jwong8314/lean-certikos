@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-98 Lean files, about 41,800 lines. No `sorry`. The main theorems depend only on
+105 Lean files, about 44,600 lines. No `sorry`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-19)
@@ -138,6 +138,15 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
     `syncsendto_chan_pre`, `syncsendto_chan_post` and `syncreceive_chan`
     refine mCertiKOS's specifications, and so does `proc_init`, which ends
     boot.
+  - **Processes, user mode and system calls** (`PUCtxtIntro.lean`,
+    `UMachine.lean`, `PProc.lean`, `TTrapArg.lean`, `TTrap.lean`,
+    `TDispatch.lean`, `TSysCall.lean`): each process has a user context. The
+    machine has a user mode: a trap enters the kernel with the user's
+    registers, and a kernel computation that finishes returns to user mode.
+    `proc_create`, the system-call handlers and the dispatcher refine
+    mCertiKOS's specifications. Its three top-level primitives are proved as
+    whole passages through the kernel: a system call, a page fault, and a
+    yield that ends in user mode in another process.
   - **Steps and data abstraction** (`LayerStep.lean`): running a function's
     code call by call on the abstract state, and carrying a layer's triples
     to a layer whose state is a view of it.
@@ -166,10 +175,13 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 - **The rest of the kernel**: the page allocator, page tables, containers,
   boot (up to the kernel's page table), shared memory, thread control
   blocks, thread queues (linked, then as lists) and the current thread are
-  ported, boot is complete, and so are the scheduler and synchronous IPC.
-  The machine model has `CR3`, the paging bit and kernel contexts, one copy
-  rather than one per CPU, and no privilege levels. Processes, traps and
-  virtualization are not started. The kernel
+  ported, boot is complete, and so are the scheduler, synchronous IPC,
+  processes and the system-call path up to mCertiKOS's top layer. The
+  machine model has `CR3`, the paging bit, kernel contexts and user mode, one
+  copy rather than one per CPU. Still open there: two of the four system
+  calls (`SYS_share`, `SYS_print`), taking the lock at the kernel boundary,
+  and carrying the invariants from one trap to the next. Security
+  (noninterference) and virtualization are not started. The kernel
   guarantees are per CPU, and `PTInv` is not yet shown to hold across other
   CPUs' operations on the allocation table.
   See [KERNEL.md](KERNEL.md).

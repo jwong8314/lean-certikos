@@ -80,11 +80,11 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | `PQueueInit` | `enqueue`, `dequeue`, `queue_rmv` on linked control blocks | **ported**: `PQueueInit.lean`. `enqueue_triple`, `dequeue_triple`, `queueRmv_triple`; the specs keep `TCBCorrect_range` and `TDQCorrect_range` (`enqueue_keeps`, `dequeue_keeps`, `queueRmv_keeps`) |
 | `PAbQueue` (`AbQueueGen`) | queues as lists; the refinement from lists to linked control blocks | **ported**: `PAbQueue.lean` (data, specs, relation), `PAbQueueGen.lean` (`enqueue_exists`, `dequeue_exists`, `queue_rmv_exists`, `get_state_exists`, `set_state_exists`), `PAbQueueInv.lean` (the five invariants are established and kept; `enqueue0_triple`, `dequeue0_triple`, `queueRmv0_triple`, `getState0_triple`, `setState0_triple`). Missing: the page-table and shared-memory primitives restated over the list view |
 | `PCurID` | current thread: `get_curid`, `set_curid` | **ported**: `PCurID.lean` (`getCurid_triple`, `setCurid_triple`, `liftA`) |
-| `PThreadSched`, `PThread` | `thread_spawn`, `sched_init`, `thread_wakeup`, `thread_sched`, `thread_yield`, `thread_sleep` | **ported**: `PSchedInit.lean` (`sched_init_triple`, `sched_init_inv`), `PThreadSched.lean` (`thread_wakeup_triple`), `PThreadSwitch.lean` (`thread_sched_run`, `thread_yield_run`, `thread_sleep_run`), `PThreadSpawn.lean` (`thread_spawn_run`). `ThreadLayer.lean` is an earlier prototype of a different thing. Not done: that a parked thread is resumed, and reasoning about one thread alone |
+| `PThreadSched`, `PThread` | `thread_spawn`, `sched_init`, `thread_wakeup`, `thread_sched`, `thread_yield`, `thread_sleep` | **ported**: `PSchedInit.lean` (`sched_init_triple`, `sched_init_inv`), `PThreadSched.lean` (`thread_wakeup_triple`), `PThreadSwitch.lean` (`thread_sched_run`, `thread_yield_run`, `thread_sleep_run`), `PThreadSpawn.lean` (`thread_spawn_run`). `ThreadLayer.lean` is an earlier prototype of a different thing. Not done: that every parked thread is eventually resumed, and reasoning about one thread alone |
 | `PIPCIntro`, `PIPC` | synchronous IPC: the channel pool and its accessors, `get_kernel_pa`, `syncsendto_chan_pre`, `syncsendto_chan_post`, `syncreceive_chan`, `proc_init` | **ported**: `PIPCIntro.lean` (the seven accessors and `get_kernel_pa` refine their specs; `liftCI`), `PIPC.lean` (`syncSendPre_triple`, `syncSendPost_triple`), `FlatMem.lean` (`flatmem_copy` as a loop, `flatmemCopy_triple`), `PIPCRecv.lean` (`syncReceive_triple`), `PProcInit.lean` (`proc_init_triple`, `proc_init_inv`). Not done: the two halves of a send joined with the sleep between them, which mCertiKOS does in the trap layer |
-| `PUCtxtIntro`, `PProc` | user contexts, `proc_create` | missing |
+| `PUCtxtIntro`, `PProc` | user contexts, `proc_create`, `proc_start_user`, `proc_exit_user` | **ported**: `PUCtxtIntro.lean` (the top state `UData`; `uctx_get`, `uctx_set`, `uctx_set_eip`, `save_uctx` refine their specs; `liftIU`), `UMachine.lean` (user mode: a trap enters the kernel, a finished kernel computation returns), `PProc.lean` (`proc_create_run`, `procExitUser_triple`, `procStartUser_run`, `start_user_ustar`). `elf_load` and `tss_switch` are left out |
 | **Trap handling** (`trap`) | | |
-| `TTrapArg`, `TTrap`, `TDispatch`, `TSysCall` | system-call arguments, handlers, dispatch | missing |
+| `TTrapArg`, `TTrap`, `TDispatch`, `TSysCall` | system-call arguments, handlers, dispatch, the kernel's entry points | **ported**: `TTrapArg.lean` (`uctx_arg1` … `uctx_arg6`, `uctx_set_errno`, `uctx_set_retval1` … `5`), `TTrap.lean` (`trap_sendtochan_pre`, `trap_sendtochan_post`, `sys_receive_chan`, `sys_get_quota`, `ptfault_resv`), `TDispatch.lean` (`container_can_consume`, `sys_proc_create`, `syscall_dispatch_c`), `TSysCall.lean` (`syscall_dispatch`, `pgf_handler`, `sys_yield`, from user mode back to user mode). Missing: `SYS_share` and `SYS_print` in the dispatcher, and the virtualization handlers |
 | **Other** | | |
 | `objects/ObjVMX`, `ObjVMCS`, `ObjEPT` | virtualization | missing |
 | `security` | noninterference (`Integrity`, `Confidentiality`, `Security`) | missing |
@@ -95,8 +95,9 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 
 Even for the ported layers:
 
-- `ikern` and `ihost` are dropped from the specifications (the machine
-  model so far has `CR3` and the paging bit only).
+- `ikern` and `ihost` are in the top state (`UData`) and checked by the
+  specifications from `PUCtxtIntro` up. The specifications below do not
+  mention them.
 - Indices are `Nat` rather than `Z`.
 - The objects live in lock regions, not in CompCert memory.
 - `high_level_invariant`: the parts about the allocation table and the
@@ -112,7 +113,7 @@ Even for the ported layers:
 - **Agreed order** (2026-11-19): 0 calling convention for layers, 1 page
   tables, 2 boot and init, 3 shared memory, 4 invariants along the shared
   log, 5 thread data, 6 machine model and scheduler, 7 IPC, 8 processes and
-  traps, 9 security and virtualization. Stages 0 to 7 are done, except for the linking step for the rely of stage 4 and what the machine model still lacks (privilege levels, traps).
+  traps, 9 security and virtualization. Stages 0 to 8 are done, except for the linking step for the rely of stage 4 and what the machine model still lacks (the lock at the kernel boundary, interrupts, memory accesses through the page table).
 - **`Layer.lean`: a primitive's interface is a triple.**
   `Triple εR c i M F P s Q` says: in a critical section, on a region matching
   abstract data `d` with precondition `P`, the code `s` runs to completion,
@@ -466,6 +467,9 @@ thread_sleep:  cid = get_curid(); set_state(cid, SLEEP); enqueue(chan, cid); thr
   thread (`CurIDValid`).
 - As in mCertiKOS, `thread_yield` and `thread_sleep` are undefined when the
   ready queue is empty.
+- Each theorem also says which cells the code writes (`SchedF`: the control
+  blocks, the queues and the current-thread word). That is what lets them be
+  used in the larger state of the later layers.
 - What differs: the lock is held across the switch, so the thread resumed
   finds it held (the CPU holds it, not the thread). `clear_cr2` is left out.
   The context saved has the locals as the scheduler's code left them; the
@@ -559,6 +563,95 @@ thread_sleep:  cid = get_curid(); set_state(cid, SLEEP); enqueue(chan, cid); thr
   channel, refines it, from the region as the boot loader leaves it.
 - `proc_init_inv`: afterwards the queue invariants hold, thread 0 is the
   current thread and is running, and every channel is valid and idle.
+
+### `PUCtxtIntro.lean`: user contexts and the top state
+
+- **State**: `UData` is `IData` with the kernel contexts, the user contexts
+  (seventeen registers per process, each a machine word or unknown), and the
+  flags `ikern` and `ihost`. It is the state every later file works on.
+  **Region**: seventeen cells per process at `ucb`, after the channels
+  (`ULayout`, `MatchU`).
+- `uctxGet_triple`, `uctxSet_triple`, `uctxSetEip_triple`: the accessors
+  refine their specifications.
+- **`saveUctx_triple`**: `save_uctx(u0, …, u16)` refines `save_uctx_spec`.
+  Its seventeen arguments are locals.
+- `stepIU`, `liftIU`: steps and triples of the layers below hold in `UData`.
+
+### `UMachine.lean`: user mode (machine model, third part)
+
+mCertiKOS's processor is in kernel mode or in user mode. It was decided here
+to model that as follows, continuing the model of kernel contexts.
+
+- `UState`: the machine is either running a kernel computation, or in user
+  mode with seventeen registers.
+- **A trap** takes it from user mode to the handler of the trap, on an empty
+  kernel stack, with the user's registers in the locals `u0` … `u16`. The
+  user program may have left anything in them, so they are arbitrary.
+- **A kernel computation that finishes on an empty stack returns to user
+  mode** with the registers in `u0` … `u16`. This is `trap_out`.
+- So `ikern` is the kind of state the machine is in. What a user program
+  does between two traps is not modelled, as in mCertiKOS.
+- Not in the model: the lock at the boundary (the kernel is entered and left
+  inside a critical section), and interrupts.
+
+### `PProc.lean`: processes
+
+- **`proc_create_run`**: `proc_create` on the kernel machine does what
+  `proc_create_spec` says. It is `thread_spawn` with `proc_start_user` as the
+  entry, then seven writes to the child's user context
+  (`proc_create_factors`). So a new process, the first time it is scheduled,
+  goes to user mode at its entry point.
+- **`procExitUser_triple`**: `proc_exit_user` saves the registers of the
+  trap and loads the kernel's page table.
+- **`procStartUser_run`**, **`start_user_ustar`**: `proc_start_user` loads
+  the process's page table and its registers, and the machine then leaves the
+  kernel with them.
+- `toK`, `putK`, `matchU_putC`: the scheduler's theorems, stated on `KData`,
+  are used on the top state through the footprints they now state.
+- What differs: `trap_in`, `pt_in`, `pt_out` only change flags that no cell
+  holds, so they have no code. `elf_load` (no effect on the state in
+  mCertiKOS either) and `tss_switch` are left out.
+
+### `TTrapArg.lean`, `TTrap.lean`, `TDispatch.lean`: system calls
+
+- Arguments, error code and return values are registers of the caller's user
+  context (`uctxArg_triple`, `uctxSetReg_triple`).
+- **Handlers** (`TTrap.lean`): `trapSendPre_triple`, `trapSendPost_triple`,
+  `trapReceive_triple`, `trapGetQuota_triple`, `ptfaultResv_triple`. Each
+  reads its arguments, calls the kernel function through its triple, and
+  writes the result back.
+- **`ctCanConsumeU`**: `container_can_consume` refines its specification.
+- **`sysProcCreate_run`**: `sys_proc_create` checks the quota, the room for
+  ids and the number of children, then calls `proc_create` with the entry
+  point read from the table `ELF_ENTRY_LOC` (`MatchELF`).
+- **`sysDispatch_run`**: `syscall_dispatch_c` does what
+  `sys_dispatch_c_spec` says.
+- What differs: the dispatcher handles `SYS_spawn` and `SYS_get_quota`;
+  `SYS_share` and `SYS_print` are not ported. mCertiKOS's specification of
+  `sys_proc_create` is defined for image 0 only, because an entry point is a
+  pointer there; here it is a number and any image is allowed. ClightL has no
+  `||`, `&&` or `<=`, so the tests are nested conditionals with `<`.
+
+### `TSysCall.lean`: the kernel's entry points
+
+mCertiKOS's top layer exports three primitives. Each is a whole passage
+through the kernel.
+
+- **`syscall_dispatch_ustar`**: a system call. If `proc_exit_user_spec`,
+  `sys_dispatch_c_spec` and `proc_start_user_spec` are defined in turn, the
+  machine goes from user mode back to user mode with the registers the last
+  one returns, and the region matches the final state.
+- **`pgf_handler_ustar`**: a page fault, likewise with `ptfault_resv_spec`.
+- **`sys_yield_run`**: a yield. The caller's kernel computation is parked,
+  about to run `proc_start_user`, and the head of the ready queue runs.
+- **`sys_yield_ustar`**: from user mode in one process to user mode in
+  another. The process resumed was parked by an earlier yield, and it leaves
+  the kernel with the user context saved for it.
+- What differs: the fault address is a local at the trap, not the field `ti`.
+  The theorems assume the invariants mCertiKOS carries along (valid current
+  thread, queue and container invariants). The synchronous IPC handlers are
+  proved but not wired to an entry point; in the mCertiKOS sources read here
+  those entry points are commented out too.
 
 ### `MPTResv2.lean`: one page in two address spaces
 
@@ -847,12 +940,20 @@ unused by the ports.
 - **The machine model is partial.** `CR3` and the paging bit are in
   (`MCPU.lean`), one copy, as words of the kernel region. Kernel contexts
   are in (`KMachine.lean`), as suspended computations in a pool that belongs
-  to one CPU. Traps and virtualization need privilege levels and user-mode
-  execution, which are not modelled. No memory access goes through the page
-  table.
+  to one CPU. User mode is in (`UMachine.lean`): a trap enters the kernel and
+  a finished kernel computation returns. Not modelled: what user code does,
+  interrupts, guest mode (virtualization), and memory accesses through the
+  page table.
+- **The lock at the kernel boundary.** Every theorem about kernel code is
+  inside a critical section. The kernel entry points are proved from "lock
+  held at the trap" to "lock held at the return"; acquiring at the trap and
+  releasing before the return, as `Triple.locked` does for plain code, is not
+  done on the machine with user mode.
 - **Threads.** The scheduler functions are verified against their
   specifications, which say what one call does to the state and which
-  context runs next. Not done: that a parked thread is resumed (it needs
+  context runs next. `sys_yield_ustar` follows one switch through: the
+  process at the head of the ready queue is resumed and returns to user
+  mode. Not done: that every parked thread is eventually resumed (it needs
   the others to yield), reasoning about one thread with the others as its
   environment (CertiKOS's thread-local layer), and liveness.
 - **Thread data** (stage 5): control blocks, queues, the list view and the
@@ -872,19 +973,24 @@ unused by the ports.
   The shared-memory triples (stated over `SData`) do not have their version
   yet, and `MatchCPU` has to be carried separately (it survives any triple
   that keeps `pg`, `PT` and the two register cells).
-- **Two top states.** The scheduler runs on `KData` (`CData` with the kernel
-  contexts) and IPC on `IData` (`CData` with the channels). They are not
-  joined yet, and the scheduler's run theorems do not state which cells they
-  write, which joining them needs. This is the first step of stage 8.
+- **Invariants at the top.** The entry-point theorems take the invariants
+  as hypotheses on the state at the trap. That each passage through the
+  kernel re-establishes them, so that they hold at the next trap, is proved
+  only in part: the queue invariants are stated after a yield and after
+  `proc_create`, but not after the dispatcher as a whole, and the container
+  invariants are not stated after `proc_create`.
 
 ## Order
 
-See "How the ports are organised" above. Stages 0 to 7 are done, with these
+See "How the ports are organised" above. Stages 0 to 8 are done, with these
 left open inside them:
 
 - stage 4: the rely on the other CPUs is assumed, not derived by linking;
-- stage 6: `ikern`, `ihost` and the trap state are not in the machine model;
-  the scheduler theorems are per call, with no thread-local reasoning.
+- stage 6: the scheduler theorems are per call, with no thread-local
+  reasoning;
+- stage 8: the dispatcher lacks `SYS_share` and `SYS_print`; the lock is not
+  acquired and released at the kernel boundary; the invariants are assumed at
+  each trap rather than carried from one to the next.
 
 Stage 6 in files: `MCPU.lean` (`CR3`, paging, `pt_init`), `MInit.lean`,
 `PSchedInit.lean`, `PSchedBoot.lean` (boot), `KMachine.lean`,
@@ -897,7 +1003,11 @@ receive), `PProcInit.lean` (`proc_init`). These are the four primitives that
 mCertiKOS's `PIPC` layer adds. Its asynchronous `sendto_chan` and
 `receive_chan` are commented out in the sources and are not ported.
 
-Next is stage 8, processes and traps: one state with both the channels and
-the kernel contexts, user contexts (`PUCtxtIntro`), `proc_create` (`PProc`),
-then the trap layers, which need `ikern`, `ihost` and the trap state in the
-machine model.
+Stage 8 in files: `PUCtxtIntro.lean` (the top state, user contexts),
+`UMachine.lean` (user mode), `PProc.lean` (`proc_create`, entering and leaving
+the kernel), `TTrapArg.lean`, `TTrap.lean`, `TDispatch.lean` (system calls),
+`TSysCall.lean` (the three entry points).
+
+Next is stage 9: security (mCertiKOS's noninterference proof over the top
+layer's three primitives) and virtualization (`ObjVMX`, `ObjVMCS`, `ObjEPT`
+and the handlers that use them).
