@@ -101,5 +101,6 @@ import CertiKOS.ObsEq
 import CertiKOS.Integrity
 import CertiKOS.Confidentiality
 import CertiKOS.ConfidentialityPF
+import CertiKOS.Security
 import CertiKOS.PTInitGen
 import CertiKOS.MPTInit
