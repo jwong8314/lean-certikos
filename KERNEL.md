@@ -86,7 +86,7 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | **Trap handling** (`trap`) | | |
 | `TTrapArg`, `TTrap`, `TDispatch`, `TSysCall` | system-call arguments, handlers, dispatch, the kernel's entry points | **ported**: `TTrapArg.lean` (`uctx_arg1` … `uctx_arg6`, `uctx_set_errno`, `uctx_set_retval1` … `5`), `TTrap.lean` (`trap_sendtochan_pre`, `trap_sendtochan_post`, `sys_receive_chan`, `sys_get_quota`, `ptfault_resv`), `TDispatch.lean` (`container_can_consume`, `sys_proc_create`, `syscall_dispatch_c`), `TSysCall.lean` (`syscall_dispatch`, `pgf_handler`, `sys_yield`, from user mode back to user mode). Missing: `SYS_share` and `SYS_print` in the dispatcher, and the virtualization handlers |
 | **Other** | | |
-| `objects/ObjVMX`, `ObjVMCS`, `ObjEPT` | virtualization | missing |
+| `objects/ObjVMX`, `ObjVMCS`, `ObjEPT` | virtualization | missing. The public sources have only these three specification files. The layers that implement them, with their state relations and verified C code, are not in the mirror (checked over the whole repository tree on 2026-11-19); the trap layers mention the virtualization primitives only inside comments. What is public besides is the unverified driver in `kernel/sys/preinit` |
 | `security` | noninterference (`ObsEq`, `Integrity`, `Confidentiality`, `ConfidentialityRestore`, `Security`) | **ported up to the unwinding conditions**: `ObsEq.lean` (the observation function), `Integrity.lean`, `Confidentiality.lean`, `ConfidentialityPF.lean` (the page fault), `Security.lean` (`KPass`: one passage through the kernel; `integ`, `conf`, `conf_restore`), `SecurityBigstep.lean` (`bigstep_conf`, `noninterference`, with a user program as a function from what it sees to its next trap). Missing: integrity and confidentiality of user-mode instructions (user code is not modelled); preservation of the security invariants; the link down to the bottom layer (`end_to_end_security` is stated on the machine of `MBoot`) |
 | `layerlib`: `LAsm`, `CompCertiKOS` | layered assembly, the compiler | missing: no machine model, no verified compiler |
 | layer calculus | linking layers vertically with `high_level_invariant` | partial: each port states refinement to the spec; invariant preservation and layer linking are not done per layer |
@@ -1075,6 +1075,7 @@ Stage 9, security: `ObsEq.lean`, `Integrity.lean`, `Confidentiality.lean`,
 unwinding conditions hold for a passage through the kernel, and
 noninterference follows for executions of a program modelled as a function
 of what it can see. Left in security: that the security invariants are
-preserved, and the statement at the bottom layer. Then virtualization
-(`ObjVMX`, `ObjVMCS`, `ObjEPT` and the handlers that use them), which is not
-started.
+preserved, and the statement at the bottom layer. Virtualization is not
+started, and it cannot be ported the way the other stages were: the mirror
+has the three specification files (`ObjVMX`, `ObjVMCS`, `ObjEPT`) but not the
+layers or the verified C code that implement them.
