@@ -205,6 +205,22 @@ theorem stepXH (hL : HLayout maxpage num_id cb num_proc pb ib fb sb tb num_chan 
     matchOut_frame hM.2.1 (fun k hk => f1 k (fun h' => by have := hx k h'; unfold OF at hk; omega)),
     matchX_of m1 rfl rfl rfl⟩, f1⟩
 
+/-- **A triple of the process layers holds in the top state**, if it writes
+none of the consoles and VMX blocks. -/
+theorem liftUT (hL : HLayout maxpage num_id cb num_proc pb ib fb sb tb num_chan qb cidb ipb ucb ob xb vb eb)
+    {F : Nat → Prop} {P : Locals → UData → Prop} {s : Stmt APrim}
+    {Q : Locals → UData → Locals → UData → Prop} (h : Triple εR c i0 MU F P s Q)
+    (hF : ∀ k, F k → k < ucb + 17 * num_proc ∨ pb ≤ k) :
+    Triple εR c i0 MH F (fun σ d => P σ d.toUData) s
+      (fun σ d σ' d' => ∃ u, d' = { d with toUData := u } ∧ Q σ d.toUData σ' u) := by
+  have := hL.hob; have := hL.hxb; have := hL.hxv; have := hL.hve; have := hL.hep
+  exact h.lift (π := HData.toUData) (put := fun (d' : HData) (u' : UData) => ({ d' with toUData := u' } : HData))
+    (M2 := fun d' b => MatchOut num_proc ob d'.devout b ∧ MatchX xb vb eb (toX d') b) (fun _ _ => rfl)
+    (fun d' b σ σ' d1 b' h2 _ _ _ hf => ⟨matchOut_frame h2.1 (fun k hk => hf k (fun h' => by
+        have := hF k h'; unfold OF at hk; omega)),
+      matchX_of (matchX_frame h2.2 (fun k h1 h2' => hf k (fun h' => by
+        have := hF k h'; unfold VEPT.NPG at h2'; omega)) hL.hxv hL.hve) rfl rfl rfl⟩)
+
 end Lift
 
 /-! ## `SYS_print` -/

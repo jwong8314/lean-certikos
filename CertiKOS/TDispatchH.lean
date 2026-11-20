@@ -1,4 +1,4 @@
-import CertiKOS.THyp2
+import CertiKOS.THyp3
 
 /-!
 # The system-call dispatcher on the top state
@@ -79,21 +79,6 @@ local notation "HL" => HLayout maxpage num_id cb num_proc pb ib fb sb tb num_cha
 def DF (cb num_id pb sb num_proc ucb ob xb vb eb : Nat) (k : Nat) : Prop :=
   ShareF cb num_id pb sb num_proc k ∨ UCF ucb num_proc k ∨ OF ob num_proc k ∨ XF xb vb eb k
 
-/-- **A triple of the process layers holds in the top state**, if it writes
-none of the consoles and VMX blocks. -/
-theorem liftUT (hL : HL) {F : Nat → Prop} {P : Locals → UData → Prop} {s : Stmt APrim}
-    {Q : Locals → UData → Locals → UData → Prop} (h : Triple εR c i0 MU F P s Q)
-    (hF : ∀ k, F k → k < ucb + 17 * num_proc ∨ pb ≤ k) :
-    Triple εR c i0 MH F (fun σ d => P σ d.toUData) s
-      (fun σ d σ' d' => ∃ u, d' = { d with toUData := u } ∧ Q σ d.toUData σ' u) := by
-  have := hL.hob; have := hL.hxb; have := hL.hxv; have := hL.hve; have := hL.hep
-  exact h.lift (π := HData.toUData) (put := fun (d' : HData) (u' : UData) => ({ d' with toUData := u' } : HData))
-    (M2 := fun d' b => MatchOut num_proc ob d'.devout b ∧ MatchX xb vb eb (toX d') b) (fun _ _ => rfl)
-    (fun d' b σ σ' d1 b' h2 _ _ _ hf => ⟨matchOut_frame h2.1 (fun k hk => hf k (fun h' => by
-        have := hF k h'; unfold OF at hk; omega)),
-      matchX_of (matchX_frame h2.2 (fun k h1 h2' => hf k (fun h' => by
-        have := hF k h'; unfold VEPT.NPG at h2'; omega)) hL.hxv hL.hve) rfl rfl rfl⟩)
-
 /-- **The chain refines its specification.** -/
 theorem chain_triple (hL : HL) {F : Nat → Prop} (hUF : ∀ k, HF ucb num_proc xb vb eb k → F k) (Pre : HData → Prop)
     (hPre : ∀ d, Pre d → d.cid < num_proc) :
@@ -134,7 +119,7 @@ end Dispatch
 /-! ## The dispatcher -/
 
 /-- The handlers after `SYS_spawn`, with their specifications. -/
-def hlist (cb maxpage pb fb sb num_proc cidb ucb ob xb vb : Nat) :
+def hlist (cb maxpage pb fb sb num_proc cidb ucb ob xb vb eb : Nat) :
     List (Nat × Stmt APrim × (HData → Option HData)) :=
   [(22, getTscH cidb ucb vb, trap_get_tsc_offset_spec),
    (23, setTscH cidb ucb vb, trap_set_tsc_offset_spec),
@@ -148,6 +133,7 @@ def hlist (cb maxpage pb fb sb num_proc cidb ucb ob xb vb : Nat) :
    (19, checkIntShadowH cidb ucb vb, trap_check_int_shadow_spec),
    (21, interceptH cidb ucb vb, trap_intercept_int_window_spec),
    (24, rdmsrH cidb ucb xb vb, trap_handle_rdmsr_spec),
+   (13, mmapH cb maxpage pb fb cidb ucb eb, trap_mmap_spec num_proc maxpage),
    (25, wrmsrH cidb ucb xb vb, trap_handle_wrmsr_spec),
    (26, trapGetQuotaS cb cidb ucb, onU trap_get_quota_spec),
    (27, trapShareS cb maxpage pb fb sb num_proc cidb ucb, onU (trap_offer_shared_mem_spec num_proc maxpage)),
@@ -158,11 +144,12 @@ def hspecs (num_proc maxpage : Nat) : List (Nat × (HData → Option HData)) :=
   [(22, trap_get_tsc_offset_spec), (23, trap_set_tsc_offset_spec), (12, trap_get_exitinfo_spec),
    (15, trap_set_reg_spec), (16, trap_get_reg_spec), (14, trap_set_seg_spec), (17, trap_get_next_eip_spec),
    (18, trap_inject_event_spec), (20, trap_check_pending_event_spec), (19, trap_check_int_shadow_spec),
-   (21, trap_intercept_int_window_spec), (24, trap_handle_rdmsr_spec), (25, trap_handle_wrmsr_spec),
+   (21, trap_intercept_int_window_spec), (24, trap_handle_rdmsr_spec), (13, trap_mmap_spec num_proc maxpage),
+   (25, trap_handle_wrmsr_spec),
    (26, onU trap_get_quota_spec), (27, onU (trap_offer_shared_mem_spec num_proc maxpage)), (28, print_spec)]
 
-theorem hlist_specs (cb maxpage pb fb sb num_proc cidb ucb ob xb vb : Nat) :
-    (hlist cb maxpage pb fb sb num_proc cidb ucb ob xb vb).map (fun p => (p.1, p.2.2)) = hspecs num_proc maxpage :=
+theorem hlist_specs (cb maxpage pb fb sb num_proc cidb ucb ob xb vb eb : Nat) :
+    (hlist cb maxpage pb fb sb num_proc cidb ucb ob xb vb eb).map (fun p => (p.1, p.2.2)) = hspecs num_proc maxpage :=
   rfl
 
 /-- **`sys_dispatch_h_spec`**: argument 1 is the system-call number. -/
@@ -182,12 +169,12 @@ else if (arg1 == SYS_hvm_get_tsc_offset) sys_get_tsc_offset();
 … (the table above)
 else uctx_set_errno(E_INVAL_CALLNR);
 ``` -/
-def sysDispatchHK (cb mc tb qb num_proc num_chan cidb ucb elb num_id pstart maxpage pb fb sb ob xb vb : Nat) :
+def sysDispatchHK (cb mc tb qb num_proc num_chan cidb ucb elb num_id pstart maxpage pb fb sb ob xb vb eb : Nat) :
     Stmt KPrim :=
   .seq (mapS .base (uctxArgS cidb ucb "arg1" U_EAX))
     (.ite (.bin .eq (.var "arg1") (.const 2))
       (sysProcCreateK cb mc tb qb num_proc num_chan cidb ucb elb num_id pstart)
-      (mapS .base (chainS cidb ucb ((hlist cb maxpage pb fb sb num_proc cidb ucb ob xb vb).map
+      (mapS .base (chainS cidb ucb ((hlist cb maxpage pb fb sb num_proc cidb ucb ob xb vb eb).map
         fun p => (p.1, p.2.1)))))
 
 
@@ -253,6 +240,27 @@ theorem print_kctxt {d d' : HData} (h : print_spec d = some d') : d'.kctxt = d.k
       obtain ⟨U, e⟩ := set_reg_shape e0; rw [e]
 
 
+theorem mmap_kctxt {np mp : Nat} {d d' : HData} (h : trap_mmap_spec np mp d = some d') : d'.kctxt = d.kctxt := by
+  unfold trap_mmap_spec at h
+  cases e2 : uctx_arg2_spec d.toUData <;> cases e3 : uctx_arg3_spec d.toUData <;>
+    cases e4 : uctx_arg4_spec d.toUData <;> simp only [e2, e3, e4] at h <;> try cases h
+  split at h
+  · cases hp : ptRead_spec np d.cid _ d.toPTData with
+    | none => rw [hp] at h; cases h
+    | some hpa =>
+      rw [hp] at h; simp only at h
+      split at h
+      · cases hr : ptResv_spec mp np d.cid _ 7 d.toPTData with
+        | none => rw [hr] at h; cases h
+        | some pr =>
+          obtain ⟨p0, r⟩ := pr
+          rw [hr] at h; simp only at h
+          cases hp' : ptRead_spec np d.cid _ p0 with
+          | none => rw [hp'] at h; cases h
+          | some hpa' => rw [hp'] at h; simp only at h; unfold mmapTail at h; have := hcall_kctxt h; exact this
+      · unfold mmapTail at h; exact hcall_kctxt h
+  · exact hcall_kctxt h
+
 theorem chainF_kctxt : ∀ (l : List (Nat × (HData → Option HData))) (a : Nat) (d d' : HData),
     (∀ p ∈ l, ∀ d d', p.2 d = some d' → d'.kctxt = d.kctxt) → chainF l a d = some d' → d'.kctxt = d.kctxt
   | [], a, d, d', _, h => hcall_kctxt h
@@ -266,7 +274,7 @@ theorem chain_kctxt {np mp a : Nat} {d d' : HData} (h : chainF (hspecs np mp) a 
     d'.kctxt = d.kctxt := by
   refine chainF_kctxt _ a d d' (fun p hm => ?_) h
   simp only [hspecs, List.mem_cons, List.not_mem_nil, or_false] at hm
-  rcases hm with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+  rcases hm with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
   · intro d d' h; unfold trap_get_tsc_offset_spec at h; (repeat' (split at h)) <;> first | exact hcall_kctxt h | cases h
   · intro d d' h; unfold trap_set_tsc_offset_spec at h; cases e0 : uctx_arg2_spec d.toUData <;> cases e1 : uctx_arg3_spec d.toUData <;> simp only [e0, e1] at h <;> first | exact hcall_kctxt h | cases h
   · intro d d' h; unfold trap_get_exitinfo_spec at h; (repeat' (split at h)) <;> first | exact hcall_kctxt h | cases h
@@ -279,6 +287,7 @@ theorem chain_kctxt {np mp a : Nat} {d d' : HData} (h : chainF (hspecs np mp) a 
   · intro d d' h; unfold trap_check_int_shadow_spec at h; (repeat' (split at h)) <;> first | exact hcall_kctxt h | cases h
   · intro d d' h; unfold trap_intercept_int_window_spec at h; cases e0 : uctx_arg2_spec d.toUData <;> simp only [e0] at h <;> first | exact hcall_kctxt h | cases h
   · intro d d' h; unfold trap_handle_rdmsr_spec at h; (repeat' (split at h)) <;> first | exact hcall_kctxt h | cases h
+  · intro d d' h; exact mmap_kctxt h
   · intro d d' h; unfold trap_handle_wrmsr_spec at h; (repeat' (split at h)) <;> first | exact hcall_kctxt h | cases h
   · exact fun d d' h => onU_kctxt (fun u u' hu => by obtain ⟨U, e⟩ := get_quota_shape hu; rw [e]) h
   · exact fun d d' h => onU_kctxt (fun u u' hu => share_kctxt hu) h
@@ -300,7 +309,7 @@ def DPre (maxpage num_id num_proc kl kh : Nat) (d : HData) : Prop :=
 /-- **Each handler of the table refines its specification.** -/
 theorem hlist_triples (hL : HL) (hmax : 3 * maxpage < 2 ^ 32) (hnum : cb + 5 * num_id < 2 ^ 32)
     (hmp : maxpage ≤ 2 ^ 20) (hnn : num_proc ≤ num_id) {kl kh : Nat} :
-    ∀ p ∈ hlist cb maxpage pb fb sb num_proc cidb ucb ob xb vb, p.1 < 2 ^ 32 ∧
+    ∀ p ∈ hlist cb maxpage pb fb sb num_proc cidb ucb ob xb vb eb, p.1 < 2 ^ 32 ∧
       Triple εR c i0 MH (DF cb num_id pb sb num_proc ucb ob xb vb eb)
         (fun _ d => DPre maxpage num_id num_proc kl kh d ∧ ∃ d1, p.2.2 d = some d1) p.2.1
         (fun _ d _ d' => p.2.2 d = some d') := by
@@ -316,7 +325,7 @@ theorem hlist_triples (hL : HL) (hmax : 3 * maxpage < 2 ^ 32) (hnum : cb + 5 * n
     (T.widen wH).conseq (pre f) (fun _ _ _ _ _ h => h)
   intro p hm
   simp only [hlist, List.mem_cons, List.not_mem_nil, or_false] at hm
-  rcases hm with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+  rcases hm with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
   · exact ⟨by dsimp only; decide, H (getTsc_triple (ida := ida) εR c i0 hL)⟩
   · exact ⟨by dsimp only; decide, H (setTsc_triple (ida := ida) εR c i0 hL)⟩
   · exact ⟨by dsimp only; decide, H (getExitinfo_triple (ida := ida) εR c i0 hL)⟩
@@ -329,6 +338,9 @@ theorem hlist_triples (hL : HL) (hmax : 3 * maxpage < 2 ^ 32) (hnum : cb + 5 * n
   · exact ⟨by dsimp only; decide, H (checkIntShadow_triple (ida := ida) εR c i0 hL)⟩
   · exact ⟨by dsimp only; decide, H (intercept_triple (ida := ida) εR c i0 hL)⟩
   · exact ⟨by dsimp only; decide, H (rdmsr_triple (ida := ida) εR c i0 hL)⟩
+  · refine ⟨by dsimp only; decide, ((mmap_triple (ida := ida) εR c i0 hL hmax hnum hmp hnn (kl := kl) (kh := kh)).widen
+      (fun k hk => hk.elim (fun h => Or.inl (Or.inl h)) (fun h => wH k h))).conseq
+      (fun σ d ⟨hp, d1, hs⟩ => ⟨hp.1, hp.2.1, hp.2.2.1, hp.2.2.2.1, d1, hs⟩) (fun _ _ _ _ _ h => h)⟩
   · exact ⟨by dsimp only; decide, H (wrmsr_triple (ida := ida) εR c i0 hL)⟩
   · refine ⟨by dsimp only; decide, ?_⟩
     have := hL.hob
@@ -377,7 +389,7 @@ theorem sysDispatchH_run (code : Nat → Stmt KPrim) (hL : HL) (hmax : 3 * maxpa
     (hs : sys_dispatch_h_spec num_id mc num_chan num_proc maxpage code pstart elf d = some d') :
     ∃ (σ' : Locals) (l' : RLog) (b' : Region),
       KStar εR c code
-        ⟨⟨sysDispatchHK cb mc tb qb num_proc num_chan cidb ucb elb num_id pstart maxpage pb fb sb ob xb vb, K, σ⟩,
+        ⟨⟨sysDispatchHK cb mc tb qb num_proc num_chan cidb ucb elb num_id pstart maxpage pb fb sb ob xb vb eb, K, σ⟩,
           d.kctxt, l⟩
         ⟨⟨.skip, K, σ'⟩, d'.kctxt, l'⟩ ∧
       CS1 c i0 l' b' ∧ MH d' b' ∧ σ' "lk" = σ "lk" := by
@@ -399,11 +411,11 @@ theorem sysDispatchH_run (code : Nat → Stmt KPrim) (hL : HL) (hmax : 3 * maxpa
     have hlk1 : (σ1 "lk").toNat = i0 := by simpa [σ1, Locals.set] using hlk
     let rest : Stmt KPrim := .ite (.bin .eq (.var "arg1") (.const 2))
       (sysProcCreateK cb mc tb qb num_proc num_chan cidb ucb elb num_id pstart)
-      (mapS .base (chainS cidb ucb ((hlist cb maxpage pb fb sb num_proc cidb ucb ob xb vb).map fun p => (p.1, p.2.1))))
+      (mapS .base (chainS cidb ucb ((hlist cb maxpage pb fb sb num_proc cidb ucb ob xb vb eb).map fun p => (p.1, p.2.1))))
     have k1 := kstar_seq (εR := εR) (c := c) (code := code) r1 rest K d.kctxt
     have k2 := kstep_ite (εR := εR) (c := c) (code := code) (.bin .eq (.var "arg1") (.const 2))
       (sysProcCreateK cb mc tb qb num_proc num_chan cidb ucb elb num_id pstart)
-      (mapS .base (chainS cidb ucb ((hlist cb maxpage pb fb sb num_proc cidb ucb ob xb vb).map fun p => (p.1, p.2.1))))
+      (mapS .base (chainS cidb ucb ((hlist cb maxpage pb fb sb num_proc cidb ucb ob xb vb eb).map fun p => (p.1, p.2.1))))
       K σ1 d.kctxt l1
     by_cases h2 : a = 2
     · rw [if_pos h2] at hs
@@ -431,11 +443,11 @@ theorem sysDispatchH_run (code : Nat → Stmt KPrim) (hL : HL) (hmax : 3 * maxpa
       have hg : (Expr.bin .eq (.var "arg1") (.const 2)).eval σ1 = 0 := eqc_false (b := 2) harg ha32 (by decide) h2
       rw [if_pos hg] at k2
       have hs' := hs
-      rw [← hlist_specs cb maxpage pb fb sb num_proc cidb ucb ob xb vb] at hs'
+      rw [← hlist_specs cb maxpage pb fb sb num_proc cidb ucb ob xb vb eb] at hs'
       have wH : ∀ k, HF ucb num_proc xb vb eb k → DF cb num_id pb sb num_proc ucb ob xb vb eb k :=
         fun k hk => hk.elim (fun h => Or.inr (Or.inl h)) (fun h => Or.inr (Or.inr (Or.inr h)))
       obtain ⟨σ', l', b', d'', r, c', m', k', fr, q⟩ := chain_triple (ida := ida) (cidb := cidb) εR c i0 hL wH
-        (DPre maxpage num_id num_proc kl kh) (fun d h => h.1) (hlist cb maxpage pb fb sb num_proc cidb ucb ob xb vb) a
+        (DPre maxpage num_id num_proc kl kh) (fun d h => h.1) (hlist cb maxpage pb fb sb num_proc cidb ucb ob xb vb eb) a
         (hlist_triples (ida := ida) εR c i0 hL hmax hnum hmp hnn') σ1 l1 b d hlk1 c1 hM ⟨harg, ha32, hP, d', hs'⟩
       rw [hs'] at q; simp only [Option.some.injEq] at q; subst q
       rw [chain_kctxt hs]

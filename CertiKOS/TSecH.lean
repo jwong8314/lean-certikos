@@ -14,6 +14,8 @@ here it is left out, see `ObsEq`) and the virtual machine.
   registers in the process layers, so **every other process observes the
   same before and after** (mCertiKOS's integrity, for the hypercalls).
 * `integ_print`: the same for `SYS_print`.
+* `integ_mmap`: the same for `SYS_hvm_mmap`, whose fresh page for the caller
+  is none of the observer's pages (as for the page-fault handler).
 * `integ_dispatch_h`: **every system call the top state's dispatcher
   handles keeps the observation of every process other than the caller**,
   except `SYS_share`, whose purpose is to change process 2's address space,
@@ -30,7 +32,7 @@ set_option linter.unusedVariables false
 
 namespace TTop
 
-open Security TTrap PUCtxt
+open Security TTrap PUCtxt MPTOp MPTNew
 
 variable {i : Nat}
 
@@ -66,9 +68,41 @@ theorem integ_print {d d' : HData} (h : print_spec d = some d') (hi : i ≠ d.ci
       rw [e2, e0] at h; simp only [Option.some.injEq] at h; rw [← h]
       exact integ_uctx_set_reg e0 hi
 
+
+/-- **`SYS_hvm_mmap` keeps every other process's observation**: the page it
+may reserve for the caller is none of the pages the observer maps. -/
+theorem integ_mmap {np mp : Nat} {d d' : HData} (hmu : MappedUsed i d.toPTData) (h : trap_mmap_spec np mp d = some d')
+    (hi : i ≠ d.cid) : ObsEq i d.toUData d'.toUData := by
+  unfold trap_mmap_spec at h
+  cases e2 : uctx_arg2_spec d.toUData <;> cases e3 : uctx_arg3_spec d.toUData <;>
+    cases e4 : uctx_arg4_spec d.toUData <;> simp only [e2, e3, e4] at h <;> try cases h
+  split at h
+  · cases hp : ptRead_spec np d.cid _ d.toPTData with
+    | none => rw [hp] at h; cases h
+    | some hpa =>
+      rw [hp] at h; simp only at h
+      split at h
+      · cases hr : ptResv_spec mp np d.cid _ 7 d.toPTData with
+        | none => rw [hr] at h; cases h
+        | some pr =>
+          obtain ⟨p0, r⟩ := pr
+          rw [hr] at h; simp only at h
+          cases hp' : ptRead_spec np d.cid _ p0 with
+          | none => rw [hp'] at h; cases h
+          | some hpa' =>
+            rw [hp'] at h; simp only at h; unfold mmapTail at h
+            have h1 : ObsEq i d.toUData ({ d with toPTData := p0 } : HData).toUData := by
+              have hf := ptResv_frame hr
+              refine ObsEq.inactive hi hi (hf.other i hi).1 (fun v pte pi pm h1 w h2 => ?_) (hf.other i hi).2 rfl rfl
+              obtain ⟨a1, a2, -⟩ := hf.used w (hmu _ pi pte h1 _ w pm h2)
+              exact ⟨a2 _ (by omega), a1⟩
+            exact h1.trans (integ_hcall (d := ({ d with toPTData := p0 } : HData)) h hi)
+      · unfold mmapTail at h; exact integ_hcall h hi
+  · exact integ_hcall h hi
+
 /-- **Every call of the dispatcher's table but `SYS_share` keeps every other
 process's observation.** -/
-theorem integ_dispatch_h {np mp a : Nat} {d d' : HData} (ha : a ≠ 27)
+theorem integ_dispatch_h {np mp a : Nat} {d d' : HData} (ha : a ≠ 27) (hmu : MappedUsed i d.toPTData)
     (h : chainF (hspecs np mp) a d = some d') (hi : i ≠ d.cid) : ObsEq i d.toUData d'.toUData := by
   have H : ∀ (f : HData → Option HData), (∀ d d', f d = some d' → i ≠ d.cid → ObsEq i d.toUData d'.toUData) →
       ∀ d d', f d = some d' → i ≠ d.cid → ObsEq i d.toUData d'.toUData := fun f hf => hf
@@ -125,6 +159,9 @@ theorem integ_dispatch_h {np mp a : Nat} {d d' : HData} (ha : a ≠ 27)
   by_cases e24 : a = 24
   · rw [if_pos e24] at h; unfold trap_handle_rdmsr_spec at h; exact integ_hcall h hi
   rw [if_neg e24] at h
+  by_cases e13 : a = 13
+  · rw [if_pos e13] at h; exact integ_mmap hmu h hi
+  rw [if_neg e13] at h
   by_cases e25 : a = 25
   · rw [if_pos e25] at h; unfold trap_handle_wrmsr_spec at h; exact integ_hcall h hi
   rw [if_neg e25] at h

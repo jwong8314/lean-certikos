@@ -112,6 +112,7 @@ import CertiKOS.GMachine
 import CertiKOS.TTop
 import CertiKOS.THyp
 import CertiKOS.THyp2
+import CertiKOS.THyp3
 import CertiKOS.TDispatchH
 import CertiKOS.TSecH
 import CertiKOS.PTInitGen
