@@ -93,5 +93,6 @@ import CertiKOS.PProcInit
 import CertiKOS.PUCtxtIntro
 import CertiKOS.UMachine
 import CertiKOS.PProc
+import CertiKOS.TTrapArg
 import CertiKOS.PTInitGen
 import CertiKOS.MPTInit
