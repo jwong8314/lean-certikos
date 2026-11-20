@@ -96,6 +96,7 @@ import CertiKOS.PProc
 import CertiKOS.TTrapArg
 import CertiKOS.TTrap
 import CertiKOS.TDispatch
+import CertiKOS.TShare
 import CertiKOS.TSysCall
 import CertiKOS.ObsEq
 import CertiKOS.Integrity
