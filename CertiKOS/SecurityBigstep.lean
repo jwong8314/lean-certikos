@@ -35,9 +35,10 @@ What differs:
   observation, to the trap it makes next. That a real program is such a
   function is mCertiKOS's confidentiality of user-mode instructions, which is
   not ported.
-* The executions considered are those whose states satisfy the security
-  invariants (`SecInv` is a premise of every step). mCertiKOS proves the
-  invariants preserved.
+* Here `SecInv` is a premise of every step. `TSecInv.lean` shows it
+  preserved, with the kernel invariant `KInv`, and gives
+  `noninterference_inv`, which assumes the invariants only of the first
+  states.
 * mCertiKOS's theorem is also about what the process outputs; there is no
   output device here.
 -/

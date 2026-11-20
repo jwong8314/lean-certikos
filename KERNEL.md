@@ -1158,9 +1158,14 @@ unused by the ports.
   through `sys_yield_run`. On the machine, the invariant is on the log
   (`Good`: the region matches, the ELF table, `KInv`, user mode, and
   `PoolInv`, every thread on the ready queue resumable), so the conclusion of
-  one locked entry point is the hypothesis of the next. Not carried: the
-  security invariants (`SecInv`: `MappedUsed`, `FreeNone`), which the
-  security theorems still assume at each step.
+  one locked entry point is the hypothesis of the next.
+- **The security invariants** (`TSecInv.lean`): `kpass_keeps`, `kpass_secinv`:
+  every passage through the kernel keeps `KInv` and `SecInv` (a reservation
+  keeps every mapped page in use and every free page empty, `ptResv_up`; a
+  yield keeps the queue invariants, `yield_kinv`). `noninterference_inv`:
+  noninterference for executions from states with the invariants, without
+  them as a premise of each step. `KPass`'s yield now asks for a thread on
+  the ready queue, as `thread_yield_spec` does.
 
 ## Order
 
@@ -1170,8 +1175,8 @@ left open inside them:
 - stage 4: the rely on the other CPUs is assumed, not derived by linking;
 - stage 6: the scheduler theorems are per call, with no thread-local
   reasoning;
-- stage 8: the security invariants are assumed at each step rather than
-  carried (the kernel's own invariants are carried, `TInv`, `TLock`).
+- stage 8: security is proved at the specifications, not carried down to the
+  machine (the invariants it needs are carried, `TInv`, `TLock`, `TSecInv`).
 
 Stage 6 in files: `MCPU.lean` (`CR3`, paging, `pt_init`), `MInit.lean`,
 `PSchedInit.lean`, `PSchedBoot.lean` (boot), `KMachine.lean`,

@@ -29,8 +29,10 @@ for whole executions; it is in `SecurityBigstep.lean`.
 
 What differs: mCertiKOS's step is one instruction of the machine; a yield and
 the `proc_start_user` of the process resumed are two steps there and one
-passage here. The invariants are assumed of the states where they are used
-(mCertiKOS proves them preserved, `secure_inv_preserved`).
+passage here. The invariants are premises where they are used; that every
+passage preserves them (mCertiKOS's `secure_inv_preserved`) is
+`TInv.kpass_secinv` in `TSecInv.lean`. A yield needs a thread on the ready
+queue (`hnp`), as `thread_yield_spec` does.
 -/
 
 set_option linter.deprecated false
@@ -63,7 +65,8 @@ inductive KPass : Trap → UData → UData → UContext → Prop
   | yield {d d1 d3 : UData} {rs rs' : UContext} {rsK : KCtx} {la : Nat} {ql : List Nat}
       (h1 : proc_exit_user_spec rs d = some d1) (hq : d.abq num_chan = .AbQValid ql)
       (hla : ql.getLastD num_proc = la) (hne : la ≠ d.cid)
-      (h3 : proc_start_user_spec (putK d1 (yieldOut num_chan la ql rsK (toK d1))) = some (d3, rs')) :
+      (h3 : proc_start_user_spec (putK d1 (yieldOut num_chan la ql rsK (toK d1))) = some (d3, rs'))
+      (hnp : la ≠ num_proc) :
       KPass (.yield rs rsK) d d3 rs'
 
 end
