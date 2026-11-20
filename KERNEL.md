@@ -86,7 +86,7 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | **Trap handling** (`trap`) | | |
 | `TTrapArg`, `TTrap`, `TDispatch`, `TSysCall` | system-call arguments, handlers, dispatch, the kernel's entry points | **ported**: `TTrapArg.lean` (`uctx_arg1` … `uctx_arg6`, `uctx_set_errno`, `uctx_set_retval1` … `5`), `TTrap.lean` (`trap_sendtochan_pre`, `trap_sendtochan_post`, `sys_receive_chan`, `sys_get_quota`, `ptfault_resv`), `TDispatch.lean` (`container_can_consume`, `sys_proc_create`, `syscall_dispatch_c`), `TSysCall.lean` (`syscall_dispatch`, `pgf_handler`, `sys_yield`, from user mode back to user mode). Missing: `SYS_share` and `SYS_print` in the dispatcher, and the virtualization handlers |
 | **Other** | | |
-| `objects/ObjVMX`, `ObjVMCS`, `ObjEPT` | virtualization | missing. The public sources have only these three specification files. The layers that implement them, with their state relations and verified C code, are not in the mirror (checked over the whole repository tree on 2026-11-19); the trap layers mention the virtualization primitives only inside comments. What is public besides is the unverified driver in `kernel/sys/preinit` |
+| `objects/ObjVMX`, `ObjVMCS`, `ObjEPT` | virtualization | **specifications ported, implementation written here**: the public sources have only these three specification files, not the layers or verified C that implement them (checked over the whole repository tree on 2026-11-19). So the code is written from the specifications and the C comments and proved to refine them, first in Coq (`coq/EPT.v`, `coq/VMCS.v`, `coq/VMX.v`), then in Lean (`VEPT.lean`, `VVMCS.lean`, `VVMX.lean`); guest mode is in the machine (`GMachine.lean`). Missing: `vmx_init`, the VM exit handlers and hypercalls of the trap layers, and the TSC and revision-id accessors |
 | `security` | noninterference (`ObsEq`, `Integrity`, `Confidentiality`, `ConfidentialityRestore`, `Security`) | **ported up to the unwinding conditions**: `ObsEq.lean` (the observation function), `Integrity.lean`, `Confidentiality.lean`, `ConfidentialityPF.lean` (the page fault), `Security.lean` (`KPass`: one passage through the kernel; `integ`, `conf`, `conf_restore`), `SecurityBigstep.lean` (`bigstep_conf`, `noninterference`, with a user program as a function from what it sees to its next trap). Missing: integrity and confidentiality of user-mode instructions (user code is not modelled); preservation of the security invariants; the link down to the bottom layer (`end_to_end_security` is stated on the machine of `MBoot`) |
 | `layerlib`: `LAsm`, `CompCertiKOS` | layered assembly, the compiler | missing: no machine model, no verified compiler |
 | layer calculus | linking layers vertically with `high_level_invariant` | partial: each port states refinement to the spec; invariant preservation and layer linking are not done per layer |
@@ -113,7 +113,7 @@ Even for the ported layers:
 - **Agreed order** (2026-11-19): 0 calling convention for layers, 1 page
   tables, 2 boot and init, 3 shared memory, 4 invariants along the shared
   log, 5 thread data, 6 machine model and scheduler, 7 IPC, 8 processes and
-  traps, 9 security and virtualization. Stages 0 to 8 are done, except for the linking step for the rely of stage 4 and what the machine model still lacks (the lock at the kernel boundary, interrupts, memory accesses through the page table).
+  traps, 9 security and virtualization. Stages 0 to 8 are done, and stage 9 up to the points listed under it, except for the linking step for the rely of stage 4 and what the machine model still lacks (the lock at the kernel boundary, interrupts, memory accesses through the page table).
 - **`Layer.lean`: a primitive's interface is a triple.**
   `Triple εR c i M F P s Q` says: in a critical section, on a region matching
   abstract data `d` with precondition `P`, the code `s` runs to completion,
@@ -715,6 +715,58 @@ top layer's specifications, and so is the port.
   statement at the bottom layer, through the refinement of the whole stack
   (mCertiKOS's `end_to_end_security`).
 
+### `coq/`, `VEPT.lean`, `VVMCS.lean`, `VVMX.lean`, `GMachine.lean`: virtualization
+
+The public mCertiKOS sources have the specifications of the three
+virtualization objects (`objects/ObjEPT.v`, `ObjVMCS.v`, `ObjVMX.v`) and
+nothing that implements them. The plan agreed for this stage: transcribe the
+specifications, write the code from them and from the C comments they
+contain, and prove that the code refines them, first in Coq, then in Lean.
+
+- **`coq/`**: a small C-like language (`Lang.v`: 32-bit words, locals,
+  memory as a function, a big-step semantics) and the three layers. Built by
+  `coq/build.sh` with Rocq 9; no `Admitted`. Each theorem says: from memory
+  matching the abstract state, the code runs, and the memory after matches
+  the state the specification returns.
+- **The layout.** The EPT is a flat array at `eb`, one cell per guest page
+  (the leaf entries of the four-level table: `ept_leaf`, `ept_store`). The
+  VMCS is a block at `vb`: the revision id, the abort indicator, then field
+  `enc` at `vb + 2 + enc`; `vmread` and `vmwrite` are a read and a write
+  there. The `vmx` structure (36 words) is at `xb`. The blocks are disjoint.
+- **`VEPT.lean`**: `ept_get_page_entry`, `ept_set_page_entry`,
+  `ept_add_mapping`, `ept_invalidate_mappings`, `ept_gpa_to_hpa`,
+  `ept_mmap`, `ept_set_permission` and `ept_init` refine their
+  specifications, as `Step`s inside the critical section.
+- **`VVMCS.lean`**: `vmcs_readz`, `vmcs_writez`, the 64-bit pair,
+  `vmx_set_intercept_intwin`, `vmx_set_desc` (the segment table),
+  `vmx_inject_event`, the pending-event and interrupt-shadow tests, the exit
+  reason and the fault address.
+- **`VVMX.lean`**: the combined state (`MatchX`: the three blocks);
+  `vmx_readz`, `vmx_writez`, `vmx_get_reg` and `vmx_set_reg` (a `switch`
+  over where each guest register lives), `vmx_get_next_eip`, the I/O fields
+  of the exit qualification, `vmx_set_mmap` (through the EPT layer, carried
+  up by `liftE`). **`vm_run`** saves the host `ebp` and `edi`, copies the
+  guest `eip` into the VMCS and loads the guest registers into the
+  processor's; **`vmx_return_from_guest`** does the reverse.
+  `vm_roundtrip`: whatever the guest leaves in the registers, the host's
+  `ebp` and `edi` come back.
+- **`GMachine.lean`**: the machine of `UMachine.lean` with a third kind of
+  state, guest mode. A kernel computation that ends with the local `GUEST`
+  set enters the guest with the registers `vm_run` loaded (the `vmlaunch`);
+  a VM exit enters the kernel at the exit handler with arbitrary guest
+  registers. `GStar.reenter`: from guest mode, through the kernel, back to
+  guest mode.
+- **ClightL** gained `&`, `|` and `<<` (`BinOp.band`, `bor`, `shl`), with
+  their C and Python printers; the Python translation stays equivalent.
+- What differs from mCertiKOS: the code is ours, not CertiKOS's (theirs is
+  not public); right shifts of the exit qualification are divisions; a
+  register holds a word or nothing. In Lean the registers `vm_run` loads,
+  and the host registers `vmx_return_from_guest` loads, must be known in the
+  abstract state, since a step fixes the locals it ends with.
+- Not done: `vmx_init`, the TSC and revision-id accessors, the VM exit
+  handlers and hypercalls of the trap layers, the EPT as four real levels of
+  tables, and security for guests.
+
 ### `MPTResv2.lean`: one page in two address spaces
 
 - `ptResv2_spec` and the C code of `pt_resv2`: allocate a page, map it in the
@@ -1003,9 +1055,10 @@ unused by the ports.
   (`MCPU.lean`), one copy, as words of the kernel region. Kernel contexts
   are in (`KMachine.lean`), as suspended computations in a pool that belongs
   to one CPU. User mode is in (`UMachine.lean`): a trap enters the kernel and
-  a finished kernel computation returns. Not modelled: what user code does,
-  interrupts, guest mode (virtualization), and memory accesses through the
-  page table.
+  a finished kernel computation returns. Guest mode is in (`GMachine.lean`): a
+  finished kernel computation can enter the guest, and a VM exit enters the
+  kernel. Not modelled: what user and guest code do, interrupts, and memory
+  accesses through the page table.
 - **The lock at the kernel boundary.** Every theorem about kernel code is
   inside a critical section. The kernel entry points are proved from "lock
   held at the trap" to "lock held at the return"; acquiring at the trap and
@@ -1075,7 +1128,12 @@ Stage 9, security: `ObsEq.lean`, `Integrity.lean`, `Confidentiality.lean`,
 unwinding conditions hold for a passage through the kernel, and
 noninterference follows for executions of a program modelled as a function
 of what it can see. Left in security: that the security invariants are
-preserved, and the statement at the bottom layer. Virtualization is not
-started, and it cannot be ported the way the other stages were: the mirror
-has the three specification files (`ObjVMX`, `ObjVMCS`, `ObjEPT`) but not the
-layers or the verified C code that implement them.
+preserved, and the statement at the bottom layer.
+
+Stage 9, virtualization: `coq/EPT.v`, `coq/VMCS.v`, `coq/VMX.v`, then
+`VEPT.lean`, `VVMCS.lean`, `VVMX.lean`, `GMachine.lean`. It could not be
+ported the way the other stages were: the mirror has the three specification
+files (`ObjVMX`, `ObjVMCS`, `ObjEPT`) but not the layers or the verified C
+code that implement them. The specifications are transcribed; the code is
+written from them and from the C comments, and proved to refine them. Left:
+`vmx_init`, the VM exit handlers and the hypercalls.

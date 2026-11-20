@@ -5,7 +5,8 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-111 Lean files, about 46,700 lines. No `sorry`. The main theorems depend only on
+115 Lean files, about 48,700 lines, and a Coq development of the
+virtualization layers in `coq/` (about 2,200 lines). No `sorry`, no `Admitted`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-19)
@@ -161,6 +162,15 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
     one program, from states it cannot tell apart, stay in step for ever,
     whatever the other processes do. A program is modelled as a function from
     what the process can see to its next trap.
+  - **Virtualization** (`coq/EPT.v`, `coq/VMCS.v`, `coq/VMX.v`, then
+    `VEPT.lean`, `VVMCS.lean`, `VVMX.lean`, `GMachine.lean`): mCertiKOS's
+    specifications of the extended page table, the VMCS and the `vmx`
+    structure, with code written for them (the public sources do not have
+    it) and refinement proofs. The VMCS is a block of the kernel region,
+    read and written by `vmread` and `vmwrite`. Entering the guest loads its
+    registers and saves the host's; leaving it saves the guest's and puts the
+    host's back (`vm_roundtrip`). ClightL gained `&`, `|` and `<<` for this,
+    and the Python translation stays equivalent.
   - **Steps and data abstraction** (`LayerStep.lean`): running a function's
     code call by call on the abstract state, and carrying a layer's triples
     to a layer whose state is a view of it.
@@ -198,7 +208,12 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
   proved at the top layer's specifications, with user programs as functions
   of what they can see; user-mode instructions are not modelled, the security
   invariants are assumed rather than shown preserved, and the result is not
-  carried down to the machine. Virtualization is not started. The kernel
+  carried down to the machine. Virtualization: mCertiKOS publishes only the
+  specifications of its VMX, VMCS and EPT objects, so the code that
+  implements them is written here from those specifications and the C
+  comments, first in Coq (`coq/`), then in Lean (`VEPT.lean`, `VVMCS.lean`,
+  `VVMX.lean`), and proved to refine them; the machine has a guest mode
+  (`GMachine.lean`). The VM exit handlers and the hypercalls are not done. The kernel
   guarantees are per CPU, and `PTInv` is not yet shown to hold across other
   CPUs' operations on the allocation table.
   See [KERNEL.md](KERNEL.md).
