@@ -5,8 +5,8 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-115 Lean files, about 48,700 lines, and a Coq development of the
-virtualization layers in `coq/` (about 2,200 lines). No `sorry`, no `Admitted`. The main theorems depend only on
+121 Lean files, about 51,000 lines, and a Coq development of the
+virtualization layers in `coq/` (about 3,000 lines). No `sorry`, no `Admitted`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-19)
@@ -170,7 +170,12 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
     read and written by `vmread` and `vmwrite`. Entering the guest loads its
     registers and saves the host's; leaving it saves the guest's and puts the
     host's back (`vm_roundtrip`). ClightL gained `&`, `|` and `<<` for this,
-    and the Python translation stays equivalent.
+    and the Python translation stays equivalent. The hypercalls (`coq/Trap.v`,
+    then `THyp.lean`, `THyp2.lean`) run on a top state that adds the consoles
+    and the virtual machine to the process layers (`TTop.lean`), and the
+    dispatcher (`TDispatchH.lean`) handles them with `SYS_spawn`,
+    `SYS_get_quota`, `SYS_share` (`TShare.lean`) and `SYS_print`; every call
+    but `SYS_share` keeps the other processes' observations (`TSecH.lean`).
   - **Steps and data abstraction** (`LayerStep.lean`): running a function's
     code call by call on the abstract state, and carrying a layer's triples
     to a layer whose state is a view of it.
@@ -202,8 +207,7 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
   ported, boot is complete, and so are the scheduler, synchronous IPC,
   processes and the system-call path up to mCertiKOS's top layer. The
   machine model has `CR3`, the paging bit, kernel contexts and user mode, one
-  copy rather than one per CPU. Still open there: two of the four system
-  calls (`SYS_share`, `SYS_print`), taking the lock at the kernel boundary,
+  copy rather than one per CPU. Still open there: taking the lock at the kernel boundary,
   and carrying the invariants from one trap to the next. Security is
   proved at the top layer's specifications, with user programs as functions
   of what they can see; user-mode instructions are not modelled, the security
@@ -213,7 +217,10 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
   implements them is written here from those specifications and the C
   comments, first in Coq (`coq/`), then in Lean (`VEPT.lean`, `VVMCS.lean`,
   `VVMX.lean`), and proved to refine them; the machine has a guest mode
-  (`GMachine.lean`). The VM exit handlers and the hypercalls are not done. The kernel
+  (`GMachine.lean`); the hypercalls and the dispatcher are verified on a top
+  state with the consoles and the virtual machine. Not done: `vmx_init`, the
+  EPT's three upper tables in memory, `SYS_hvm_mmap` and `SYS_hvm_run_vm` as
+  system calls, and isolation between guests. The kernel
   guarantees are per CPU, and `PTInv` is not yet shown to hold across other
   CPUs' operations on the allocation table.
   See [KERNEL.md](KERNEL.md).
