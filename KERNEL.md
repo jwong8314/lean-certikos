@@ -395,6 +395,17 @@ What the model leaves out:
 So boot now reaches the states the operations are about: `pg = true`, every
 table initialised, thread 0 running.
 
+### `PSchedBoot.lean`: boot under the lock
+
+- `sched_init_mmi`: `sched_init_spec` establishes the memory-management
+  invariant, `pg = true` and `cid = 0`.
+- **`sched_locked_inv`**: `acquire; sched_init; release`, on a log whose
+  kernel region is as the boot loader leaves it, finishes idle and releases
+  a region matching a state with paging on, the memory-management invariant
+  (`MMI`) and the list view's invariants (`AInv`). This is
+  `MMInv.boot_locked_inv` for the whole of boot. The rely on the other CPUs
+  is assumed, as everywhere in stage 4.
+
 ### `PThreadSched.lean`: `thread_wakeup`
 
 - `thread_wakeup_spec` is mCertiKOS's: the head of a sleep queue goes to the
@@ -700,13 +711,14 @@ unused by the ports.
   which are not modelled. No memory access goes through the page table.
 - **Thread data** (stage 5): control blocks, queues, the list view and the
   current thread are ported. The invariants of the list view are proved on
-  the specifications; they are not yet carried on the log as stage 4 does
-  for memory management.
+  the specifications. Boot establishes them on the log
+  (`sched_locked_inv`); the operations under the lock that keep them there
+  (as `ptResv_locked_inv` does for memory management) are not stated yet.
 - **Boot**: ported in full, from `mem_init` to `sched_init`. What it
   assumes of the boot loader's state is stated as preconditions (`PreInit`
-  in `MMInv.lean`, `MatchMMap`, paging off). `boot_locked_inv` (stage 4)
-  still covers `pt_init_kern` only; it is not yet restated for
-  `sched_init`.
+  in `MMInv.lean`, `MatchMMap`, paging off). `sched_locked_inv`
+  (`PSchedBoot.lean`) runs it under the lock and leaves the invariants on
+  the log.
 - **The primitives over the upper states.** The page-table and
   shared-memory triples are stated over their own layer's state. `liftT` and
   `liftA` carry a triple up one layer, and `MatchCPU` has to be carried too
@@ -721,7 +733,8 @@ for the linking step for the rely of stage 4. Stage 6 has started:
 
 - done: `CR3` and the paging bit, `set_pt`, `set_pg`, `pt_init`,
   `pmap_init` (`MCPU.lean`); the initialisation chain as whole functions
-  (`MInit.lean`); `sched_init` (`PSchedInit.lean`).
+  (`MInit.lean`); `sched_init` (`PSchedInit.lean`), and under the lock
+  (`PSchedBoot.lean`).
 - next: kernel contexts (`PKContext`, `PKContextNew`: `kctxt_switch`,
   `kctxt_new`). mCertiKOS's are saved registers and assembly. Here a
   context has to be a suspended ClightL computation, so this needs a machine

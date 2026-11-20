@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-88 Lean files, about 38,400 lines. No `sorry`. The main theorems depend only on
+89 Lean files, about 38,500 lines. No `sorry`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-18)
@@ -121,7 +121,8 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
     on, and the whole chain `sharedmem_init`, `thread_init`, `tdqueue_init`,
     `sched_init` refines its specifications, under one layout of the kernel
     region. Boot ends with paging on, every table initialised, thread 0
-    running.
+    running, and (`PSchedBoot.lean`) run under the lock it leaves the
+    memory-management and queue invariants on the shared log.
   - **Steps and data abstraction** (`LayerStep.lean`): running a function's
     code call by call on the abstract state, and carrying a layer's triples
     to a layer whose state is a view of it.
