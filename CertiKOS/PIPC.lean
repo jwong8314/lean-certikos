@@ -27,7 +27,7 @@ specification bounds it by `num_proc`; they are one constant in mCertiKOS,
 and the theorem assumes `num_proc ≤ num_chan`. The current thread is assumed
 below `num_chan` (mCertiKOS's `valid_curid`).
 
-Not here: `syncreceive_chan`, which copies the buffer (`flatmem_copy`).
+`syncreceive_chan`, which copies the buffer, is in `PIPCRecv.lean`.
 -/
 
 set_option linter.deprecated false

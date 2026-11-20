@@ -88,5 +88,6 @@ import CertiKOS.PThreadSpawn
 import CertiKOS.FlatMem
 import CertiKOS.PIPCIntro
 import CertiKOS.PIPC
+import CertiKOS.PIPCRecv
 import CertiKOS.PTInitGen
 import CertiKOS.MPTInit
