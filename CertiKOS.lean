@@ -86,5 +86,6 @@ import CertiKOS.PKContext
 import CertiKOS.PThreadSwitch
 import CertiKOS.PThreadSpawn
 import CertiKOS.PIPCIntro
+import CertiKOS.PIPC
 import CertiKOS.PTInitGen
 import CertiKOS.MPTInit
