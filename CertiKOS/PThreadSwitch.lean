@@ -202,10 +202,11 @@ theorem sched_factors {a : AData} {ql : List Nat} {la : Nat} {s : ThreadState} {
       show setAt (setAt a.abtcb la _) la _ = setAt a.abtcb la _
       rw [setAt_setAt]) rfl)
 
-/-- `set_state`, then `enqueue`: the current thread parks on queue `q`. -/
-theorem park_factors {a : AData} {cid q sv : Nat} {ts : ThreadState} {lq : List Nat} (hpg : a.pg = true)
+/-- `set_state`, then `enqueue`: a thread on no queue goes to queue `q` in
+state `ts`. -/
+theorem park_factors {a : AData} {cid q sv : Nat} {st ts : ThreadState} {lq : List Nat} (hpg : a.pg = true)
     (hipt : a.ipt = true) (hcid : cid < np) (hq : q ≤ nc) (hcu : (a.AC cid).cused = true)
-    (hrun : a.abtcb cid = .AbTCBValid .RUN (-1)) (hts : ZtoThreadState sv = some ts)
+    (hrun : a.abtcb cid = .AbTCBValid st (-1)) (hts : ZtoThreadState sv = some ts)
     (hlq : a.abq q = .AbQValid lq) :
     ∃ a1, set_state0_spec np cid sv a = some a1 ∧
       enqueue0_spec np nc q cid a1 = some { a with

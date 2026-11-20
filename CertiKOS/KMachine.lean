@@ -230,6 +230,16 @@ theorem kstep_skip_seq (rest : Stmt KPrim) (K : Cont KPrim) (σ : Locals) (pool 
 theorem kstep_seq (s1 s2 : Stmt KPrim) (K : Cont KPrim) (σ : Locals) (pool : Nat → KCtx) (l : RLog) :
     kstep εR c code ⟨⟨.seq s1 s2, K, σ⟩, pool, l⟩ = some ⟨⟨s1, .seq s2 K, σ⟩, pool, l⟩ := rfl
 
+/-- A conditional. -/
+theorem kstep_ite (e : Expr) (s1 s2 : Stmt KPrim) (K : Cont KPrim) (σ : Locals) (pool : Nat → KCtx) (l : RLog) :
+    kstep εR c code ⟨⟨.ite e s1 s2, K, σ⟩, pool, l⟩ =
+      some ⟨⟨if e.eval σ = 0 then s2 else s1, K, σ⟩, pool, l⟩ := rfl
+
+/-- **A statement of the layers below, at the end.** -/
+theorem kstar_base {s : Stmt APrim} {σ σ' : Locals} {l l' : RLog} (h : Runs (rprimsA εR c) s σ l σ' l')
+    (K : Cont KPrim) (pool : Nat → KCtx) :
+    KStar εR c code ⟨⟨mapS .base s, K, σ⟩, pool, l⟩ ⟨⟨.skip, K, σ'⟩, pool, l'⟩ := KStar.of_runs h K pool
+
 end Machine
 
 end KMach
