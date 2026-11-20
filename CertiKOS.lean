@@ -102,5 +102,6 @@ import CertiKOS.Integrity
 import CertiKOS.Confidentiality
 import CertiKOS.ConfidentialityPF
 import CertiKOS.Security
+import CertiKOS.SecurityBigstep
 import CertiKOS.PTInitGen
 import CertiKOS.MPTInit

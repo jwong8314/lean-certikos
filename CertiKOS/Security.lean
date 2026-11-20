@@ -25,9 +25,7 @@ layer. Here a step is one passage through the kernel.
   it lead to states it cannot tell apart and to the same registers.
 
 These are the hypotheses of the unwinding theorem that gives noninterference
-for whole executions (mCertiKOS's `SecurityBigstep.v`). That theorem is about
-executions of user programs between the passages, which are not modelled
-here, so it is not ported.
+for whole executions; it is in `SecurityBigstep.lean`.
 
 What differs: mCertiKOS's step is one instruction of the machine; a yield and
 the `proc_start_user` of the process resumed are two steps there and one

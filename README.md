@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-110 Lean files, about 46,500 lines. No `sorry`. The main theorems depend only on
+111 Lean files, about 46,700 lines. No `sorry`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
 ## Status (2026-11-19)
@@ -157,6 +157,10 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
     gets back, depend only on what it observed before; this includes the
     page fault, where the physical page it gets is hidden. And a parked
     process that is resumed observes the same whatever happened meanwhile.
+    From these, noninterference (`SecurityBigstep.lean`): two executions of
+    one program, from states it cannot tell apart, stay in step for ever,
+    whatever the other processes do. A program is modelled as a function from
+    what the process can see to its next trap.
   - **Steps and data abstraction** (`LayerStep.lean`): running a function's
     code call by call on the abstract state, and carrying a layer's triples
     to a layer whose state is a view of it.
@@ -190,11 +194,11 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
   machine model has `CR3`, the paging bit, kernel contexts and user mode, one
   copy rather than one per CPU. Still open there: two of the four system
   calls (`SYS_share`, `SYS_print`), taking the lock at the kernel boundary,
-  and carrying the invariants from one trap to the next. Security stops at
-  the unwinding conditions: they hold for single passages through the
-  kernel, but noninterference for whole executions needs a model of user
-  programs, which there is none of. Virtualization is not started. The
-  kernel
+  and carrying the invariants from one trap to the next. Security is
+  proved at the top layer's specifications, with user programs as functions
+  of what they can see; user-mode instructions are not modelled, the security
+  invariants are assumed rather than shown preserved, and the result is not
+  carried down to the machine. Virtualization is not started. The kernel
   guarantees are per CPU, and `PTInv` is not yet shown to hold across other
   CPUs' operations on the allocation table.
   See [KERNEL.md](KERNEL.md).

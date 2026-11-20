@@ -87,7 +87,7 @@ Layers are listed bottom-up, as in `mcertikos/mm`, `proc`, `trap`.
 | `TTrapArg`, `TTrap`, `TDispatch`, `TSysCall` | system-call arguments, handlers, dispatch, the kernel's entry points | **ported**: `TTrapArg.lean` (`uctx_arg1` … `uctx_arg6`, `uctx_set_errno`, `uctx_set_retval1` … `5`), `TTrap.lean` (`trap_sendtochan_pre`, `trap_sendtochan_post`, `sys_receive_chan`, `sys_get_quota`, `ptfault_resv`), `TDispatch.lean` (`container_can_consume`, `sys_proc_create`, `syscall_dispatch_c`), `TSysCall.lean` (`syscall_dispatch`, `pgf_handler`, `sys_yield`, from user mode back to user mode). Missing: `SYS_share` and `SYS_print` in the dispatcher, and the virtualization handlers |
 | **Other** | | |
 | `objects/ObjVMX`, `ObjVMCS`, `ObjEPT` | virtualization | missing |
-| `security` | noninterference (`ObsEq`, `Integrity`, `Confidentiality`, `ConfidentialityRestore`, `Security`) | **ported up to the unwinding conditions**: `ObsEq.lean` (the observation function), `Integrity.lean`, `Confidentiality.lean`, `ConfidentialityPF.lean` (the page fault), `Security.lean` (`KPass`: one passage through the kernel; `integ`, `conf`, `conf_restore`). Missing: the theorem for whole executions (`SecurityBigstep.v`, `end_to_end_security`), which needs a model of user programs; integrity and confidentiality of user-mode instructions; preservation of the security invariants |
+| `security` | noninterference (`ObsEq`, `Integrity`, `Confidentiality`, `ConfidentialityRestore`, `Security`) | **ported up to the unwinding conditions**: `ObsEq.lean` (the observation function), `Integrity.lean`, `Confidentiality.lean`, `ConfidentialityPF.lean` (the page fault), `Security.lean` (`KPass`: one passage through the kernel; `integ`, `conf`, `conf_restore`), `SecurityBigstep.lean` (`bigstep_conf`, `noninterference`, with a user program as a function from what it sees to its next trap). Missing: integrity and confidentiality of user-mode instructions (user code is not modelled); preservation of the security invariants; the link down to the bottom layer (`end_to_end_security` is stated on the machine of `MBoot`) |
 | `layerlib`: `LAsm`, `CompCertiKOS` | layered assembly, the compiler | missing: no machine model, no verified compiler |
 | layer calculus | linking layers vertically with `high_level_invariant` | partial: each port states refinement to the spec; invariant preservation and layer linking are not done per layer |
 
@@ -653,7 +653,7 @@ through the kernel.
   proved but not wired to an entry point; in the mCertiKOS sources read here
   those entry points are commented out too.
 
-### `ObsEq.lean`, `Integrity.lean`, `Confidentiality.lean`, `ConfidentialityPF.lean`, `Security.lean`: security
+### `ObsEq.lean`, `Integrity.lean`, `Confidentiality.lean`, `ConfidentialityPF.lean`, `Security.lean`, `SecurityBigstep.lean`: security
 
 mCertiKOS's security proof (Costanzo, Shao and Gu, PLDI'16) is stated over the
 top layer's specifications, and so is the port.
@@ -698,10 +698,22 @@ top layer's specifications, and so is the port.
   the pages a process maps are not free (`MappedUsed`; in mCertiKOS it
   follows from the owner lists), and that a free page holds no data
   (`FreeNone`, mCertiKOS's `dirty_ppage`).
-- Not done: that a passage preserves `SecInv`; integrity and confidentiality
-  of user-mode instructions (user code is not modelled); and the unwinding
-  theorem that turns the three conditions into noninterference for whole
-  executions.
+- **`SecurityBigstep.lean`** turns the three conditions into
+  noninterference. A big step of process `i` (`BStep`) is its trap, then
+  whatever the other processes do while it is parked, until it is in user
+  mode again. `bigstep_conf`: from two states `i` cannot tell apart, a big
+  step with the same trap ends in two states it cannot tell apart, with the
+  same registers. `noninterference`: two executions of one program stay in
+  step for ever, whatever the other processes do and however long they take.
+- A user program is modelled as a function (`Prog`) from what the process can
+  see, its registers and its observation, to the trap it makes next. In
+  mCertiKOS it is machine code, and that its steps depend only on what it can
+  see is confidentiality of user-mode instructions. That part is not ported,
+  because user code is not modelled.
+- Not done: that a passage preserves `SecInv` (it is a premise of every
+  step); integrity and confidentiality of user-mode instructions; and the
+  statement at the bottom layer, through the refinement of the whole stack
+  (mCertiKOS's `end_to_end_security`).
 
 ### `MPTResv2.lean`: one page in two address spaces
 
@@ -1059,8 +1071,10 @@ the kernel), `TTrapArg.lean`, `TTrap.lean`, `TDispatch.lean` (system calls),
 `TSysCall.lean` (the three entry points).
 
 Stage 9, security: `ObsEq.lean`, `Integrity.lean`, `Confidentiality.lean`,
-`ConfidentialityPF.lean`, `Security.lean`. The three unwinding conditions
-hold for a passage through the kernel. Left in security: that the security
-invariants are preserved, and the theorem for whole executions, which needs
-a model of user programs. Then virtualization (`ObjVMX`, `ObjVMCS`, `ObjEPT`
-and the handlers that use them), which is not started.
+`ConfidentialityPF.lean`, `Security.lean`, `SecurityBigstep.lean`. The three
+unwinding conditions hold for a passage through the kernel, and
+noninterference follows for executions of a program modelled as a function
+of what it can see. Left in security: that the security invariants are
+preserved, and the statement at the bottom layer. Then virtualization
+(`ObjVMX`, `ObjVMCS`, `ObjEPT` and the handlers that use them), which is not
+started.
