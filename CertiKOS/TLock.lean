@@ -64,16 +64,18 @@ def Resumable (code : Nat → Stmt KPrim) (pstart cidb ucb pb cpub : Nat) (k : K
   (k.stmt = .skip ∧ k.cont = .seq (startK cidb ucb pb cpub) relK) ∨ (k.stmt = code pstart ∧ k.cont = .stop)
 
 /-- **Every ready thread can be resumed.** -/
-def PoolInv (code : Nat → Stmt KPrim) (pstart cidb ucb pb cpub num_proc : Nat) (lk : Val) (d : UData) : Prop :=
+def PoolInv (code : Nat → Stmt KPrim) (pstart cidb ucb pb cpub num_proc num_chan : Nat) (lk : Val) (d : UData) :
+    Prop :=
   ∀ t, t < num_proc → (d.kctxt t).locals "lk" = lk ∧
-    (t ≠ d.cid → ∀ q, d.abtcb t = .AbTCBValid .READY q → Resumable code pstart cidb ucb pb cpub (d.kctxt t))
+    (t ≠ d.cid → ∀ s, d.abtcb t = .AbTCBValid s (num_chan : Int) →
+      Resumable code pstart cidb ucb pb cpub (d.kctxt t))
 
 theorem ureg_ne : ∀ n, n < 17 → ureg n ≠ "t" ∧ ureg n ≠ "n" ∧ ureg n ≠ "_" ∧ ureg n ≠ "v" := by decide
 
 section
-variable {code : Nat → Stmt KPrim} {pstart cidb ucb pb cpub num_proc : Nat} {lk : Val}
+variable {code : Nat → Stmt KPrim} {pstart cidb ucb pb cpub num_proc num_chan : Nat} {lk : Val}
 
-local notation "PI" => PoolInv code pstart cidb ucb pb cpub num_proc lk
+local notation "PI" => PoolInv code pstart cidb ucb pb cpub num_proc num_chan lk
 
 theorem PoolInv.congr {d d' : UData} (h : PI d) (e1 : d'.kctxt = d.kctxt) (e2 : d'.abtcb = d.abtcb)
     (e3 : d'.cid = d.cid) : PI d' := by
@@ -91,7 +93,7 @@ theorem pool_setReg {reg n : Nat} {d d' : UData} (h : uctx_set_reg_spec reg n d 
   obtain ⟨U, e⟩ := set_reg_shape h; subst e; exact hP.congr rfl rfl rfl
 
 /-- **`proc_create`'s child is ready, and new.** -/
-theorem pool_create {num_id mc num_chan : Nat} {uentry q : Nat} {d d' : UData} {i : Nat}
+theorem pool_create {num_id mc : Nat} {uentry q : Nat} {d d' : UData} {i : Nat}
     (hnn : num_id ≤ num_proc) (hs : proc_create_spec num_id mc num_chan code pstart uentry q d = some (d', i))
     (hP : PI d) : PI d' := by
   unfold proc_create_spec at hs
@@ -115,7 +117,7 @@ theorem pool_create {num_id mc num_chan : Nat} {uentry q : Nat} {d d' : UData} {
   · cases hs
 
 /-- **The dispatcher keeps `PoolInv`.** -/
-theorem pool_dispatch {num_id mc num_chan : Nat} (hnn : num_id ≤ num_proc) {elf : Nat → Nat} {d d' : UData}
+theorem pool_dispatch {num_id mc : Nat} (hnn : num_id ≤ num_proc) {elf : Nat → Nat} {d d' : UData}
     (hs : sys_dispatch_c_spec num_id mc num_chan code pstart elf d = some d') (hP : PI d) : PI d' := by
   unfold sys_dispatch_c_spec at hs
   cases e1 : uctx_arg1_spec d with
@@ -169,7 +171,7 @@ def Good (maxpage num_id cb num_proc pb ib fb ida sb tb num_chan qb cidb ipb ucb
     (elf : Nat → Nat) (code : Nat → Stmt KPrim) (lk : Val) (d : UData) (b : Region) : Prop :=
   MatchUP maxpage num_id cb num_proc pb ib fb ida sb tb num_chan qb cidb ipb ucb cpub d b ∧
     MatchELF num_id elb elf b ∧ KInv num_id mc num_proc num_chan maxpage kl kh d ∧ d.ikern = false ∧
-    PoolInv code pstart cidb ucb pb cpub num_proc lk d
+    PoolInv code pstart cidb ucb pb cpub num_proc num_chan lk d
 
 local notation "G" => Good maxpage num_id cb num_proc pb ib fb ida sb tb num_chan qb cidb ipb ucb cpub elb mc kl kh
   pstart elf code lk
@@ -272,6 +274,111 @@ theorem pgf_locked {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε) (h
         (kstar_base hrel .stop pool)))))
   · show (σ'.set "_" 0) (ureg n) = v
     rw [Locals.set_other _ _ (ureg_ne n hn).2.2.1]; exact hreg n hn v hv
+
+/-- **A ready thread, resumed, reaches `proc_start_user` with the release
+after it.** -/
+theorem resume_start {εR : REnv} {c : CPU} {cidb ucb pb cpub : Nat}
+    (hcode : code pstart = .seq (startK cidb ucb pb cpub) (mapS .base relA)) {k : KCtx}
+    (hk : Resumable code pstart cidb ucb pb cpub k) (pool : Nat → KCtx) (l : RLog) :
+    KStar εR c code ⟨k, pool, l⟩ ⟨⟨startK cidb ucb pb cpub, relK, k.locals⟩, pool, l⟩ := by
+  obtain ⟨st, K, σ⟩ := k
+  rcases hk with ⟨h1, h2⟩ | ⟨h1, h2⟩
+  · simp only at h1 h2; subst h1; subst h2
+    exact KStar.single (kstep_skip_seq _ _ σ pool l)
+  · simp only at h1 h2; subst h2; rw [h1, hcode]
+    exact KStar.single (kstep_seq _ _ .stop σ pool l)
+
+/-- **A yield, with the lock at the boundary.** The caller is parked holding
+the lock; the head `la` of the ready queue is resumed (parked by an earlier
+yield, or new) and releases the lock on its way to user mode. -/
+theorem yield_locked {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε) (hRR : RelyR εR c) (hc : c < NCPU)
+    (hRA : LockArray.RelyA ε c) (entry : Nat → Nat) (tn : Nat)
+    (hL : ULayout maxpage num_id cb num_proc pb ib fb sb tb num_chan qb cidb ipb ucb)
+    (hcp0 : cb + 5 * num_id ≤ cpub) (hcp1 : cpub + 2 ≤ sb) (hel0 : cb + 5 * num_id ≤ elb) (hec : elb + num_id ≤ cpub)
+    (hentry : code (entry tn) = lockedK (sysYieldK tb qb num_proc num_chan cidb ucb pb cpub))
+    (hcode : code pstart = .seq (startK cidb ucb pb cpub) (mapS .base relA))
+    {l : RLog} {S : RState} {H : HLogR} (hl : rreplay l = some (S, H)) (hidle : (S.lk lk.toNat).phase c = .idle)
+    (bound : ALog → Nat) (Kb : Nat) (hK : ∀ l, bound l ≤ Kb)
+    (hF : LockArray.FairA ε c lk.toNat (ticket (LockArray.projL lk.toNat (apull ε c (erase l)))) bound)
+    {pool : Nat → KCtx} (hRJ : RelyJ εR c lk.toNat (fun b => ∃ d, G d b ∧ d.kctxt = pool))
+    (hJ : ∃ d, G d (hmemR lk.toNat H) ∧ d.kctxt = pool) (ur0 : Nat → Val) (σ : Locals) (hσ : σ "lk" = lk) :
+    ∃ H1 : HLogR, (∃ d, G d (hmemR lk.toNat H1) ∧ d.kctxt = pool) ∧
+      ∀ (d d1 : UData) (rs : UContext) (ql : List Nat) (la : Nat), G d (hmemR lk.toNat H1) → d.kctxt = pool →
+        (∀ n, n < 17 → ∀ v, rs n = some v → σ (ureg n) = v) → proc_exit_user_spec rs d = some d1 →
+        d.abq num_chan = .AbQValid ql → ql.getLastD num_proc = la → la ≠ num_proc →
+        ∃ (ur : Nat → Val) (d3 : UData) (l' : RLog) (S' : RState) (H' : HLogR),
+          UStar εR c code entry lk (.user ur0 pool l) (.user ur d3.kctxt l') ∧
+          rreplay l' = some (S', H') ∧ (S'.lk lk.toNat).phase c = .idle ∧ G d3 (hmemR lk.toNat H') ∧
+          d3.cid = la ∧ ∀ n, n < 17 → ∀ v, d.uctxt la n = some v → ur n = v := by
+  obtain ⟨σ1, r1, H1, hacq, hcs1, hJ1, hlk1, hfr⟩ :=
+    acquire_runs_inv hE hRR hc hRA hl hRJ hJ hidle bound Kb hK hF σ hσ
+  refine ⟨H1, hJ1, fun d d1 rs ql la hG hpool hrs h1 hq hla hne => ?_⟩
+  obtain ⟨hM, hE1, hI, hik, hP⟩ := hG
+  have hrs1 : ∀ n, n < 17 → ∀ v, rs n = some v → σ1 (ureg n) = v := fun n hn v hv => by
+    obtain ⟨a, b', c', e⟩ := ureg_ne n hn
+    rw [hfr _ a b' c' e]; exact hrs n hn v hv
+  obtain ⟨hd1, hpg⟩ := exit_shape h1
+  subst hd1
+  obtain ⟨σf, l2, b2, hks, c2, m2, hne2, hI2, hlt, hcv2, hlkf, hfb2⟩ := sys_yield_run εR c lk.toNat code hL hcp0
+    hcp1 (σ := σ1) (K := relK) (by rw [hlk1]) hcs1 hM hI.cid hI.ainv hI.cur hrs1 h1 hq hla hne
+  -- the process resumed is not the caller, and it is on the ready queue
+  obtain ⟨s, hai⟩ := hI.ainv.inq la num_chan ql hlt (Nat.le_refl _) hq (last_mem hla hne)
+  have hlc : la ≠ d.cid := by
+    intro e
+    have h := hI.cur.2
+    rw [← e, hai] at h
+    injection h with e1 e2
+    omega
+  obtain ⟨hlkB, hres⟩ := hP la hlt
+  have hR := hres hlc s hai
+  -- the state after the switch
+  let rsK : KCtx := ⟨.skip, .seq (startK cidb ucb pb cpub) relK, σf.set "_" 0⟩
+  let D1 : UData := { d with ikern := true, PT := 0, ipt := true, uctxt := setAt d.uctxt d.cid rs }
+  let Y := yieldOut num_chan la ql rsK (toK D1)
+  have hpgY : (putK D1 Y).pg = true := hpg
+  have hs : proc_start_user_spec (putK D1 Y) =
+      some ({ putK D1 Y with ikern := false, ipt := false, PT := la }, (setAt d.uctxt d.cid rs) la) := by
+    unfold proc_start_user_spec
+    exact if_pos ⟨rfl, hpgY, hI.ihost, rfl, hI.init⟩
+  have hKY : KInv num_id mc num_proc num_chan maxpage kl kh (putK D1 Y) := by
+    exact ⟨hlt, hcv2, hI2, hI.cv, hI.atinv, hI.uq, hpg, hI.ihost, hI.init⟩
+  have hPY : PoolInv code pstart cidb ucb pb cpub num_proc num_chan lk (putK D1 Y) := by
+    intro t ht
+    show (setAt d.kctxt d.cid rsK t).locals "lk" = lk ∧
+      (t ≠ la → ∀ s', setAt (setAt d.abtcb d.cid _) la _ t = _ → Resumable code pstart cidb ucb pb cpub
+        (setAt d.kctxt d.cid rsK t))
+    by_cases e : t = d.cid
+    · subst e
+      rw [setAt_eq]
+      refine ⟨?_, fun _ _ _ => Or.inl ⟨rfl, rfl⟩⟩
+      show (σf.set "_" 0) "lk" = lk
+      rw [Locals.set_other _ _ (by decide), hlkf, hlk1]
+    · rw [setAt_ne _ _ e]
+      refine ⟨(hP t ht).1, fun hne' s' hs' => ?_⟩
+      rw [setAt_ne _ _ hne', setAt_ne _ _ e] at hs'
+      exact (hP t ht).2 e s' hs'
+  -- the resumed thread: `proc_start_user`, then the release
+  have hks2 := resume_start (εR := εR) (c := c) hcode hR Y.kctxt l2
+  obtain ⟨σ3, l3, b3, hr3, c3, m3, hreg, f3⟩ := procStartUser_run εR c lk.toNat hL hcp0 hcp1
+    (σ := (d.kctxt la).locals) (by rw [hlkB]) c2 m2 ⟨fun _ => hne2, fun _ => hpgY⟩ hlt hs
+  have hlk3 : σ3 "lk" = lk := by rw [hr3.frame rfl, hlkB]
+  obtain ⟨rb, S4, H4, hrel, hl4, hid4, hmem⟩ := release_runs (εR := εR) hRR hc c3 hlk3
+  obtain ⟨I3, hik3⟩ := start_keeps hs hKY
+  have P3 := pool_start hs hPY
+  refine ⟨regsOf (σ3.set "_" 0), _, rb, S4, H4, ?_, hl4, hid4,
+    ⟨by rw [hmem]; exact m3, fun i hi => by rw [hmem, f3 _ (by omega), hfb2 _ (by omega) (by omega)]; exact hE1 i hi,
+      I3, hik3, P3⟩, rfl, fun n hn v hv => ?_⟩
+  · refine .step (.trap ur0 pool l tn σ hσ) ?_
+    rw [hentry, ← hpool]
+    refine UStar.iret ((kstar_seq hacq _ .stop d.kctxt).trans ((KStar.single (kstep_seq _ _ .stop σ1 d.kctxt r1)).trans
+      (hks.trans (hks2.trans ((kstar_base hr3 relK Y.kctxt).trans ((KStar.single (kstep_skip_seq _ .stop σ3 Y.kctxt l3)).trans
+        (kstar_base hrel .stop Y.kctxt)))))))
+  · show (σ3.set "_" 0) (ureg n) = v
+    rw [Locals.set_other _ _ (ureg_ne n hn).2.2.1]
+    refine hreg n hn v ?_
+    show setAt d.uctxt d.cid rs la n = some v
+    rw [setAt_ne _ _ hlc]
+    exact hv
 
 end Machine
 
