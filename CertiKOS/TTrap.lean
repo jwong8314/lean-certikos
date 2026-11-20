@@ -7,10 +7,10 @@ A handler reads its arguments from the caller's user context, calls the
 kernel function, and writes the result and the error code back.
 
 Ported from `objects/ObjTrap.v`: `trap_sendtochan_pre_spec`,
-`trap_sendtochan_post_spec`, `trap_receivechan_spec`, `trap_get_quota_spec`.
-Ported from `trap/TTrapArgCSource.v` and `trap/TTrapCSource.v`: the C code of
-`trap_sendtochan_pre`, `trap_sendtochan_post`, `sys_receive_chan`,
-`sys_get_quota`.
+`trap_sendtochan_post_spec`, `trap_receivechan_spec`, `trap_get_quota_spec`,
+`ptfault_resv_spec`. Ported from `trap/TTrapArgCSource.v` and
+`trap/TTrapCSource.v`: the C code of `trap_sendtochan_pre`,
+`trap_sendtochan_post`, `sys_receive_chan`, `sys_get_quota`, `ptfault_resv`.
 
 * `ctGetQuotaU`, `ctGetUsageU`, `ctGetNchildrenU`: the container getters as
   steps on the top state.
@@ -22,11 +22,17 @@ Ported from `trap/TTrapArgCSource.v` and `trap/TTrapCSource.v`: the C code of
   `syncReceive_triple` (carried up by `liftIU`) and the steps of the
   accessors.
 
+* `ptfaultResv_triple`: **`ptfault_resv` refines `ptfault_resv_spec`**: a
+  fault at a user address maps a fresh page there. `pt_resv` is called
+  through its triple, carried up by `liftPC'`, `liftCI` and `liftIU`.
+
 What differs: the handlers assume what mCertiKOS keeps as invariants: the
 current thread is a valid process, the queue invariants hold (for the
-receive), the container's usage is within its quota (for `sys_get_quota`,
-whose result is the difference). `sys_proc_create`, the page-fault handler
-and the dispatcher are in `TDispatch.lean`.
+receive), the container's usage is within its quota, and the allocation
+table's invariant (for `pt_resv`). The C tests `addr_low <= vaddr &&
+vaddr < addr_high`; ClightL has neither `&&` nor `<=`, so the code is two
+nested tests with `<`. `sys_proc_create` and the dispatcher are in
+`TDispatch.lean`.
 -/
 
 set_option linter.deprecated false
@@ -104,6 +110,16 @@ def trap_get_quota_spec (d : UData) : Option UData :=
     | none => none
   | none => none
 
+/-- **`ptfault_resv_spec`**: a page fault at a user address gets a page. -/
+def ptfault_resv_spec (maxpage num_proc vadr : Nat) (d : UData) : Option UData :=
+  if d.ikern = true ∧ d.ihost = true ∧ d.pg = true then
+    if 1073741824 ≤ vadr ∧ vadr < 4026531840 then
+      match ptResv_spec maxpage num_proc d.cid vadr 7 d.toPTData with
+      | some (p, _) => some { d with toPTData := p }
+      | none => none
+    else some d
+  else none
+
 /-! ## The code -/
 
 /-- `x = container_get_quota(id)` (field 0), `container_get_usage` (1),
@@ -147,6 +163,15 @@ def trapGetQuotaS (cb cidb ucb : Nat) : Stmt APrim :=
   .seq (getCuridS cidb "curid")
     (.seq (ctGetS cb "quota" "curid" 0)
       (.seq (ctGetS cb "usage" "curid" 1) (retDoneS cidb ucb (.bin .sub (.var "quota") (.var "usage")))))
+
+/-- `ptfault_resv(vaddr)`:
+`curid = get_curid(); if (addr_low <= vaddr && vaddr < addr_high) pt_resv(curid, vaddr, PT_PERM_PTU);` -/
+def ptfaultResvS (cb cidb maxpage pb fb : Nat) : Stmt APrim :=
+  .seq (getCuridS cidb "curid")
+    (.ite (.bin .ltu (.var "vaddr") (.const 1073741824)) .skip
+      (.ite (.bin .ltu (.var "vaddr") (.const 4026531840))
+        (.seq (.assign "n" (.var "curid")) (.seq (.assign "perm" (.const 7)) (ptResvS cb maxpage pb fb)))
+        .skip))
 
 /-! ## What the specifications below keep -/
 
@@ -452,6 +477,97 @@ theorem trapGetQuota_triple (hL : ULayout maxpage num_id cb num_proc pb ib fb sb
     · simp only [if_neg hu] at hs
       cases hs
   · rw [if_neg hpg] at hs; cases hs
+
+/-! ### The page-fault handler's body -/
+
+local notation "MC" => MatchC maxpage num_id cb num_proc pb ib fb ida sb tb num_chan qb cidb
+
+/-- `liftPC` for a triple that may change `pg` only from on to on. -/
+theorem liftPC' (hL : CLayout maxpage num_id cb num_proc pb ib fb sb tb num_chan qb cidb)
+    {P : Locals → PTData → Prop} {s : Stmt APrim} {Q : Locals → PTData → Locals → PTData → Prop}
+    (h : Triple εR c i0 (MatchAll maxpage num_id cb num_proc pb ib fb ida) F P s Q)
+    (hF : ∀ k, F k → k < cb + 5 * num_id ∨ pb ≤ k)
+    (hpg : ∀ σ d σ' d', P σ d → Q σ d σ' d' → d'.pg = true → d.pg = true) :
+    Triple εR c i0 MC F (fun σ d => P σ d.toPTData) s
+      (fun σ d σ' d' => ∃ p : PTData, d' = { d with toPTData := p } ∧ Q σ d.toPTData σ' p) := by
+  intro σ l b d hlk hcs hM hp
+  have := hL.qlay.tlay.slay.hsb
+  obtain ⟨σ', l', b', p, hr, hcs', hA', hlk', hf, hq⟩ := h σ l b d.toPTData hlk hcs (matchC_all hM) hp
+  exact ⟨σ', l', b', _, hr, hcs', matchC_setPT hL hM hA'
+    (fun k h1 h2 => hf k (fun hk => by have := hF k hk; omega)) (hpg σ _ σ' p hp hq), hlk', hf, p, rfl, hq⟩
+
+/-- **`ptfault_resv` refines `ptfault_resv_spec`.** The faulting address is
+in `vaddr`. -/
+theorem ptfaultResv_triple (hL : ULayout maxpage num_id cb num_proc pb ib fb sb tb num_chan qb cidb ipb ucb)
+    (hmax : 3 * maxpage < 2 ^ 32) (hnum : cb + 5 * num_id < 2 ^ 32) (hmp : maxpage ≤ 2 ^ 20)
+    (hnn : num_proc ≤ num_id) {kl kh : Nat} (vadr : Nat) (hv : vadr < 2 ^ 32) :
+    Triple εR c i0 MU (fun k => k < cb + 5 * num_id ∨ pb ≤ k)
+      (fun σ d => σ "vaddr" = BitVec.ofNat 32 vadr ∧ d.cid < num_id ∧ ATInv maxpage kl kh d.toPData ∧
+        (d.AC d.cid).cusage ≤ (d.AC d.cid).cquota ∧ ∃ d1, ptfault_resv_spec maxpage num_proc vadr d = some d1)
+      (ptfaultResvS cb cidb maxpage pb fb)
+      (fun _ d _ d' => ptfault_resv_spec maxpage num_proc vadr d = some d') := by
+  intro σ l b d hlk hcs hM ⟨hva, hci, hAT, hq, d', hs⟩
+  have hCL := hL.ilay.clay
+  have hLay := hCL.qlay.tlay.slay.lay
+  have := hL.hub0; have := hL.ilay.hib0; have := hCL.hcb; have := hCL.qlay.hqb; have := hCL.qlay.tlay.htb
+  have := hCL.qlay.tlay.slay.hsb; have := hCL.qlay.tlay.slay.hse
+  have hs0 := hs
+  unfold ptfault_resv_spec at hs
+  by_cases hc : d.ikern = true ∧ d.ihost = true ∧ d.pg = true
+  · rw [if_pos hc] at hs
+    obtain ⟨l1, b1, r1, c1, m1, f1⟩ := (getCuridU εR c i0 hL (F := fun k => k < cb + 5 * num_id ∨ pb ≤ k)
+      "curid" (by decide) σ d).2 l b hlk hcs hM
+    have hva1 : (σ.set "curid" (BitVec.ofNat 32 d.cid)) "vaddr" = BitVec.ofNat 32 vadr := by
+      rw [Locals.set_other _ _ (by decide)]; exact hva
+    have hg1 := ltu_eval (σ := σ.set "curid" (BitVec.ofNat 32 d.cid)) (ea := .var "vaddr")
+      (eb := .const 1073741824) (a := vadr) (b := 1073741824) hva1 rfl hv (by decide)
+    have hg2 := ltu_eval (σ := σ.set "curid" (BitVec.ofNat 32 d.cid)) (ea := .var "vaddr")
+      (eb := .const 4026531840) (a := vadr) (b := 4026531840) hva1 rfl hv (by decide)
+    by_cases hr : 1073741824 ≤ vadr ∧ vadr < 4026531840
+    · rw [if_pos hr] at hs
+      rw [if_neg (by omega)] at hg1
+      rw [if_pos hr.2] at hg2
+      cases hp : ptResv_spec maxpage num_proc d.cid vadr 7 d.toPTData with
+      | none => rw [hp] at hs; cases hs
+      | some pr =>
+        obtain ⟨p, rr⟩ := pr
+        rw [hp] at hs
+        simp only [Option.some.injEq] at hs
+        subst hs
+        have T := liftIU εR c i0 hL (liftCI εR c i0 hL.ilay (liftPC' εR c i0 hCL
+          ((ptResv_triple εR c i0 hLay hmax hnum hmp hnn (kl := kl) (kh := kh) d.cid vadr 7 hci
+            (ida := ida)).conseq (P' := fun σ (e : PTData) => (σ "n" = BitVec.ofNat 32 d.cid ∧
+              σ "vaddr" = BitVec.ofNat 32 vadr ∧ σ "perm" = BitVec.ofNat 32 7 ∧
+              ATInv maxpage kl kh e.toPData ∧ (e.AC d.cid).cusage ≤ (e.AC d.cid).cquota ∧
+              ∃ d1 r, ptResv_spec maxpage num_proc d.cid vadr 7 e = some (d1, r)) ∧ e.pg = true)
+            (fun _ _ h => h.1) (fun _ _ _ _ _ h => h))
+          (fun _ h => h) (fun _ _ _ _ hP _ _ => hP.2)) (fun k hk => by omega)) (fun k hk => by omega)
+        obtain ⟨σ2, l2, b2, u2, r2, c2, m2, k2, f2, i2, hu2, cc, hi2, p2, hcc, r', hq2, -⟩ :=
+          T (((σ.set "curid" (BitVec.ofNat 32 d.cid)).set "n" (BitVec.ofNat 32 d.cid)).set "perm" 7) l1 b1 d
+            (by simpa [Locals.set] using hlk) c1 m1
+            ⟨⟨by simp [Locals.set], by simp [Locals.set, hva], by simp [Locals.set], hAT, hq, p, rr, hp⟩,
+              hc.2.2⟩
+        rw [hp] at hq2
+        simp only [Option.some.injEq, Prod.mk.injEq] at hq2
+        obtain ⟨e1, -⟩ := hq2
+        subst e1; subst hcc; subst hi2; subst hu2
+        refine ⟨σ2, l2, b2, _, Runs.seq r1 (Runs.ite_false hg1 (Runs.ite_true (by rw [hg2]; decide)
+          (Runs.seq (asg_run "n" (.var "curid") (by simp [Expr.eval]))
+            (Runs.seq (asg_run "perm" (.const 7) rfl) r2)))), c2, m2, ?_, fun k hk => ?_, hs0⟩
+        · rw [k2]; simp [Locals.set]
+        · rw [f2 k hk, f1 k hk]
+    · rw [if_neg hr] at hs
+      simp only [Option.some.injEq] at hs
+      subst hs
+      by_cases hlo : vadr < 1073741824
+      · rw [if_pos hlo] at hg1
+        exact ⟨_, l1, b1, d, Runs.seq r1 (Runs.ite_true (by rw [hg1]; decide) Runs.skip), c1, m1,
+          by simp [Locals.set], f1, hs0⟩
+      · rw [if_neg hlo] at hg1
+        rw [if_neg (by omega)] at hg2
+        exact ⟨_, l1, b1, d, Runs.seq r1 (Runs.ite_false hg1 (Runs.ite_false hg2 Runs.skip)), c1, m1,
+          by simp [Locals.set], f1, hs0⟩
+  · rw [if_neg hc] at hs; cases hs
 
 end Code
 
