@@ -69,5 +69,7 @@ import CertiKOS.MShareOp
 import CertiKOS.MShare
 import CertiKOS.MMInv
 import CertiKOS.PThreadIntro
+import CertiKOS.LayerStep
+import CertiKOS.PQueueIntro
 import CertiKOS.PTInitGen
 import CertiKOS.MPTInit

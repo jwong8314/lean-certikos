@@ -202,16 +202,17 @@ structure MatchT (maxpage num_id cb num_proc pb ib fb ida sb tb : Nat) (d : TDat
 section Region
 variable {maxpage num_id cb num_proc pb ib fb ida sb tb : Nat}
 
-/-- Everything below this layer ignores the control blocks' cells. -/
-theorem matchS_frame (hL : TLayout maxpage num_id cb num_proc pb ib fb sb tb) {d : SData} {b b' : Region}
+/-- Everything below this layer depends only on the cells up to the end of
+the shared-memory table and from the page-table pool on. The cells between
+are free for the layers above. -/
+theorem matchS_frame (hL : SLayout maxpage num_id cb num_proc pb ib fb sb) {d : SData} {b b' : Region}
     (hM : MatchS maxpage num_id cb num_proc pb ib fb ida sb d b)
-    (hfr : ∀ k, k < tb ∨ tb + 3 * num_proc ≤ k → b' k = b k) :
+    (hfr : ∀ k, k < sb + 3 * (num_proc * num_proc) ∨ pb ≤ k → b' k = b k) :
     MatchS maxpage num_id cb num_proc pb ib fb ida sb d b' := by
-  have := hL.slay.lay.hcb; have := hL.slay.lay.hpb; have := hL.slay.hsb; have := hL.slay.hse
-  have := hL.htb; have := hL.hte
+  have := hL.lay.hcb; have := hL.lay.hpb; have := hL.hsb; have := hL.hse
   have hb : ∀ k, k < cb + 5 * num_id → b' k = b k := fun k hk => hfr k (Or.inl (by omega))
   refine ⟨⟨⟨⟨fun j hj => ?_, ?_⟩, fun j hj => ?_⟩,
-    matchpt_transfer hL.slay.lay hM.all.pt (fun k hk => hfr k (Or.inr (by omega))) rfl rfl rfl
+    matchpt_transfer hL.lay hM.all.pt (fun k hk => hfr k (Or.inr (by omega))) rfl rfl rfl
       (fun _ _ _ _ => rfl)⟩, fun q1 q2 g1 g2 => ?_⟩
   · rw [hb _ (by omega), hb _ (by omega), hb _ (by omega)]; exact hM.all.mm.mAT.mat j hj
   · rw [hb _ (by omega)]; exact hM.all.mm.mAT.mnps
@@ -246,7 +247,8 @@ theorem tcb_put (hL : TLayout maxpage num_id cb num_proc pb ib fb sb tb) {d : TD
     (e1 : b' (tcell tb i 1) = BitVec.ofNat 32 p) (e2 : b' (tcell tb i 2) = BitVec.ofNat 32 nx) :
     MatchT maxpage num_id cb num_proc pb ib fb ida sb tb
       { d with tcb := setAt d.tcb i (.TCBValid ts p nx) } b' := by
-  refine ⟨matchS_frame hL hM.s (fun k hk => hfr k (by unfold tcell; omega)), fun j hj => ?_⟩
+  have := hL.htb; have := hL.hte
+  refine ⟨matchS_frame hL.slay hM.s (fun k hk => hfr k (by unfold tcell; omega)), fun j hj => ?_⟩
   show MatchTCB (setAt d.tcb i (.TCBValid ts p nx) j) _ _ _
   by_cases e : j = i
   · subst e
@@ -285,6 +287,18 @@ theorem tcb_foot {b : Region} {i k : Nat} (hi : i < num_proc) (hk : k < 3) (w : 
   refine sc_ne _ _ (fun e => hk' ?_)
   subst e
   unfold tcell; omega
+
+/-- This layer and those below depend only on the cells up to the end of the
+control blocks and from the page-table pool on. -/
+theorem matchT_frame (hL : TLayout maxpage num_id cb num_proc pb ib fb sb tb) {d : TData} {b b' : Region}
+    (hM : MatchT maxpage num_id cb num_proc pb ib fb ida sb tb d b)
+    (hfr : ∀ k, k < tb + 3 * num_proc ∨ pb ≤ k → b' k = b k) :
+    MatchT maxpage num_id cb num_proc pb ib fb ida sb tb d b' := by
+  have := hL.htb; have := hL.hte
+  refine ⟨matchS_frame hL.slay hM.s (fun k hk => hfr k (by omega)), fun j hj => ?_⟩
+  rw [hfr _ (Or.inl (by unfold tcell; omega)), hfr _ (Or.inl (by unfold tcell; omega)),
+    hfr _ (Or.inl (by unfold tcell; omega))]
+  exact hM.tp j hj
 
 end Region
 
