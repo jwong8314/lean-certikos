@@ -26,6 +26,7 @@ The state combines three parts, in disjoint blocks of the kernel region:
   then `vmx_exit_post`) saves the guest registers, restores the host `edi`
   and `ebp`, and copies `eip`, the exit reason and the exit qualification out
   of the VMCS.
+* `vm_roundtrip`: **the host's registers survive a visit to the guest.**
 
 The code is what runs between the hardware transitions. The transitions
 themselves (`vmlaunch` and the VM exit) belong to the machine and change only
@@ -748,6 +749,25 @@ theorem return_step {σ : Locals} {d d' : XSt} {redi reax rebx redx resi rebp he
       ((X _ _ VMX_EXIT_QUALIFICATION' (.var "t") v3 (by decide) (by simp [Expr.eval, Locals.set])).seq
        (X _ _ VMX_LAUNCHED' (.const 1) 1 (by decide) rfl)))))))) (fun b h => ⟨h.1, h.2.1, h.2.2⟩), ?_, ?_⟩ <;> simp [Locals.set]
   · rw [if_neg hc] at hs; cases hs
+
+/-- **The host's registers survive a visit to the guest.** `vm_run` saved the
+host `ebp` and `edi`; whatever registers the guest leaves at the VM exit,
+`vmx_return_from_guest` puts the host's back. -/
+theorem vm_roundtrip {σ σg : Locals} {d d1 d2 : XSt}
+    (h1 : vm_run_spec (σ "EBP") (σ "EDI") d = some d1)
+    (h2 : vmx_return_from_guest_spec (σg "EDI") (σg "EAX") (σg "EBX") (σg "EDX") (σg "ESI") (σg "EBP") d1 = some d2) :
+    ∃ σ2, Step εR c i0 MX XFP (returnS xb vb) σg d1 σ2 d2 ∧ σ2 "EDI" = σ "EDI" ∧ σ2 "EBP" = σ "EBP" := by
+  unfold vm_run_spec at h1
+  by_cases hc : d.ikern = true ∧ d.pg = true ∧ d.ihost = true ∧ d.init = true
+  · rw [if_pos hc] at h1
+    cases hr : d.vmx VMX_G_RIP' with
+    | none => rw [hr] at h1; cases h1
+    | some v =>
+      rw [hr] at h1; simp only [Option.some.injEq] at h1; subst h1
+      exact return_step hxv hve heb εR c i0 rfl rfl rfl rfl rfl rfl
+        (by simp [setIhost, setVmx, setAt, VMX_HOST_EDI', VMX_HOST_EBP'])
+        (by simp [setIhost, setVmx, setAt, VMX_HOST_EDI', VMX_HOST_EBP']) h2
+  · rw [if_neg hc] at h1; cases h1
 
 end Code
 
