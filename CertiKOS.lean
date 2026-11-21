@@ -128,3 +128,5 @@ import CertiKOS.THInv
 import CertiKOS.THLock
 import CertiKOS.THLock2
 import CertiKOS.THRunVM
+import CertiKOS.MC2Atomic
+import CertiKOS.MC2PAlloc

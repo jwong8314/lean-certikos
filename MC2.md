@@ -158,11 +158,20 @@ Bottom to top, as the papers build it:
    thread-local layer; linking threads, then CPUs; liveness (every system
    call returns).
 
+## Progress
+
+| Stage | Status | Files |
+|---|---|---|
+| 1. Atomic objects | **done**: `atomic_call` (any `acquire; body; release` that implements an operation is one event of the object, with the region the replay of the history); the page allocator `palloc(tid)` of Fig. 8, with the quota check, as an atomic object (`palloc_atomic`) | `MC2Atomic.lean`, `MC2PAlloc.lean` |
+| 2–8 | not started | |
+
 ## Unknowns we decide ourselves
 
 * The C code of every module whose code the papers do not show.
 * The exact system-call interface of mC2.
 * How a thread is assigned to a CPU (we fix it at creation).
+* Where `palloc` reads the quota: inside `lock_AT`, not before it as in
+  Fig. 8 (`MC2PAlloc.lean` explains why).
 * The code of the condition variable: [OSDI16] cites Anderson–Dahlin
   Fig. 5.14, which we do not have. We write FIFO condition queues ourselves.
 * The IPC protocol beyond "synchronous, over channels, single copy".
