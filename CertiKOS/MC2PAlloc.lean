@@ -62,7 +62,7 @@ def AT (nps qb : Nat) (b0 : Region) : AObj where
   S := Region
   init := b0
   Op := Nat
-  step := fun _ t b => pallocM nps qb t b
+  step := fun _ t b => ((pallocM nps qb t b).1, some (pallocM nps qb t b).2)
   rep := fun s b => s = b
 
 theorem pallocSpec_le (np : Nat) (b : Region) : (pallocSpec np b).2 ≤ np := by
@@ -126,7 +126,10 @@ theorem body_impl (εR : REnv) (c : CPU) (i : Nat) {nps qb t : Nat} (b0 : Region
       exact Runs.assign "r" (.const (BitVec.ofNat 32 nps))
     · simp [Locals.set, σ1]
     · show d = (pallocM nps qb t d).1; rw [hsp]
-    · show (σ1.set "r" (BitVec.ofNat 32 nps)) "r" = BitVec.ofNat 32 (pallocM nps qb t d).2
+    · intro r hr
+      have hr' : (pallocM nps qb t d).2 = r := Option.some.inj hr
+      subst hr'
+      show (σ1.set "r" (BitVec.ofNat 32 nps)) "r" = BitVec.ofNat 32 (pallocM nps qb t d).2
       rw [hsp]; simp [Locals.set]
   · -- the scan
     obtain ⟨S, H, hl, hh, hmem⟩ := hcs
@@ -153,7 +156,10 @@ theorem body_impl (εR : REnv) (c : CPU) (i : Nat) {nps qb t : Nat} (b0 : Region
       · refine Runs.seq r1 (Runs.ite_false hq0' (Runs.seq r2 (Runs.ite_false ?_ Runs.skip)))
         simp [Expr.eval, BinOp.eval, hr2, hfd]
       · show (pallocSpec nps d).1 = (pallocM nps qb t d).1; rw [hsp]
-      · show σ2 "r" = BitVec.ofNat 32 (pallocM nps qb t d).2; rw [hsp, hr2]
+      · intro r hr
+        have hr' : (pallocM nps qb t d).2 = r := Option.some.inj hr
+        subst hr'
+        show σ2 "r" = BitVec.ofNat 32 (pallocM nps qb t d).2; rw [hsp, hr2]
     · -- a page: take it, and one unit of the quota
       have hsp : pallocM nps qb t d =
           (setCell (pallocSpec nps d).1 (qb + t) (d (qb + t) - 1), (pallocSpec nps d).2) := by
@@ -177,7 +183,10 @@ theorem body_impl (εR : REnv) (c : CPU) (i : Nat) {nps qb t : Nat} (b0 : Region
         rw [if_neg (fun e => hk (Or.inr e))]
         exact hfr0 k hk
       · show setCell (pallocSpec nps d).1 (qb + t) (d (qb + t) - 1) = (pallocM nps qb t d).1; rw [hsp]
-      · show (σ2.set "_" 0) "r" = BitVec.ofNat 32 (pallocM nps qb t d).2
+      · intro r hr
+        have hr' : (pallocM nps qb t d).2 = r := Option.some.inj hr
+        subst hr'
+        show (σ2.set "_" 0) "r" = BitVec.ofNat 32 (pallocM nps qb t d).2
         rw [hsp]; simp [Locals.set, hr2]
 
 /-- **`palloc(tid)` is one event `(c, tid)` of the allocator.** The table and
@@ -204,6 +213,6 @@ theorem palloc_atomic {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε)
     (fun σ1 hfr => by rw [hfr "tid" (by decide) (by decide) (by decide) (by decide)]; exact htid) hRJ hJ
   refine ⟨H1, hJ1, fun h hM => ?_⟩
   obtain ⟨σ', rb, S3, H3, hrun, hl3, hid, hM3, hJ3, hr⟩ := hrest h hM
-  exact ⟨σ', rb, S3, H3, hrun, hl3, hid, hM3.symm, hJ3, hr⟩
+  exact ⟨σ', rb, S3, H3, hrun, hl3, hid, hM3.symm, hJ3, hr _ rfl⟩
 
 end MC2PAlloc
