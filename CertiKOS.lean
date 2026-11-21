@@ -127,3 +127,4 @@ import CertiKOS.THEntry
 import CertiKOS.THInv
 import CertiKOS.THLock
 import CertiKOS.THLock2
+import CertiKOS.THRunVM
