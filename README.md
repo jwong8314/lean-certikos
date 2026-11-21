@@ -9,6 +9,13 @@ the Python translation is proved equivalent to the C.
 virtualization layers in `coq/` (about 3,700 lines). No `sorry`, no `Admitted`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
+**Current direction (2026-11-20): mC2, the concurrent CertiKOS kernel**, is
+being re-implemented from its papers (OSDI'16, PLDI'18), since no source was
+released. The design, what the papers specify, what already exists here, and
+the stage order are in [MC2.md](MC2.md). The mCertiKOS port below supplies
+the layers mC2 reuses; the kernel-lock files (`TLock`, `THLock`, `THLock2`,
+`THRunVM`) are the papers' big-kernel-lock variant `mC2-bl`.
+
 ## Status (2026-11-19)
 
 **Done**
