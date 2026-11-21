@@ -1167,9 +1167,21 @@ unused by the ports.
   `SYS_recv`, the copy changes only memory contents and waking the sender
   leaves the running thread alone); `pool_dispatch_h` keeps `PoolInv`, which
   now covers every thread on a queue, since `SYS_recv` wakes a waiting one;
-  `syscall_h_locked` puts the lock around it with `GoodH` on the log. Not yet
-  on the full state: the page fault, the yield and `SYS_hvm_run_vm` (they
-  are proved on the process state, `TLock`, and for the guest, `TRunVM`).
+  `syscall_h_locked` puts the lock around it with `GoodH` on the log.
+  `THLock2.lean`: `pgf_h_locked`, `yield_h_locked`, the page fault and the
+  yield with `GoodH` on the log (both run on the process layers, which leave
+  the consoles and the VMX blocks alone, `matchHP_frame`).
+- **`SYS_hvm_run_vm` with the lock** (`THRunVM.lean`): `run_vm_h_locked`.
+  The trap acquires the lock and runs `vm_run`; the guest runs **with the
+  lock held**; the VM exit handler runs `vmx_return_from_guest`, sets the
+  error code, releases the lock and returns to the caller, with `GoodH` on
+  the log. The lock is held across guest mode because `ihost` is per-CPU
+  state of which the machine has one copy: a state with `ihost = false` on
+  the log would break `KInv` for another CPU's trap. The cost is liveness: no
+  other CPU enters the kernel while a guest runs. mCertiKOS's own
+  `sys_run_vm` (`proc_exit_user; jmp vmx_run_vm`) is commented out of its
+  trap layer, unverified; the port keeps `TRunVM`'s code, without
+  `proc_exit_user`.
 - **The security invariants** (`TSecInv.lean`): `kpass_keeps`, `kpass_secinv`:
   every passage through the kernel keeps `KInv` and `SecInv` (a reservation
   keeps every mapped page in use and every free page empty, `ptResv_up`; a
