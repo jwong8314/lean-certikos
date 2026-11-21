@@ -433,7 +433,7 @@ theorem sysDispatchH_run (code : Nat → Stmt KPrim) (hL : HL) (hmax : 3 * maxpa
         ⟨⟨sysDispatchHK cb mc tb qb num_proc num_chan cidb ucb elb num_id pstart maxpage pb fb sb ob xb vb eb ipb, K, σ⟩,
           d.kctxt, l⟩
         ⟨⟨.skip, K, σ'⟩, d'.kctxt, l'⟩ ∧
-      CS1 c i0 l' b' ∧ MH d' b' ∧ σ' "lk" = σ "lk" := by
+      CS1 c i0 l' b' ∧ MH d' b' ∧ σ' "lk" = σ "lk" ∧ ∀ k, cb + 5 * num_id ≤ k → k < sb → b' k = b k := by
   have hU := hL.ulay
   have := hL.hob; have := hL.hxb; have := hL.hxv; have := hL.hve; have := hL.hep
   have hcp := hP.1
@@ -482,7 +482,11 @@ theorem sysDispatchH_run (code : Nat → Stmt KPrim) (hL : HL) (hmax : 3 * maxpa
           matchX_of (matchX_frame hM.2.2.1 (fun k h1 h2' => hf' k (fun h => by have := hCF k h; omega))
             hL.hxv hL.hve) rfl rfl rfl,
           VEPT.matchUp_frame hM.2.2.2 (fun a ha => hf' a (fun h => by
-            have := hCF a h; have := hL.hup; unfold VEPT.InUp upb at ha; omega))⟩, by rw [hlk']; simp [σ1, Locals.set]⟩
+            have := hCF a h; have := hL.hup; unfold VEPT.InUp upb at ha; omega))⟩, by rw [hlk']; simp [σ1, Locals.set],
+          fun k h1 h2 => hf' k (fun h => by
+            have := hU.hub0; have := hU.ilay.hib0; have := hU.ilay.clay.hcb; have := hU.ilay.clay.qlay.hqb
+            have := hU.ilay.clay.qlay.tlay.htb
+            unfold CreateF SpawnF QTF TF QF UCF at h; omega)⟩
     · rw [if_neg h2] at hs
       have hg : (Expr.bin .eq (.var "arg1") (.const 2)).eval σ1 = 0 := eqc_false (b := 2) harg ha32 (by decide) h2
       rw [if_pos hg] at k2
@@ -495,7 +499,15 @@ theorem sysDispatchH_run (code : Nat → Stmt KPrim) (hL : HL) (hmax : 3 * maxpa
         (hlist_triples (ida := ida) εR c i0 hL hmax hnum hmp hnn' hnpc) σ1 l1 b d hlk1 c1 hM ⟨harg, ha32, hP, d', hs'⟩
       rw [hs'] at q; simp only [Option.some.injEq] at q; subst q
       rw [chain_kctxt hs]
-      exact ⟨σ', l', b', k1.trans (.step k2 (kstar_base r K d.kctxt)), c', m', by rw [k']; simp [σ1, Locals.set]⟩
+      refine ⟨σ', l', b', k1.trans (.step k2 (kstar_base r K d.kctxt)), c', m', by rw [k']; simp [σ1, Locals.set],
+        fun k h1 h2 => fr k (fun h => ?_)⟩
+      have := hU.hub0; have := hU.ilay.hib0; have := hU.ilay.clay.hcb; have := hU.ilay.clay.qlay.hqb
+      have := hU.ilay.clay.qlay.tlay.htb; have := hU.ilay.clay.qlay.tlay.slay.hse; have := hU.ilay.hie
+      have := hU.ilay.clay.qlay.tlay.slay.lay.hfb
+      have := hU.ilay.clay.qlay.tlay.slay.hsb; have := hU.ilay.clay.qlay.tlay.slay.lay.hib
+      unfold DF ShareF UCF OF XF RecvF IPF QTF TF QF at h
+      unfold VVMX.VMX_Size' VVMCS.NENC VEPT.NPG at h
+      rcases h with ((h | h) | h) | h | h | (h | h | h) | ((h | h | h) | h) <;> omega
 
 end Run
 
