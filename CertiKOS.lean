@@ -125,3 +125,4 @@ import CertiKOS.TLock
 import CertiKOS.TSecInv
 import CertiKOS.THEntry
 import CertiKOS.THInv
+import CertiKOS.THLock

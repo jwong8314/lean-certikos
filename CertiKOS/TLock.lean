@@ -74,7 +74,7 @@ def Resumable (code : Nat → Stmt KPrim) (pstart cidb ucb pb cpub : Nat) (k : K
 def PoolInv (code : Nat → Stmt KPrim) (pstart cidb ucb pb cpub num_proc num_chan : Nat) (lk : Val) (d : UData) :
     Prop :=
   ∀ t, t < num_proc → (d.kctxt t).locals "lk" = lk ∧
-    (t ≠ d.cid → ∀ s, d.abtcb t = .AbTCBValid s (num_chan : Int) →
+    (t ≠ d.cid → ∀ s (q : Int), d.abtcb t = .AbTCBValid s q → q ≠ -1 →
       Resumable code pstart cidb ucb pb cpub (d.kctxt t))
 
 theorem ureg_ne : ∀ n, n < 17 → ureg n ≠ "t" ∧ ureg n ≠ "n" ∧ ureg n ≠ "_" ∧ ureg n ≠ "v" := by decide
@@ -118,7 +118,7 @@ theorem pool_create {num_id mc : Nat} {uentry q : Nat} {d d' : UData} {i : Nat}
       dsimp only
       by_cases e : t = d.cid * mc + 1 + (d.AC d.cid).cchildren.length
       · rw [e, setAt_eq, setAt_eq]
-        exact ⟨(hP _ (by omega)).1, fun _ _ _ => Or.inr ⟨rfl, rfl⟩⟩
+        exact ⟨(hP _ (by omega)).1, fun _ _ _ _ _ => Or.inr ⟨rfl, rfl⟩⟩
       · rw [setAt_ne _ _ e, setAt_ne _ _ e]
         exact hP t ht
   · cases hs
@@ -337,7 +337,7 @@ theorem yield_locked {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε) 
     injection h with e1 e2
     omega
   obtain ⟨hlkB, hres⟩ := hP la hlt
-  have hR := hres hlc s hai
+  have hR := hres hlc s _ hai (by omega)
   -- the state after the switch
   let rsK : KCtx := ⟨.skip, .seq (startK cidb ucb pb cpub) relK, σf.set "_" 0⟩
   let D1 : UData := { d with ikern := true, PT := 0, ipt := true, uctxt := setAt d.uctxt d.cid rs }
@@ -352,18 +352,19 @@ theorem yield_locked {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε) 
   have hPY : PoolInv code pstart cidb ucb pb cpub num_proc num_chan lk (putK D1 Y) := by
     intro t ht
     show (setAt d.kctxt d.cid rsK t).locals "lk" = lk ∧
-      (t ≠ la → ∀ s', setAt (setAt d.abtcb d.cid _) la _ t = _ → Resumable code pstart cidb ucb pb cpub
+      (t ≠ la → ∀ s' (q' : Int), setAt (setAt d.abtcb d.cid _) la _ t = .AbTCBValid s' q' → q' ≠ -1 →
+        Resumable code pstart cidb ucb pb cpub
         (setAt d.kctxt d.cid rsK t))
     by_cases e : t = d.cid
     · subst e
       rw [setAt_eq]
-      refine ⟨?_, fun _ _ _ => Or.inl ⟨rfl, rfl⟩⟩
+      refine ⟨?_, fun _ _ _ _ _ => Or.inl ⟨rfl, rfl⟩⟩
       show (σf.set "_" 0) "lk" = lk
       rw [Locals.set_other _ _ (by decide), hlkf, hlk1]
     · rw [setAt_ne _ _ e]
-      refine ⟨(hP t ht).1, fun hne' s' hs' => ?_⟩
+      refine ⟨(hP t ht).1, fun hne' s' q' hs' hq' => ?_⟩
       rw [setAt_ne _ _ hne', setAt_ne _ _ e] at hs'
-      exact (hP t ht).2 e s' hs'
+      exact (hP t ht).2 e s' q' hs' hq'
   -- the resumed thread: `proc_start_user`, then the release
   have hks2 := resume_start (εR := εR) (c := c) hcode hR Y.kctxt l2
   obtain ⟨σ3, l3, b3, hr3, c3, m3, hreg, f3⟩ := procStartUser_run εR c lk.toNat hL hcp0 hcp1
