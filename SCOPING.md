@@ -142,6 +142,7 @@ A first P0 spike is in `CertiKOS/` and builds with Lean 4.35.0. It has no `sorry
 | `THRunVM.lean` | **`SYS_hvm_run_vm` with the lock**: `runVm_runs`, `exit_runs`, `exit_kinv`, `run_vm_h_locked` (the guest runs with the lock held; the VM exit releases it). |
 | `MC2Atomic.lean` | **mC2, atomic objects**: `AObj`, `replay`, `J`, `Impl`, `atomic_call` (`acquire; body; release` is one event of the object). |
 | `MC2PAlloc.lean` | **mC2, the page allocator** (OSDI'16 Fig. 8): `pallocM` (quota check, first free page, quota decrement), `AT`, `pallocBody`, `body_impl`, `palloc_atomic`. |
+| `MC2Queue.lean` | **mC2, the shared queues**: `RepQ`, `Q`, `enQS`, `deQS`, `enQ_impl`, `deQ_impl`, `enQ_atomic`, `deQ_atomic`. |
 | `VInit.lean` | **`vmx_init`, ported from `coq/Init.v`**: `defaults`, `vmx_init0_spec`, `vmxInit_step`. |
 | `VEPT4.lean` | **The EPT's upper tables, ported from `coq/EPT4.v`**: `MatchUp`, `up_store`, `SameShape`, `matchUp_shape`, `setEPML4_step`, `setEPDPTE_run`, `setEPDTE_step`, `initUp_run`. |
 | `LayerStep.lean` | **Steps and data abstraction.** `Step` (a triple for one starting point), `Step.seq`, `Step.ite_true`, `Step.ite_false`, `Step.while_inv`, `Step.triple`, `Step.lift`; `Triple.sim` (a layer whose state is a view of the state below inherits its triples); guards on machine words (`eqc_true`, `nec_false`, `nev_true`, …). |

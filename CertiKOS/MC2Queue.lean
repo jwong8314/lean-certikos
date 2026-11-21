@@ -154,6 +154,13 @@ theorem headD_ne {np : Nat} {l : List Nat} (hl : ∀ x ∈ l, x < np) (hne : l �
   | nil => exact absurd rfl hne
   | cons x r => simp only [List.headD_cons]; exact hl x List.mem_cons_self
 
+theorem nil_of_getLastD {np : Nat} {l : List Nat} (hnp : np < 2 ^ 32) (hl : ∀ x ∈ l, x < np)
+    (h : (v (l.getLastD np)) = (v np)) : l = [] := by
+  by_cases hne : l = []
+  · exact hne
+  · have := getLastD_lt hl hne
+    exact absurd (vinj (by omega) hnp h) (by omega)
+
 /-! ## `enQ` -/
 
 /-- **`enqueue` implements `enQ t`.** -/
@@ -296,5 +303,204 @@ theorem enQ_impl (εR : REnv) (c : CPU) (i : Nat) {np : Nat} (hnp : 2 * np + 4 <
               · rw [sc_ne' (by omega), sc_ne' (by omega), sc_ne' (by omega), sc_ne' (by omega), e2]
       · have e : (qstep np (.enQ t) (some l0)).1 = none := by simp only [qstep, if_neg hg]
         rw [e]; trivial
+
+/-! ## `deQ` -/
+
+/-- **`dequeue` implements `deQ`.** -/
+theorem deQ_impl (εR : REnv) (c : CPU) (i : Nat) {np : Nat} (hnp : 2 * np + 4 < 2 ^ 32) :
+    Impl εR c i (Q np) (fun _ => True) (fun _ => True) .deQ "r" (deQS np) := by
+  intro σ l b d hlk hcs hM _
+  have hnp' : np < 2 ^ 32 := by omega
+  let σ0 := σ.set "r" (v np)
+  have r0 : Runs (rprimsA εR c) (.assign "r" (.const (v np))) σ l σ0 l := Runs.assign _ _
+  have hlk0 : (σ0 "lk").toNat = i := by simpa [σ0, Locals.set] using hlk
+  have r1 := rd_step (εR := εR) hcs hlk0 "hd" (.const (v 0)) (j := 0) rfl
+  let σ1 := σ0.set "hd" (b 0)
+  have hlk1 : (σ1 "lk").toNat = i := by simpa [σ1, σ0, Locals.set] using hlk
+  have hhd1 : σ1 "hd" = b 0 := by simp [σ1, Locals.set]
+  have hr1 : σ1 "r" = (v np) := by simp [σ1, σ0, Locals.set]
+  have hlkσ1 : σ1 "lk" = σ "lk" := by simp [σ1, σ0, Locals.set]
+  by_cases hhe : b 0 = (v np)
+  · -- the queue is empty
+    have hc : (Expr.bin .ne (.var "hd") (.const (v np))).eval σ1 = 0 := by
+      simp [Expr.eval, BinOp.eval, hhd1, hhe]
+    refine ⟨σ1, l, b, (qstep np .deQ d).1, Runs.seq r0 (Runs.seq r1 (Runs.ite_false hc Runs.skip)), hcs, ?_,
+      hlkσ1, fun k hk => absurd trivial hk, rfl, ?_⟩
+    · cases d with
+      | none => trivial
+      | some l0 =>
+        have hR : RepQ np l0 b := hM
+        have hl0 : l0 = [] := nil_of_getLastD hnp' hR.2.1 (by rw [← hR.2.2.1]; exact hhe)
+        subst hl0; exact hR
+    · intro r hr
+      cases d with
+      | none => simp [Q, qstep] at hr
+      | some l0 =>
+        have hR : RepQ np l0 b := hM
+        have hl0 : l0 = [] := nil_of_getLastD hnp' hR.2.1 (by rw [← hR.2.2.1]; exact hhe)
+        subst hl0
+        simp only [Q, qstep, Option.some.injEq] at hr; subst hr; exact hr1
+  · -- a head
+    have hc : ¬ (Expr.bin .ne (.var "hd") (.const (v np))).eval σ1 = 0 := by
+      simp [Expr.eval, BinOp.eval, hhd1, hhe]
+    let σ2 := σ1.set "r" (σ1 "hd")
+    have r2 : Runs (rprimsA εR c) (.assign "r" (.var "hd")) σ1 l σ2 l := Runs.assign _ _
+    have hlk2 : (σ2 "lk").toNat = i := by simpa [σ2, σ1, σ0, Locals.set] using hlk
+    let J := ((cE 3 "hd").eval σ2).toNat
+    have r3 := rd_step (εR := εR) hcs hlk2 "nx" (cE 3 "hd") (j := J) rfl
+    let σ3 := σ2.set "nx" (b J)
+    have hnx3 : σ3 "nx" = b J := by simp [σ3, Locals.set]
+    have hr3 : σ3 "r" = b 0 := by simp [σ3, σ2, Locals.set, hhd1]
+    have hlk3 : (σ3 "lk").toNat = i := by simpa [σ3, σ2, σ1, σ0, Locals.set] using hlk
+    have hlkσ3 : σ3 "lk" = σ "lk" := by simp [σ3, σ2, σ1, σ0, Locals.set]
+    have hhd3 : σ3 "hd" = b 0 := by simp [σ3, σ2, Locals.set, hhd1]
+    let τ1 := σ3.set "_" 0
+    let τ2 := τ1.set "_" 0
+    have L1 : ∀ z, z ≠ "_" → τ1 z = σ3 z := fun z hz => Locals.set_other _ _ hz
+    have L2 : ∀ z, z ≠ "_" → τ2 z = σ3 z := fun z hz => (Locals.set_other _ _ hz).trans (L1 z hz)
+    have hlkτ1 : (τ1 "lk").toNat = i := by rw [L1 _ (by decide)]; exact hlk3
+    have hlk4 : τ2 "lk" = σ "lk" := by rw [L2 _ (by decide)]; exact hlkσ3
+    have hr4 : τ2 "r" = b 0 := by rw [L2 _ (by decide)]; exact hr3
+    -- the shape of the queue, when it is a list
+    have shape : ∀ l0, RepQ np l0 b → ∃ r h, l0 = r ++ [h] ∧ h < np ∧ b 0 = (v h) ∧ J = 3 + 2 * h ∧
+        b J = (v (r.getLastD np)) := by
+      intro l0 hR
+      obtain ⟨hnd, hlt, hb0, hb1, hlinks⟩ := hR
+      rcases List.eq_nil_or_concat l0 with h0 | ⟨r, h, rfl⟩
+      · subst h0; exact absurd hb0 (by simpa using hhe)
+      · rw [List.concat_eq_append] at hnd hlt hb0 hlinks ⊢
+        rw [getLastD_append] at hb0
+        have hh : h < np := hlt h (by simp)
+        have hJ : J = 3 + 2 * h := cE_eval (show σ2 "hd" = (v h) by simp [σ2, Locals.set, hhd1, hb0]) (by omega)
+        refine ⟨r, h, rfl, hh, hb0, hJ, ?_⟩
+        rw [hJ]
+        exact (hlinks h np (r.getLastD np) (by rw [links_snoc]; simp)).2
+    have hres : ∀ r, (qstep np .deQ d).2 = some r → τ2 "r" = (v r) := by
+      intro r hr
+      cases d with
+      | none => simp [qstep] at hr
+      | some l0 =>
+        obtain ⟨r', h, rfl, hh, hb0, -, -⟩ := shape l0 hM
+        simp only [qstep, Option.some.injEq, getLastD_append] at hr; subst hr
+        rw [hr4, hb0]; rfl
+    by_cases hne : b J = (v np)
+    · -- the last one
+      have hc2 : ¬ (Expr.bin .eq (.var "nx") (.const (v np))).eval σ3 = 0 := by
+        simp [Expr.eval, BinOp.eval, hnx3, hne]
+      obtain ⟨l4, w1, c4⟩ := wr_step (εR := εR) hcs hlk3 (.const (v 0)) (.const (v np)) (j := 0) (w := (v np))
+        rfl rfl
+      obtain ⟨l5, w2, c5⟩ := wr_step (εR := εR) c4 hlkτ1 (.const (v 1)) (.const (v np)) (j := 1) (w := (v np))
+        rfl rfl
+      refine ⟨τ2, l5, _, (qstep np .deQ d).1,
+        Runs.seq r0 (Runs.seq r1 (Runs.ite_true hc (Runs.seq r2 (Runs.seq r3 (Runs.ite_true hc2
+          (Runs.seq w1 w2)))))), c5, ?_, hlk4, fun k hk => absurd trivial hk, rfl, hres⟩
+      cases d with
+      | none => trivial
+      | some l0 =>
+        have hR : RepQ np l0 b := hM
+        obtain ⟨r', h, rfl, hh, hb0, hJ, hbJ⟩ := shape _ hR
+        have hr' : r' = [] := nil_of_getLastD hnp' (fun x hx => hR.2.1 x (by simp [hx]))
+          (by rw [← hbJ]; exact hne)
+        subst hr'
+        show RepQ np ([] ++ [h]).dropLast _
+        simp only [List.nil_append, List.dropLast_singleton]
+        refine ⟨List.nodup_nil, fun x hx => by simp at hx, ?_, ?_, fun x p nx hm => by simp [links] at hm⟩
+        · show _ = (v np); rw [sc_ne' (by omega), sc_eq']
+        · show _ = (v np); rw [sc_eq']
+    · -- the next one becomes the head
+      have hc2 : (Expr.bin .eq (.var "nx") (.const (v np))).eval σ3 = 0 := by
+        simp [Expr.eval, BinOp.eval, hnx3, hne]
+      obtain ⟨l4, w1, c4⟩ := wr_step (εR := εR) hcs hlk3 (cE 2 "nx") (.const (v np))
+        (j := ((cE 2 "nx").eval σ3).toNat) (w := (v np)) rfl rfl
+      obtain ⟨l5, w2, c5⟩ := wr_step (εR := εR) c4 hlkτ1 (.const (v 0)) (.var "nx") (j := 0) (w := b J) rfl
+        (show τ1 "nx" = b J by rw [L1 _ (by decide)]; exact hnx3)
+      refine ⟨τ2, l5, _, (qstep np .deQ d).1,
+        Runs.seq r0 (Runs.seq r1 (Runs.ite_true hc (Runs.seq r2 (Runs.seq r3 (Runs.ite_false hc2
+          (Runs.seq w1 w2)))))), c5, ?_, hlk4, fun k hk => absurd trivial hk, rfl, hres⟩
+      cases d with
+      | none => trivial
+      | some l0 =>
+        have hR : RepQ np l0 b := hM
+        obtain ⟨r, h, rfl, hh, hb0, hJ, hbJ⟩ := shape _ hR
+        obtain ⟨hnd, hlt, -, hb1, hlinks⟩ := hR
+        rcases List.eq_nil_or_concat r with h0 | ⟨r', n, rfl⟩
+        · subst h0; exact absurd hbJ (by simpa using hne)
+        · rw [List.concat_eq_append] at hnd hlt hb1 hlinks hbJ ⊢
+          rw [getLastD_append] at hbJ
+          have hn : n < np := hlt n (by simp)
+          have hI : ((cE 2 "nx").eval σ3).toNat = 2 + 2 * n := cE_eval (by rw [hnx3, hbJ]; rfl) (by omega)
+          rw [hI, hbJ]
+          have hnd' : (r' ++ [n]).Nodup := (List.nodup_append.1 hnd).1
+          have hnr' : n ∉ r' := by
+            intro hm
+            have := (List.nodup_append.1 hnd').2.2 n hm n (by simp)
+            exact this rfl
+          show RepQ np ((r' ++ [n]) ++ [h]).dropLast _
+          rw [List.dropLast_concat]
+          refine ⟨hnd', fun x hx => hlt x (List.mem_append_left _ hx), ?_, ?_, fun x p nx hm => ?_⟩
+          · show _ = (v ((r' ++ [n]).getLastD np))
+            rw [sc_eq', getLastD_append]
+          · show _ = (v ((r' ++ [n]).headD np))
+            rw [sc_ne' (by omega), sc_ne' (by omega), hb1, headD_append, headD_append, headD_append]; rfl
+          · rw [links_snoc] at hm
+            have hold := hlinks
+            rw [links_snoc, links_snoc] at hold
+            rcases List.mem_append.1 hm with hm | hm
+            · have hx : x ∈ r' := links_mem hm
+              have hxn : x ≠ n := fun e => hnr' (e ▸ hx)
+              obtain ⟨e1, e2⟩ := hold x p nx (by simp [hm])
+              refine ⟨?_, ?_⟩
+              · rw [sc_ne' (by omega), sc_ne' (by omega), e1]
+              · rw [sc_ne' (by omega), sc_ne' (by omega), e2]
+            · simp only [List.mem_singleton, Prod.mk.injEq] at hm
+              obtain ⟨hx1, hp1, hn1⟩ := hm
+              subst hx1
+              rw [hp1, hn1]
+              obtain ⟨-, e2⟩ := hold x h (r'.getLastD np) (by simp)
+              refine ⟨?_, ?_⟩
+              · rw [sc_ne' (by omega), sc_eq']
+              · rw [sc_ne' (by omega), sc_ne' (by omega), e2]
+
+/-! ## Each locked call is one event -/
+
+section Atomic
+variable {εR : REnv} {ε : AEnv} {c : CPU} {l : RLog} {S : RState} {H : HLogR} {iv : Val} {np : Nat}
+
+/-- **`acquire; enqueue(t); release` is one event `(c, enQ t)` of the queue.** -/
+theorem enQ_atomic (hE : EnvErases εR ε) (hRR : RelyR εR c) (hc : c < NCPU) (hRA : LockArray.RelyA ε c)
+    (hl : rreplay l = some (S, H)) (hidle : (S.lk iv.toNat).phase c = .idle)
+    (bound : ALog → Nat) (K : Nat) (hK : ∀ l, bound l ≤ K)
+    (hF : LockArray.FairA ε c iv.toNat (ticket (LockArray.projL iv.toNat (apull ε c (erase l)))) bound)
+    (hnp : 2 * np + 4 < 2 ^ 32) (t : Nat) (σ : Locals) (hσ : σ "lk" = iv) (hpi : σ "pi" = (v t))
+    (hRJ : RelyJ εR c iv.toNat (Q np).J) (hJ : (Q np).J (hmemR iv.toNat H)) :
+    ∃ H1 : HLogR, (Q np).J (hmemR iv.toNat H1) ∧
+      ∀ h, (Q np).rep ((Q np).replay h) (hmemR iv.toNat H1) →
+        ∃ (σ' : Locals) (rb : RLog) (S3 : RState) (H3 : HLogR),
+          Star (rprimsA εR c) ⟨.seq acquireA (.seq (enQS np) relA), .stop, σ, l⟩ ⟨.skip, .stop, σ', rb⟩ ∧
+          rreplay rb = some (S3, H3) ∧ (S3.lk iv.toNat).phase c = .idle ∧
+          (Q np).rep ((Q np).replay ((c, .enQ t) :: h)) (hmemR iv.toNat H3) ∧ (Q np).J (hmemR iv.toNat H3) ∧
+          ∀ r, (Q np).result h c (.enQ t) = some r → σ' "r" = (v r) :=
+  atomic_call hE hRR hc hRA hl hidle bound K hK hF σ hσ (enQ_impl εR c iv.toNat hnp t) (by decide)
+    (fun σ1 hfr => by rw [hfr "pi" (by decide) (by decide) (by decide) (by decide)]; exact hpi) hRJ hJ
+
+/-- **`acquire; dequeue(); release` is one event `(c, deQ)` of the queue**:
+the thread it returns is the head of the queue after the history it found. -/
+theorem deQ_atomic (hE : EnvErases εR ε) (hRR : RelyR εR c) (hc : c < NCPU) (hRA : LockArray.RelyA ε c)
+    (hl : rreplay l = some (S, H)) (hidle : (S.lk iv.toNat).phase c = .idle)
+    (bound : ALog → Nat) (K : Nat) (hK : ∀ l, bound l ≤ K)
+    (hF : LockArray.FairA ε c iv.toNat (ticket (LockArray.projL iv.toNat (apull ε c (erase l)))) bound)
+    (hnp : 2 * np + 4 < 2 ^ 32) (σ : Locals) (hσ : σ "lk" = iv)
+    (hRJ : RelyJ εR c iv.toNat (Q np).J) (hJ : (Q np).J (hmemR iv.toNat H)) :
+    ∃ H1 : HLogR, (Q np).J (hmemR iv.toNat H1) ∧
+      ∀ h, (Q np).rep ((Q np).replay h) (hmemR iv.toNat H1) →
+        ∃ (σ' : Locals) (rb : RLog) (S3 : RState) (H3 : HLogR),
+          Star (rprimsA εR c) ⟨.seq acquireA (.seq (deQS np) relA), .stop, σ, l⟩ ⟨.skip, .stop, σ', rb⟩ ∧
+          rreplay rb = some (S3, H3) ∧ (S3.lk iv.toNat).phase c = .idle ∧
+          (Q np).rep ((Q np).replay ((c, .deQ) :: h)) (hmemR iv.toNat H3) ∧ (Q np).J (hmemR iv.toNat H3) ∧
+          ∀ r, (Q np).result h c .deQ = some r → σ' "r" = (v r) :=
+  atomic_call hE hRR hc hRA hl hidle bound K hK hF σ hσ (deQ_impl εR c iv.toNat hnp) (by decide)
+    (fun _ _ => trivial) hRJ hJ
+
+end Atomic
 
 end MC2Queue
