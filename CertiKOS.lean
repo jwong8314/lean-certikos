@@ -130,3 +130,4 @@ import CertiKOS.THLock2
 import CertiKOS.THRunVM
 import CertiKOS.MC2Atomic
 import CertiKOS.MC2PAlloc
+import CertiKOS.MC2Queue
