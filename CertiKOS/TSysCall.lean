@@ -215,7 +215,8 @@ theorem pgf_handler_run (hL : ULayout maxpage num_id cb num_proc pb ib fb sb tb 
     ∃ (σ' : Locals) (l' : RLog) (b' : Region),
       Runs (rprimsA εR c) (pgfEntryS cb cidb maxpage pb fb ucb cpub) σ l σ' l' ∧ CS1 c i0 l' b' ∧ MUP d3 b' ∧
       (∀ n, n < 17 → ∀ v, rs' n = some v → σ' (ureg n) = v) ∧
-      ∀ k, cb + 5 * num_id ≤ k → k < cpub → b' k = b k := by
+      (∀ k, cb + 5 * num_id ≤ k → k < cpub → b' k = b k) ∧
+      ∀ k, ucb + 17 * num_proc ≤ k → k < pb → b' k = b k := by
   have hCL := hL.ilay.clay
   have := hL.hub0; have := hL.hue; have := hL.ilay.hib0; have := hCL.hcb; have := hCL.qlay.hqb
   have := hCL.qlay.tlay.htb; have := hCL.qlay.tlay.slay.hsb; have := hCL.qlay.tlay.slay.hse
@@ -243,9 +244,11 @@ theorem pgf_handler_run (hL : ULayout maxpage num_id cb num_proc pb ib fb sb tb 
     exact hne1
   obtain ⟨σ3, l3, b3, r3, c3, m3, hreg, f3⟩ := procStartUser_run εR c i0 hL hcp0 hcp1 (σ := σ2)
     (by rw [k2]; exact hlk1) c2 m2 ⟨fun _ => hne2, fun _ => hpg2⟩ (by rw [ptfault_cid h2]; exact hcid1) h3
-  refine ⟨σ3, l3, b3, Runs.seq r1 (Runs.seq r2 r3), c3, m3, hreg, fun k h1 h2 => ?_⟩
-  rw [f3 k (by omega), f2 k (fun h => by rcases h with h | h <;> omega),
-    f1 k (fun h => by rcases h with ⟨h3, h4⟩ | h3 <;> omega)]
+  refine ⟨σ3, l3, b3, Runs.seq r1 (Runs.seq r2 r3), c3, m3, hreg, fun k h1 h2 => ?_, fun k h1 h2 => ?_⟩
+  · rw [f3 k (by omega), f2 k (fun h => by rcases h with h | h <;> omega),
+      f1 k (fun h => by rcases h with ⟨h3, h4⟩ | h3 <;> omega)]
+  · rw [f3 k (by omega), f2 k (fun h => by rcases h with h | h <;> omega),
+      f1 k (fun h => by rcases h with ⟨h3, h4⟩ | h3 <;> omega)]
 
 /-- **A page fault, from user mode to user mode.** -/
 theorem pgf_handler_ustar (code : Nat → Stmt KPrim) (entry : Nat → Nat) (lk : Val) (tn : Nat)
@@ -263,7 +266,7 @@ theorem pgf_handler_ustar (code : Nat → Stmt KPrim) (entry : Nat → Nat) (lk 
     ∃ (ur : Nat → Val) (l' : RLog) (b' : Region),
       UStar εR c code entry lk (.user ur0 pool l) (.user ur pool l') ∧ CS1 c i0 l' b' ∧ MUP d3 b' ∧
       ∀ n, n < 17 → ∀ v, rs' n = some v → ur n = v := by
-  obtain ⟨σ', l', b', hr, hcs', hM', hreg, -⟩ := pgf_handler_run εR c i0 hL hcp0 hcp1 hmax hnum hmp hnn
+  obtain ⟨σ', l', b', hr, hcs', hM', hreg, -, -⟩ := pgf_handler_run εR c i0 hL hcp0 hcp1 hmax hnum hmp hnn
     (kl := kl) (kh := kh) hv (σ := σ) (by rw [hlkσ]; exact hlk) hcs hM hva hcid hAT hq hrs h1 h2 h3
   exact ⟨regsOf σ', l', b', UStar.syscall tn hlkσ (by rw [hentry]; exact kstar_base hr .stop pool), hcs', hM',
     hreg⟩
@@ -292,7 +295,8 @@ theorem sys_yield_run (code : Nat → Stmt KPrim)
       la < num_proc ∧
       CurIDValid (yieldOut num_chan la ql
         ⟨.skip, .seq (mapS .base (procStartUserS cidb ucb pb cpub)) K, σf.set "_" 0⟩ (toK d1)).toCData ∧
-      σf "lk" = σ "lk" ∧ ∀ k, cb + 5 * num_id ≤ k → k < cpub → b' k = b k := by
+      σf "lk" = σ "lk" ∧ (∀ k, cb + 5 * num_id ≤ k → k < cpub → b' k = b k) ∧
+      ∀ k, ucb + 17 * num_proc ≤ k → k < pb → b' k = b k := by
   have hCL := hL.ilay.clay
   have := hL.hub0; have := hL.hue; have := hL.ilay.hib0; have := hCL.hcb; have := hCL.qlay.hqb
   have := hCL.qlay.tlay.htb; have := hCL.qlay.tlay.slay.hsb; have := hCL.qlay.tlay.slay.hse
@@ -313,13 +317,15 @@ theorem sys_yield_run (code : Nat → Stmt KPrim)
     (by rw [hd1]; exact hcv) (by rw [hd1]; exact hpg) (by rw [hd1]; rfl) (by rw [hd1]; exact hq) hla hne
   refine ⟨σf, l2, b2, ?_, c2, matchU_putC hL _ m1.1 m2 (fun k h3' h4' => f2 k (fun hk => by
     rcases hk with (⟨h5, h6⟩ | ⟨h5, h6⟩) | h5 <;> omega)), ?_, hI2, hlt, hcv2,
-    by rw [hfr "lk" rfl rfl, k1], fun k h1' h2' => ?_⟩
+    by rw [hfr "lk" rfl rfl, k1], fun k h1' h2' => ?_, fun k h1' h2' => ?_⟩
   · refine (kstar_seq r1 _ K d.kctxt).trans ((KStar.single (kstep_seq _ _ K σ1 d.kctxt l1)).trans ?_)
     have e : (toK d1).kctxt = d.kctxt := hk1
     rw [← e]
     exact hks
   · rw [f2 _ (fun hk => by rcases hk with (⟨h5, h6⟩ | ⟨h5, h6⟩) | h5 <;> omega)]
     exact hne1
+  · rw [f2 k (fun hk => by rcases hk with (⟨h5, h6⟩ | ⟨h5, h6⟩) | h5 <;> omega),
+      f1 k (fun h => by rcases h with ⟨h3, h4⟩ | h3 <;> omega)]
   · rw [f2 k (fun hk => by rcases hk with (⟨h5, h6⟩ | ⟨h5, h6⟩) | h5 <;> omega),
       f1 k (fun h => by rcases h with ⟨h3, h4⟩ | h3 <;> omega)]
 
@@ -359,7 +365,7 @@ theorem sys_yield_ustar (code : Nat → Stmt KPrim) (entry : Nat → Nat) (lk : 
       UStar εR c code entry lk (.user ur0 d.kctxt l) (.user ur pool' l') ∧ CS1 c i0 l' b' ∧ MUP d3 b' ∧
       d3.cid = la ∧ d3.ikern = false ∧ ∀ n, n < 17 → ∀ v, d.uctxt la n = some v → ur n = v := by
   obtain ⟨hd1, hpg⟩ := exit_shape h1
-  obtain ⟨σf, l2, b2, hks, c2, m2, hne2, hI2, hlt, -⟩ := sys_yield_run εR c i0 code hL hcp0 hcp1 (σ := σ)
+  obtain ⟨σf, l2, b2, hks, c2, m2, hne2, hI2, hlt, -, -, -, -⟩ := sys_yield_run εR c i0 code hL hcp0 hcp1 (σ := σ)
     (by rw [hlkσ]; exact hlk) hcs hM hcid hI hcv hrs h1 hq hla hne
   -- the process resumed is not the caller
   obtain ⟨s, hai⟩ := hI.inq la num_chan ql hlt (Nat.le_refl _) hq (last_mem hla hne)

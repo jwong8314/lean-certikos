@@ -260,7 +260,7 @@ theorem pgf_locked {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε) (h
     rw [hfr _ a b' c' e]; exact hrs n hn v hv
   have hva1 : σ1 "vaddr" = BitVec.ofNat 32 vadr := by
     rw [hfr "vaddr" (by decide) (by decide) (by decide) (by decide)]; exact hva
-  obtain ⟨σ', l', b', hr, hcs', hM', hreg, hfb⟩ := pgf_handler_run εR c lk.toNat hL hcp0 hcp1 hmax hnum hmp hnn
+  obtain ⟨σ', l', b', hr, hcs', hM', hreg, hfb, -⟩ := pgf_handler_run εR c lk.toNat hL hcp0 hcp1 hmax hnum hmp hnn
     (kl := kl) (kh := kh) hv (σ := σ1) (by rw [hlk1]) hcs1 hM hva1 hI.cid hI.atinv (hI.uq _) hrs1 h1 h2 h3
   have hlk' : σ' "lk" = lk := by rw [hr.frame rfl, hlk1]
   obtain ⟨rb, S3, H3, hrel, hl3, hid3, hmem⟩ := release_runs (εR := εR) hRR hc hcs' hlk'
@@ -326,7 +326,7 @@ theorem yield_locked {εR : REnv} {ε : AEnv} {c : CPU} (hE : EnvErases εR ε) 
     rw [hfr _ a b' c' e]; exact hrs n hn v hv
   obtain ⟨hd1, hpg⟩ := exit_shape h1
   subst hd1
-  obtain ⟨σf, l2, b2, hks, c2, m2, hne2, hI2, hlt, hcv2, hlkf, hfb2⟩ := sys_yield_run εR c lk.toNat code hL hcp0
+  obtain ⟨σf, l2, b2, hks, c2, m2, hne2, hI2, hlt, hcv2, hlkf, hfb2, -⟩ := sys_yield_run εR c lk.toNat code hL hcp0
     hcp1 (σ := σ1) (K := relK) (by rw [hlk1]) hcs1 hM hI.cid hI.ainv hI.cur hrs1 h1 hq hla hne
   -- the process resumed is not the caller, and it is on the ready queue
   obtain ⟨s, hai⟩ := hI.ainv.inq la num_chan ql hlt (Nat.le_refl _) hq (last_mem hla hne)
