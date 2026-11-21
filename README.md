@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-129 Lean files, about 53,700 lines, and a Coq development of the
+132 Lean files, about 54,800 lines, and a Coq development of the
 virtualization layers in `coq/` (about 3,700 lines). No `sorry`, no `Admitted`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
@@ -210,7 +210,11 @@ Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
   copy rather than one per CPU. The entry points take the kernel lock at the
   boundary (`acquire; entry; release`, `TLock.lean`), and the invariants they
   assume are carried from one trap to the next on the shared log (`KInv`,
-  `TInv.lean`; `Good`, `TLock.lean`). Security is
+  `TInv.lean`; `Good`, `TLock.lean`). The full dispatcher (hypercalls,
+  `SYS_share`, `SYS_print`, `SYS_recv`, `SYS_hvm_mmap`) is an entry point too,
+  with the lock and the invariant (`THEntry.lean`, `THInv.lean`,
+  `THLock.lean`); the page fault, the yield and `SYS_hvm_run_vm` are not yet
+  restated on the full state. Security is
   proved at the top layer's specifications, with user programs as functions
   of what they can see; user-mode instructions are not modelled, and the result
   is not carried down to the machine. The security invariants are shown

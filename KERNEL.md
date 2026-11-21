@@ -1159,6 +1159,17 @@ unused by the ports.
   (`Good`: the region matches, the ELF table, `KInv`, user mode, and
   `PoolInv`, every thread on the ready queue resumable), so the conclusion of
   one locked entry point is the hypothesis of the next.
+- **The full dispatcher as an entry point** (`THEntry.lean`, `THInv.lean`,
+  `THLock.lean`): `syscall_h_run` runs `proc_exit_user; syscall_dispatch_c;
+  proc_start_user` with the full dispatcher on the kernel machine, from
+  `KInv`; `dispatch_h_keeps` shows every row keeps `KInv` (for `SYS_share`,
+  a reservation in two address spaces raises usages within quota; for
+  `SYS_recv`, the copy changes only memory contents and waking the sender
+  leaves the running thread alone); `pool_dispatch_h` keeps `PoolInv`, which
+  now covers every thread on a queue, since `SYS_recv` wakes a waiting one;
+  `syscall_h_locked` puts the lock around it with `GoodH` on the log. Not yet
+  on the full state: the page fault, the yield and `SYS_hvm_run_vm` (they
+  are proved on the process state, `TLock`, and for the guest, `TRunVM`).
 - **The security invariants** (`TSecInv.lean`): `kpass_keeps`, `kpass_secinv`:
   every passage through the kernel keeps `KInv` and `SecInv` (a reservation
   keeps every mapped page in use and every free page empty, `ptResv_up`; a
