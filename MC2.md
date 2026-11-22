@@ -123,9 +123,8 @@ variant, built on the mCertiKOS port.
 
 The pieces the machine does not yet have:
 
-* per-CPU private state (ready queue, current thread, `CR3`, mode flags);
-* atomic objects with their own events above the lock;
-* the scheduling layer with pending queues;
+* per-CPU private memory for the code (ready queue, current thread, `CR3`,
+  mode flags); `MC2Sched` keeps them abstract;
 * the thread layers with a software scheduler;
 * the synchronisation libraries.
 
@@ -164,13 +163,16 @@ Bottom to top, as the papers build it:
 |---|---|---|
 | 1. Atomic objects | **done**: `atomic_call` (any `acquire; body; release` that implements an operation is one event of the object, with the region the replay of the history); the page allocator `palloc(tid)` of Fig. 8, with the quota check, as an atomic object (`palloc_atomic`) | `MC2Atomic.lean`, `MC2PAlloc.lean` |
 | 2. Shared queues | **done**: each queue one atomic object on its own lock's region (head, tail, and the links of the threads on it); mCertiKOS's `enqueue`/`dequeue` implement `enQ t`/`deQ` (`enQ_impl`, `deQ_impl`), so each locked call is one event (`enQ_atomic`, `deQ_atomic`). Enqueuing a thread already on the queue leaves the object undefined; stage 3 must rule it out | `MC2Queue.lean` |
-| 3–8 | not started | |
+| 3. Scheduling layer | **partly done**: the layer as a machine over the shared queues of stage 2. Each CPU's `yield`, `sleep(i)`, `wakeup(i)` is a few steps, each one queue event or private, interleaved freely across CPUs; a queue's state is the replay of its events and a dequeue's result is the object's `result`, as `deQ_atomic` guarantees. Invariant: every thread is in exactly one place (running on its CPU, on its CPU's ready or pending queue, on a sleeping queue, or between the halves of a `wakeup`), for every interleaving (`wf_replay`). So no queue is enqueued a thread already on it (`queues_defined`, stage 2's obligation), and `R_sched` gives a thread that runs on its own CPU only (`rsched_owner`). **Not yet**: the code of the ready queue on per-CPU memory and of `cswitch` | `MC2Sched.lean` |
+| 4–8 | not started | |
 
 ## Unknowns we decide ourselves
 
 * The C code of every module whose code the papers do not show.
 * The exact system-call interface of mC2.
 * How a thread is assigned to a CPU (we fix it at creation).
+* The steps of `yield`, `sleep` and `wakeup`, and what an idle CPU does (no
+  running thread; it calls `yield`): `MC2Sched.lean`.
 * Where a thread's queue links live: in the region of the queue it is on
   (`MC2Queue.lean`), so each cell has exactly one lock.
 * Where `palloc` reads the quota: inside `lock_AT`, not before it as in

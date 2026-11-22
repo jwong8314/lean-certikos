@@ -143,6 +143,7 @@ A first P0 spike is in `CertiKOS/` and builds with Lean 4.35.0. It has no `sorry
 | `MC2Atomic.lean` | **mC2, atomic objects**: `AObj`, `replay`, `J`, `Impl`, `atomic_call` (`acquire; body; release` is one event of the object). |
 | `MC2PAlloc.lean` | **mC2, the page allocator** (OSDI'16 Fig. 8): `pallocM` (quota check, first free page, quota decrement), `AT`, `pallocBody`, `body_impl`, `palloc_atomic`. |
 | `MC2Queue.lean` | **mC2, the shared queues**: `RepQ`, `Q`, `enQS`, `deQS`, `enQ_impl`, `deQ_impl`, `enQ_atomic`, `deQ_atomic`. |
+| `MC2Sched.lean` | **mC2, the scheduling layer**: per-CPU ready queue and running thread, pending and sleeping queues as shared queues; `yield`, `sleep`, `wakeup` as steps (`stepE`), `replayS`, `Rsched`; `Wf` (every thread in exactly one place), `wf_replay`, `queues_defined`, `running_alone`, `rsched_owner`. |
 | `VInit.lean` | **`vmx_init`, ported from `coq/Init.v`**: `defaults`, `vmx_init0_spec`, `vmxInit_step`. |
 | `VEPT4.lean` | **The EPT's upper tables, ported from `coq/EPT4.v`**: `MatchUp`, `up_store`, `SameShape`, `matchUp_shape`, `setEPML4_step`, `setEPDPTE_run`, `setEPDTE_step`, `initUp_run`. |
 | `LayerStep.lean` | **Steps and data abstraction.** `Step` (a triple for one starting point), `Step.seq`, `Step.ite_true`, `Step.ite_false`, `Step.while_inv`, `Step.triple`, `Step.lift`; `Triple.sim` (a layer whose state is a view of the state below inherits its triples); guards on machine words (`eqc_true`, `nec_false`, `nev_true`, …). |
