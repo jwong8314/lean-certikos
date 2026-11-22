@@ -5,7 +5,7 @@ layers (CCAL) for spinlocks, with safety **and liveness**, over a small
 Clight-like language (ClightL). One AST is emitted to both C and Python, and
 the Python translation is proved equivalent to the C.
 
-138 Lean files, about 56,700 lines, and a Coq development of the
+139 Lean files, about 57,100 lines, and a Coq development of the
 virtualization layers in `coq/` (about 3,700 lines). No `sorry`, no `Admitted`. The main theorems depend only on
 Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`).
 
