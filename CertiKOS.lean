@@ -133,3 +133,4 @@ import CertiKOS.MC2PAlloc
 import CertiKOS.MC2Queue
 import CertiKOS.MC2Sched
 import CertiKOS.MC2Thread
+import CertiKOS.MC2Seq
